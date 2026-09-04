@@ -212,7 +212,20 @@ pub fn defaults() -> Vec<Binding> {
         ),
         // -- window ------------------------------------------------------------
         binding!(window::TogglePreview, All("secondary-shift-v"), true),
-        binding!(window::ToggleFullscreen, All("fn-f"), false),
+        // Was `All("fn-f")` — macOS's own fullscreen chord, but "fn" isn't a
+        // real modifier on Windows/Linux, leaving no keyboard way at all to
+        // exit fullscreen there once the OS-drawn min/max/close buttons are
+        // gone (real OS fullscreen removes window chrome on every platform,
+        // not just ours — see the app.rs `ToggleFullscreen` handler). F11 is
+        // the conventional fullscreen toggle on both.
+        binding!(
+            window::ToggleFullscreen,
+            Split {
+                mac: "fn-f",
+                other: "f11"
+            },
+            false
+        ),
         binding!(
             window::Minimize,
             Split {
