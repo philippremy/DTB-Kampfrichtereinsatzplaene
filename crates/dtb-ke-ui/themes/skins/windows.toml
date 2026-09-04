@@ -1,0 +1,16 @@
+# Windows skin — WinUI 3, Light + Mica.
+
+material           = "mica"         # blurred | mica | mica-alt | opaque
+material-opacity   = 0.85           # chrome fill alpha when the window is translucent
+window-decorations = "server"
+menu-bar           = "in-app"       # gpui renders no menu bar on Windows
+title-bar-height   = 48.0
+radius             = 8.0
+radius-lg          = 8.0
+radius-control     = 4.0
+focus-ring         = "underline"    # 2px accent bar inside the bottom edge of a focused field
+selection-style    = "winui-pill"
+shadow             = "tight"
+font-family        = "Segoe UI Variable Text"
+mono-font-family   = "Consolas"
+motion-scale       = 0.9

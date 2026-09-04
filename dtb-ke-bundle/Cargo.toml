@@ -1,0 +1,27 @@
+[package]
+name = "dtb-ke-bundle"
+edition.workspace = true
+version.workspace = true
+description = "Build orchestration + platform packaging: stage the embedded crash helper, build the app, and produce distributable bundles (.app / .msi / .deb / .rpm / .AppImage / tarball)."
+publish = false
+
+[[bin]]
+name = "dtb-ke-bundle"
+path = "src/main.rs"
+
+[dependencies]
+# Icon pipeline: rasterise the SVG master, resize to every target size.
+image = { workspace = true, features = ["png"] }
+resvg.workspace = true
+# Codeberg/Forgejo release management (`codeberg` subcommand — release
+# create/replace, JSON asset listing, and file upload — all via ureq
+# directly, no shelling out to curl/sha256sum/shasum. This crate's whole
+# point is running unattended on three different self-hosted CI hosts
+# (Linux/Windows/macOS), so it must never assume a CLI tool beyond cargo
+# itself and each platform's own native packaging toolchain is on PATH —
+# see RUNNERS.md for the two real outages this caused before both were
+# replaced with pure-Rust equivalents.
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2 = "0.10"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "json"] }

@@ -1,0 +1,21 @@
+[package]
+name = "dtb-ke-persist"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+# Project crates
+dtb-ke-types.workspace = true
+dtb-ke-util.workspace = true
+
+# External crates
+chrono.workspace = true
+log.workspace = true
+postcard.workspace = true
+thiserror.workspace = true
+turso.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+pollster = "0.4"
+tempfile = "3"

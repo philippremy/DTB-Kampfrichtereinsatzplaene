@@ -1,0 +1,366 @@
+name: Release
+
+# A tag `vX.Y.Z` pushed (by scripts/release.sh) → a full, signed, notarized
+# release, mirrored to both the version tag and the rolling `latest` tag (the
+# stable channel's stable URL — see UPDATER.md). Always a clean `target/`
+# and the workspace's normal profile (fat LTO) — the opposite of tip.yml's
+# speed-over-everything approach. See RUNNERS.md for what each `runs-on`
+# label actually is.
+#
+# "on" is quoted — bare `on:` parses as the *boolean* `true` under YAML 1.1
+# (confirmed with PyYAML while writing tip.yml); nothing guarantees Forgejo's
+# parser special-cases it the way GitHub's does.
+"on":
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re-)release, e.g. v0.2.0"
+        type: string
+        required: true
+
+# The inputs context (not github.event.inputs — Forgejo's docs list `inputs`
+# as its own top-level context, not nested under github/forgejo) is what
+# concurrency.group and the version step below both read.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: [linux-host]
+    outputs:
+      release_id: ${{ steps.prepare.outputs.release_id }}
+      latest_release_id: ${{ steps.prepare-latest.outputs.release_id }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: version
+        name: Parse the release tag
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=${tag}" >> "$FORGEJO_OUTPUT"
+          echo "version=${tag#v}" >> "$FORGEJO_OUTPUT"
+
+      # release.sh already wrote the release notes into the *tag message* —
+      # reuse them verbatim rather than re-deriving anything here.
+      - id: notes
+        name: Read the release notes from the tag message
+        run: git tag -l --format='%(contents)' "${{ steps.version.outputs.tag }}" > /tmp/release-notes.md
+
+      - id: prepare
+        name: Create/replace the version release
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          cargo dtb-ke-bundle codeberg prepare \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --target "${{ steps.version.outputs.tag }}" \
+            --title "DTB Kampfrichtereinsatzpläne ${{ steps.version.outputs.version }}" \
+            --notes-file /tmp/release-notes.md \
+            --draft
+
+      # `latest` is a rolling tag — force-move it to this release's commit
+      # before codeberg prepare, which never retargets an existing tag itself
+      # (see tip.yml for the same pattern). The version tag needs no such
+      # step: release.sh already placed it exactly where it should be.
+      - name: Force-move the latest tag
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://philippremy:${CODEBERG_TOKEN}@codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene.git"
+          git tag -f latest "${{ steps.version.outputs.tag }}"
+          git push -f origin latest
+
+      - id: prepare-latest
+        name: Create/replace the latest release
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          cargo dtb-ke-bundle codeberg prepare \
+            --tag latest \
+            --target "${{ steps.version.outputs.tag }}" \
+            --title "Latest: ${{ steps.version.outputs.version }}" \
+            --notes-file /tmp/release-notes.md \
+            --draft
+
+  linux-x86_64:
+    needs: prepare
+    runs-on: [linux-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Clean target/
+        run: rm -rf target
+      - name: Build
+        run: cargo dtb-ke-bundle bundle --release --formats deb,rpm,appimage,tar
+      - name: Sign + package + upload
+        env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=x86_64-unknown-linux-gnu
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          tar -C target/bundle/release -czf "$name" --exclude='*.deb' --exclude='*.rpm' --exclude='*.AppImage' .
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
+          cargo dtb-ke-bundle codeberg upload \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            --release-id ${{ needs.prepare.outputs.latest_release_id }} \
+            "$name" target/bundle/release/*.deb target/bundle/release/*.rpm target/bundle/release/*.AppImage
+
+  linux-arm64:
+    needs: prepare
+    runs-on: [linux-host]
+    env:
+      # See RUNNERS.md § Linux arm64 — same sysroot tip.yml uses.
+      PKG_CONFIG_ALLOW_CROSS: "1"
+      PKG_CONFIG_SYSROOT_DIR: /opt/sysroots/aarch64-linux-gnu
+      PKG_CONFIG_PATH: /opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/pkgconfig:/opt/sysroots/aarch64-linux-gnu/usr/share/pkgconfig
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # See tip.yml's linux-arm64 job for why this is -L (not --sysroot) plus
+      # -Wl,-rpath-link (needed on top of -L to resolve each linked .so's own
+      # further DT_NEEDED chain, not just the libraries named directly).
+      RUSTFLAGS: "-C link-arg=-L/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-L/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Clean target/
+        run: rm -rf target
+      - name: Cross-build for aarch64
+        run: cargo dtb-ke-bundle bundle --release --formats deb,rpm,appimage,tar --target aarch64-unknown-linux-gnu
+      - name: Sign + package + upload
+        env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=aarch64-unknown-linux-gnu
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          tar -C target/bundle/release -czf "$name" --exclude='*.deb' --exclude='*.rpm' --exclude='*.AppImage' .
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
+          cargo dtb-ke-bundle codeberg upload \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            --release-id ${{ needs.prepare.outputs.latest_release_id }} \
+            "$name" target/bundle/release/*.deb target/bundle/release/*.rpm target/bundle/release/*.AppImage
+
+  windows-x86_64:
+    needs: prepare
+    runs-on: [windows-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Clean target/
+        # Not shell: bash — a bare Windows Server install has no bash at all
+        # (Git for Windows, which bundles one, is never installed anywhere
+        # in this setup).
+        run: Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        # Persistent machine-wide registry policy, already set once by
+        # runner-setup-windows.ps1 — re-asserted here (idempotent, cheap) as
+        # a defensive measure in case it's ever reset out of band. See
+        # RUNNERS.md's Windows-VM section for why this is needed at all.
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Build
+        run: cargo dtb-ke-bundle bundle --release --target x86_64-pc-windows-gnullvm
+      - name: Sign + package + upload
+        # Not shell: bash — no bash on this VM (see the Clean target/ step).
+        env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $triple = "x86_64-pc-windows-gnullvm"
+          # "ä" is built from its code point, not typed literally — Windows
+          # Server only ships Windows PowerShell 5.1, which (unlike pwsh 7)
+          # reads a script file with no UTF-8 BOM using the system's ANSI
+          # code page: whatever encoding Forgejo's runner actually wrote the
+          # composited step script in, a literal "ä" here previously came out
+          # as raw mis-decoded bytes (confirmed against a real release: the
+          # asset showed up on Codeberg as "...KampfrichtereinsatzplÃ¤ne...").
+          # [char]0x00E4 is plain ASCII in the script source, so it can't be
+          # misread regardless of the file's actual encoding or which
+          # PowerShell reads it.
+          $ae = [char]0x00E4
+          # Spaced, matching meta::DISPLAY_NAME — self_update's Windows
+          # bundle_path_in_archive (updater::BIN_NAME) has to find this exact
+          # folder name inside the downloaded archive.
+          $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
+          if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
+          New-Item -ItemType Directory -Path "$folder" | Out-Null
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          Copy-Item "$srcDir\*.exe" "$folder"
+          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
+          # Compress-Archive (.NET's ZipArchive), not `tar -a` (bsdtar):
+          # bsdtar wrote the folder's non-ASCII entry name into the zip
+          # without the UTF-8 language-encoding flag, so *any* extractor that
+          # falls back to a legacy code page for unflagged entries (confirmed
+          # against a real download: the .exe came out named
+          # "...Kampfrichtereinsatzpl„ne.exe") mangled it on extraction.
+          # ZipArchive sets that flag correctly for a non-ASCII entry name.
+          Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          $keyPath = Join-Path $env:TEMP "release.priv"
+          [System.IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:ZIPSIGN_KEY_B64))
+          zipsign sign zip "$name" "$keyPath"
+          $zipsignExit = $LASTEXITCODE
+          Remove-Item -Force $keyPath
+          if ($zipsignExit -ne 0) { exit $zipsignExit }
+          $msiFiles = (Get-ChildItem "target\bundle\release\*.msi").FullName
+          cargo dtb-ke-bundle codeberg upload `
+            --release-id ${{ needs.prepare.outputs.release_id }} `
+            --release-id ${{ needs.prepare.outputs.latest_release_id }} `
+            "$name" @msiFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-arm64:
+    needs: prepare
+    runs-on: [windows-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Clean target/
+        # Not shell: bash — a bare Windows Server install has no bash at all
+        # (Git for Windows, which bundles one, is never installed anywhere
+        # in this setup).
+        run: Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Cross-build for aarch64
+        run: cargo dtb-ke-bundle bundle --release --target aarch64-pc-windows-gnullvm
+      - name: Sign + package + upload
+        # Not shell: bash — no bash on this VM (see the Clean target/ step).
+        env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $triple = "aarch64-pc-windows-gnullvm"
+          # See the windows-x86_64 job above for why "ä" is built from its
+          # code point rather than typed literally, and why the zip is built
+          # with Compress-Archive rather than `tar -a` (bsdtar).
+          $ae = [char]0x00E4
+          $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
+          if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
+          New-Item -ItemType Directory -Path "$folder" | Out-Null
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          Copy-Item "$srcDir\*.exe" "$folder"
+          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
+          Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          $keyPath = Join-Path $env:TEMP "release.priv"
+          [System.IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:ZIPSIGN_KEY_B64))
+          zipsign sign zip "$name" "$keyPath"
+          $zipsignExit = $LASTEXITCODE
+          Remove-Item -Force $keyPath
+          if ($zipsignExit -ne 0) { exit $zipsignExit }
+          $msiFiles = (Get-ChildItem "target\bundle\release\*.msi").FullName
+          cargo dtb-ke-bundle codeberg upload `
+            --release-id ${{ needs.prepare.outputs.release_id }} `
+            --release-id ${{ needs.prepare.outputs.latest_release_id }} `
+            "$name" @msiFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  macos-universal:
+    needs: prepare
+    runs-on: [macos-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Clean target/
+        run: rm -rf target
+      - name: Build + sign universal binary
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          if [ -z "$MACOS_SIGN_IDENTITY" ]; then
+            echo "::error::MACOS_SIGN_IDENTITY is not set — a real release build must be Developer-ID signed (ad-hoc breaks the in-app updater's Gatekeeper-clean relaunch, see UPDATER.md). Set the secret once you have a Developer ID; until then, releases can't be cut from this runner." >&2
+            exit 1
+          fi
+          cargo dtb-ke-bundle bundle --release --universal --sign "$MACOS_SIGN_IDENTITY" --formats dmg
+      - name: Notarize
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8_B64: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          app="target/bundle/release/DTB Kampfrichtereinsatzpläne.app"
+          mkdir -p /tmp/apikey && echo "$APPLE_API_KEY_P8_B64" | base64 -d > "/tmp/apikey/AuthKey_${APPLE_API_KEY_ID}.p8"
+          zip -qr /tmp/notarize.zip "$app"
+          xcrun notarytool submit /tmp/notarize.zip \
+            --key "/tmp/apikey/AuthKey_${APPLE_API_KEY_ID}.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$app"
+          rm -rf /tmp/apikey /tmp/notarize.zip
+      - name: Sign + package + upload
+        env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=universal-apple-darwin
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          # -C rather than staging a renamed copy first — the archive's
+          # top-level entry is the .app exactly as dtb-ke-bundle built it
+          # (meta::DISPLAY_NAME, spaced), matching what updater::BIN_NAME
+          # expects to find inside the downloaded archive.
+          tar -C target/bundle/release -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
+          cargo dtb-ke-bundle codeberg upload \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            --release-id ${{ needs.prepare.outputs.latest_release_id }} \
+            "$name" target/bundle/release/*.dmg
+
+  publish:
+    needs:
+      - prepare
+      - linux-x86_64
+      - linux-arm64
+      - windows-x86_64
+      - windows-arm64
+      - macos-universal
+    runs-on: [linux-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Publish the release manifest
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          for id in ${{ needs.prepare.outputs.release_id }} ${{ needs.prepare.outputs.latest_release_id }}; do
+            cargo dtb-ke-bundle codeberg manifest-publish \
+              --release-id "$id" \
+              --version "${{ needs.prepare.outputs.version }}" \
+              --date "$(date -u +%Y-%m-%d)" \
+              --notes-url "https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/releases/tag/${{ needs.prepare.outputs.tag }}" \
+              --publish
+          done

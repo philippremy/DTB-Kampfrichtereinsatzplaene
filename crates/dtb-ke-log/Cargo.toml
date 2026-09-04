@@ -1,0 +1,8 @@
+[package]
+name = "dtb-ke-log"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+colored = { version = "3" }
+log.workspace = true

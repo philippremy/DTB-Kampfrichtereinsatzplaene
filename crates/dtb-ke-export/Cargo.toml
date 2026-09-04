@@ -1,0 +1,30 @@
+[package]
+name = "dtb-ke-export"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+dtb-ke-types.workspace = true
+dtb-ke-resource.workspace = true
+
+typst.workspace = true
+typst-layout.workspace = true
+typst-pdf.workspace = true
+typst-render.workspace = true
+comemo.workspace = true
+
+chrono.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+# DOCX export
+ooxmlsdk.workspace = true
+uuid.workspace = true
+resvg.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+png = "0.17"
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

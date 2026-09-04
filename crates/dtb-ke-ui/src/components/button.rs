@@ -1,0 +1,210 @@
+//! A button: label and/or icon, four tones, two sizes.
+
+use gpui::{
+    App, ClickEvent, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    Rgba, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    px, transparent_black,
+};
+
+use crate::components::icon::Icon;
+use crate::theme::ActiveTheme;
+
+type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// Alpha-composite `over` onto the opaque `base`, returning an opaque colour.
+fn composite(base: Hsla, over: Hsla) -> Hsla {
+    Hsla::from(Rgba::from(base).blend(Rgba::from(over)))
+}
+
+/// Lower the lightness of `base` by `amount` (0–1).
+fn darken(base: Hsla, amount: f32) -> Hsla {
+    Hsla {
+        l: (base.l - amount).max(0.0),
+        ..base
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonTone {
+    /// Filled with the accent colour — the one primary action per view.
+    Primary,
+    /// Bordered, surface fill — the default.
+    #[default]
+    Secondary,
+    /// No fill or border until hovered — toolbar / inline actions.
+    Ghost,
+    /// Filled with the critical colour — destructive actions.
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonSize {
+    Xsmall,
+    Small,
+    #[default]
+    Medium,
+}
+
+#[derive(IntoElement)]
+pub struct Button {
+    id: ElementId,
+    label: Option<SharedString>,
+    leading: Option<Icon>,
+    tone: ButtonTone,
+    size: ButtonSize,
+    disabled: bool,
+    on_click: Option<ClickHandler>,
+}
+
+impl Button {
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: Some(label.into()),
+            leading: None,
+            tone: ButtonTone::default(),
+            size: ButtonSize::default(),
+            disabled: false,
+            on_click: None,
+        }
+    }
+
+    /// An icon-only button (square).
+    pub fn icon(id: impl Into<ElementId>, icon: Icon) -> Self {
+        Self {
+            id: id.into(),
+            label: None,
+            leading: Some(icon),
+            tone: ButtonTone::Ghost,
+            size: ButtonSize::default(),
+            disabled: false,
+            on_click: None,
+        }
+    }
+
+    pub fn tone(mut self, tone: ButtonTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    pub fn small(mut self) -> Self {
+        self.size = ButtonSize::Small;
+        self
+    }
+
+    pub fn x_small(mut self) -> Self {
+        self.size = ButtonSize::Xsmall;
+        self
+    }
+
+    pub fn leading_icon(mut self, icon: Icon) -> Self {
+        self.leading = Some(icon);
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for Button {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let c = &theme.color;
+        let icon_only = self.label.is_none();
+
+        let (height, pad_x, gap, text_size) = match self.size {
+            ButtonSize::Xsmall => (px(20.), px(4.), px(4.), px(10.)),
+            ButtonSize::Small => (px(24.), px(8.), px(4.), px(12.)),
+            ButtonSize::Medium => (px(30.), px(12.), px(6.), px(13.)),
+        };
+
+        // Hover / active feedback: opaque fills darken; Secondary and Ghost use
+        // a translucent ink "state layer" so it reads on any background — in
+        // particular the toolbar, whose fill matches `chrome`.
+        let layer = |alpha: f32| Hsla {
+            a: alpha,
+            ..c.foreground
+        };
+        let (fill, fg, border, hover_bg, active_bg) = match self.tone {
+            ButtonTone::Primary => (
+                c.primary,
+                c.primary_foreground,
+                c.primary,
+                darken(c.primary, 0.06),
+                darken(c.primary, 0.10),
+            ),
+            ButtonTone::Danger => (
+                c.critical,
+                c.primary_foreground,
+                c.critical,
+                darken(c.critical, 0.06),
+                darken(c.critical, 0.10),
+            ),
+            ButtonTone::Secondary => (
+                c.surface,
+                c.foreground,
+                c.border,
+                composite(c.surface, layer(0.05)),
+                composite(c.surface, layer(0.10)),
+            ),
+            ButtonTone::Ghost => (
+                transparent_black(),
+                c.foreground,
+                transparent_black(),
+                layer(0.07),
+                layer(0.12),
+            ),
+        };
+
+        let mut el = div()
+            .id(self.id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .gap(gap)
+            .h(height)
+            .rounded(theme.skin.radius_control_px())
+            .border_1()
+            .border_color(border)
+            .bg(fill)
+            .text_color(fg)
+            .text_size(text_size)
+            .when(icon_only, |el| el.w(height))
+            .when(!icon_only, |el| el.px(pad_x));
+
+        if self.disabled {
+            el = el.opacity(0.45);
+        } else {
+            el = el
+                .cursor_pointer()
+                .hover(move |el| el.bg(hover_bg))
+                .active(move |el| el.bg(active_bg));
+            if let Some(handler) = self.on_click {
+                el = el.on_click(move |ev, window, cx| handler(ev, window, cx));
+            }
+        }
+
+        el.when_some(self.leading, |el, icon| {
+            el.child(
+                icon.size(match self.size {
+                    ButtonSize::Xsmall => px(11.),
+                    ButtonSize::Small => px(13.),
+                    ButtonSize::Medium => px(15.),
+                })
+                .color(fg),
+            )
+        })
+        .when_some(self.label, |el, label| el.child(label))
+    }
+}

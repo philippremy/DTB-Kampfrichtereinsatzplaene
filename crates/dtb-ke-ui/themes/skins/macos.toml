@@ -1,0 +1,19 @@
+# macOS skin — restrained Liquid Glass.
+#
+# Structural metrics only; colours come from the active palette. Compiled in via
+# include_str!; re-read from disk in debug builds.
+
+material           = "blurred"      # blurred | mica | mica-alt | opaque
+material-opacity   = 0.875          # chrome fill alpha when the window is translucent
+window-decorations = "server"       # server (OS frame) | client (CSD)
+menu-bar           = "native"        # native (OS menu bar) | in-app (drawn in the chrome)
+title-bar-height   = 52.0
+radius             = 7.0            # default element radius (px)
+radius-lg          = 12.0           # cards, dialogs, notifications
+radius-control     = 8.0            # buttons, inputs, chips
+focus-ring         = "outline"      # outline | underline — accent border around the field
+selection-style    = "glass-tint"   # glass-tint | winui-pill | solid-subtle
+shadow             = "soft"         # soft | tight | flat
+font-family        = ".SystemUIFont"
+mono-font-family   = "Menlo"
+motion-scale       = 1.0            # multiplies every animation duration

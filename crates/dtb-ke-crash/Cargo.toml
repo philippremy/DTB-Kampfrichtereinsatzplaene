@@ -1,0 +1,62 @@
+[package]
+name = "dtb-ke-crash"
+edition.workspace = true
+version.workspace = true
+description = "In-process crash capture: forwards a fault to an out-of-process helper that writes a minidump."
+
+[[bin]]
+name = "dtb-ke-crashhandler"
+path = "src/bin/crash_handler.rs"
+
+[[bin]]
+name = "dtb-ke-symbolize"
+path = "src/bin/crash_symbolize.rs"
+
+[lib]
+path = "src/lib/lib.rs"
+
+[features]
+default = ["as-binary"]
+# `as-binary` = the two bins. It pulls the minidump stack; the `as-library` path
+# (linked into `dtb-ke-ui`) stays tiny — just the exception handoff.
+as-binary = [
+    "dep:minidump",
+    "dep:minidump-unwind",
+    "dep:minidump-writer",
+    "dep:crash-context",
+    "dep:futures",
+]
+# The thin in-process half. `dtb-ke-log` is pulled in only here — the helper
+# binary (`as-binary` alone) stays free of it.
+as-library = ["dep:dtb-ke-log"]
+
+[dependencies]
+# Signal-safe `fault!` logging on the in-process crash path (`as-library` only).
+dtb-ke-log = { workspace = true, optional = true }
+# Reading minidumps: the reporter's summary (`dtb-ke-ui`) and the offline
+# `dtb-ke-symbolize` tool. `minidump-unwind`/framehop unwinds x64 (no fp chain)
+# and aarch64; symbol resolution is left to `minidump-stackwalk` / lldb / WinDbg.
+minidump = { version = "0.27", optional = true }
+minidump-unwind = { version = "0.27", default-features = false, features = [
+    "framehop",
+], optional = true }
+# Writing minidumps out-of-process (helper). Cross-platform: mach on macOS,
+# `MiniDumpWriteDump` on Windows, ptrace/procfs on Linux.
+minidump-writer = { version = "0.13", optional = true }
+crash-context = { version = "0.8", optional = true }
+# `block_on` for `minidump-unwind`'s async `walk_stack` in `dtb-ke-symbolize`.
+futures = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+mach2.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The thin library half's signal handler (sigaction / sigaltstack / dlsym +
+# raw syscalls). The helper's minidump stack (minidump-writer, crash-context)
+# comes in via the `as-binary` feature.
+libc.workspace = true
+
+[lints.rust]
+# The Mach FFI layer is broad; not every declaration is wired up yet.
+unused = "allow"

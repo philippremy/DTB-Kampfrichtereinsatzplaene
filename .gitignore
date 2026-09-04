@@ -1,0 +1,12 @@
+/target/
+/crates/dtb-ke-crash/embedded/
+
+# OS / editor
+.DS_Store
+*.bak
+
+# Explcitly untracked
+/nogit/
+
+# Local agent files
+CLAUDE.md

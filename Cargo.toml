@@ -1,0 +1,137 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/dtb-ke-crash",
+    "crates/dtb-ke-export",
+    "crates/dtb-ke-log",
+    "crates/dtb-ke-persist",
+    "crates/dtb-ke-resource",
+    "crates/dtb-ke-types",
+    "crates/dtb-ke-ui",
+    "crates/dtb-ke-util",
+    "dtb-ke-bundle",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+# Project crates
+dtb-ke-crash = { path = "crates/dtb-ke-crash", default-features = false }
+dtb-ke-export = { path = "crates/dtb-ke-export" }
+dtb-ke-log = { path = "crates/dtb-ke-log" }
+dtb-ke-persist = { path = "crates/dtb-ke-persist" }
+dtb-ke-resource = { path = "crates/dtb-ke-resource" }
+dtb-ke-types = { path = "crates/dtb-ke-types" }
+dtb-ke-util = { path = "crates/dtb-ke-util" }
+
+# External crates
+chrono = { version = "0.4", features = ["serde"] }
+comemo = { version = "0.5" }
+dirs = { version = "6" }
+futures = { version = "0.3" }
+# Report transport (`dtb-ke-ui/src/mail.rs`). `chacha20` is already in the tree
+# (turso `pure-rust-crypto`); it obfuscates the embedded SMTP credentials build-
+# and run-side. `lettre` builds + sends the mail (blocking, rustls — no tokio).
+chacha20 = { version = "0.10", default-features = false, features = ["cipher"] }
+getrandom = { version = "0.3" }
+lettre = { version = "0.11", default-features = false, features = [
+    "builder", "smtp-transport", "rustls-tls", "hostname",
+] }
+gpui = { git = "https://github.com/zed-industries/zed.git" }
+gpui-base = { git = "https://github.com/longbridge/gpui-component.git" }
+image = { version = "0.25", default-features = false }
+# Embeds the .ico + VERSIONINFO into the Windows .exe (`dtb-ke-ui/build.rs`).
+# Same crate gpui uses for its own resources. It selects the resource compiler
+# per target: `rc.exe` (MSVC), `llvm-rc` (building *on* Windows for gnu/gnullvm),
+# or `<arch>-w64-mingw32-windres` (cross-compiling to `*-windows-gnu[llvm]` — the
+# llvm-mingw toolchain ships that wrapper). Override with `RC_<target>` / `RC`.
+embed-resource = { version = "3" }
+ooxmlsdk = { version = "0.13" }
+# SVG → PNG rasterisation for the DOCX header logos (re-exports usvg + tiny-skia;
+# version tracks the copy Typst/gpui already pull in)
+resvg = { version = "0.47" }
+
+# macOS save-panel FFI (matches gpui's objc2 pin)
+block2 = { version = "0.6" }
+objc2 = { version = "0.6" }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std", "NSApplication", "NSResponder", "NSPanel", "NSWindow", "NSView",
+    "NSControl", "NSButton", "NSButtonCell", "NSCell", "NSPopUpButton",
+    "NSMenu", "NSMenuItem", "NSStackView", "NSTextField", "NSText",
+    "NSSavePanel", "NSLayoutConstraint", "NSLayoutAnchor", "NSUserInterfaceLayout",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std", "NSString", "NSURL", "NSArray", "NSObject", "NSGeometry",
+] }
+
+# Windows IFileSaveDialog FFI (windows-core is named directly so the
+# `#[implement]` macro's `::windows_core` paths resolve; version tracks `windows`)
+windows = { version = "0.61", features = [
+    "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage",
+    "Win32_System_Ole", "Win32_System_Variant", "Win32_UI_Shell",
+    "Win32_UI_Shell_Common", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = { version = "0.61.2" }
+gpui_platform = { git = "https://github.com/zed-industries/zed.git" }
+libc = { version = "0.2" }
+log = { version = "0.4" }
+# Mach FFI for the crash handler + its helper (macOS only).
+mach2 = { version = "0.5" }
+postcard = { version = "1", features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+# In-app updater (`dtb-ke-ui/src/updater/`). `manifest` backend = a static JSON
+# on Codeberg (forge-agnostic); `signatures` = mandatory zipsign/ed25519 verify;
+# `ureq` (not reqwest) keeps tokio out; `rustls` shares ring with lettre.
+self_update = { version = "1.3", default-features = false, features = [
+    "manifest", "signatures", "checksums", "ureq", "rustls",
+    "compression-tar-gz", "archive-zip", "compression-zip-deflate",
+] }
+thiserror = { version = "2" }
+toml = { version = "0.8" }
+# `default-features = false` drops turso's `fts` (a full-text search engine —
+# tantivy + rust-stemmers + zstd, ~2 MB of binary we never use) and `mimalloc`.
+# `turso_core` keeps its own defaults, so the SQL surface we use is unchanged.
+turso = { version = "0.7", default-features = false, features = ["pure-rust-crypto"] }
+typst = { version = "0.15" }
+typst-layout = { version = "0.15" }
+typst-pdf = { version = "0.15" }
+typst-render = { version = "0.15" }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.release]
+incremental = false
+codegen-units = 1 # Allows LLVM to perform better optimization.
+lto = "fat" # Enables link-time-optimizations.
+opt-level = "z" # Smallest code. gpui / taffy are pinned back to 3 below (hot render path).
+panic = "abort" # Higher performance by disabling panic handlers.
+debug = "line-tables-only" # debug info, used by the offline symbolication helper (see next line)
+split-debuginfo = "packed" # dsymutil produces target/release/<bin>.dSYM (keep by UUID, don't ship)
+strip = "symbols" # Still strip the whole binary, debug info and symbols stay in the generated external bundle
+
+# The render / event / layout path must be optimized for speed or the UI is
+# incredibly slow — pin it back to 3 against the `opt-level = "z"` default above.
+[profile.release.package]
+gpui = { opt-level = 3 }
+gpui_macros = { opt-level = 3 }
+gpui_platform = { opt-level = 3 }
+gpui_apple = { opt-level = 3 }
+gpui_macos = { opt-level = 3 }
+gpui-base = { opt-level = 3 }
+taffy = { opt-level = 3 }
+dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
+
+# Vendored, patched copy of turso_sdk_kit 0.7.2 — see vendor/README.md and
+# RUNNERS.md's "Vendored dependency patches" section for why. Upstream's
+# build.rs shells out to a bare `windres` with no target-triple prefix,
+# which resolves to whichever architecture's copy happens to be first on
+# PATH — wrong when cross-compiling to a different architecture than the
+# host (confirmed against a real aarch64-pc-windows-gnullvm cross-build
+# failure: "machine type x64 conflicts with arm64"). Everything else about
+# the crate is untouched — this is a one-line fix, not a fork to maintain
+# feature parity on. Remove this patch once a fixed version ships upstream.
+[patch.crates-io]
+turso_sdk_kit = { path = "vendor/turso_sdk_kit-0.7.2" }

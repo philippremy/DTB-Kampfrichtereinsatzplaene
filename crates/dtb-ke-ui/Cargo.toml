@@ -1,0 +1,65 @@
+[package]
+name = "dtb-ke-ui"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Kebab-case on purpose (satisfies cargo's non_kebab_case_bins lint with no
+# unstable-flag juggling — see the `bundling` memory / RUNNERS.md for the
+# saga). This is purely the raw cargo build artifact's name
+# (dtb-ke-bundle::meta::RAW_BIN_NAME must match it exactly, to find what
+# cargo built); the actual *shipped* product name — what ends up inside the
+# .app/portable folder, in Task Manager, etc. — is meta::DISPLAY_NAME
+# ("DTB Kampfrichtereinsatzpläne"), applied by dtb-ke-bundle's packagers at
+# package time, not by cargo at build time.
+[[bin]]
+name = "dtb-ke-ui"
+path = "src/main.rs"
+
+[dependencies]
+# Project crates
+dtb-ke-crash = { workspace = true, features = ["as-library"] }
+dtb-ke-export.workspace = true
+dtb-ke-log.workspace = true
+dtb-ke-persist.workspace = true
+dtb-ke-resource.workspace = true
+dtb-ke-types.workspace = true
+dtb-ke-util.workspace = true
+
+# External crates
+chacha20.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+image.workspace = true
+gpui-base.workspace = true
+gpui_platform.workspace = true
+lettre.workspace = true
+log.workspace = true
+self_update.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+turso.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+chacha20.workspace = true
+getrandom.workspace = true
+# Windows .exe icon + version resource (only does work when TARGET is Windows).
+embed-resource.workspace = true
+image = { workspace = true, features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+libc.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+windows-core.workspace = true

@@ -1,0 +1,320 @@
+name: Tip
+
+# Every push to main → one rolling "tip" release, replaced each run. See
+# UPDATER.md for the manifest/versioning scheme and RUNNERS.md for what each
+# `runs-on` label actually is.
+#
+# "on" is quoted below — bare `on:` parses as the *boolean* `true` under
+# YAML 1.1 (the "Norway problem"; confirmed with PyYAML while writing this).
+# GitHub's own parser special-cases it, but nothing guarantees Forgejo's does,
+# so this file doesn't rely on that.
+"on":
+  push:
+    branches: [main]
+
+concurrency:
+  group: tip
+  cancel-in-progress: true
+
+env:
+  # Speed over size: no LTO, more codegen units, and (critically, since these
+  # are persistent self-hosted runners that never wipe `target/` here) real
+  # incremental compilation between commits. Release builds don't set any of
+  # this — they always start from a clean target/ with the workspace's normal
+  # profile (fat LTO, codegen-units = 1). See CLAUDE.md's binary-size memory.
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_INCREMENTAL: "1"
+
+jobs:
+  prepare:
+    runs-on: [linux-host]
+    outputs:
+      release_id: ${{ steps.prepare.outputs.release_id }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Forgejo's real contexts are forgejo/forge, github (an alias of
+      # forgejo, for GH-Actions-compatible expressions), secrets, vars, env,
+      # matrix, steps, needs, inputs, runner — there is no "gitea" context
+      # (confirmed against forgejo.org/docs/latest/user/actions/reference/
+      # after this file failed schema validation with exactly that mistake).
+      - id: version
+        name: Compute the Tip version
+        run: |
+          base=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "base=${base}" >> "$FORGEJO_OUTPUT"
+          # A numeric identifier so self_update's semver ordering sorts every
+          # tip build correctly (a commit SHA would NOT: semver compares
+          # digit-only identifiers numerically, not lexically). See UPDATER.md.
+          # Kept out of the release *title* (steps.version.outputs.base is
+          # used there instead) — it still needs to live somewhere visible,
+          # so it's folded into the release notes body below instead.
+          echo "version=${base}-tip.${{ github.run_number }}" >> "$FORGEJO_OUTPUT"
+
+      # A release API can create a tag that doesn't exist yet, but never
+      # retargets one that does — so force-move `tip` ourselves first.
+      # codeberg prepare (next step) then only has to replace the release
+      # object, never the tag.
+      - name: Force-move the tip tag
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://philippremy:${CODEBERG_TOKEN}@codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene.git"
+          git tag -f tip
+          git push -f origin tip
+
+      - id: prepare
+        name: Create/replace the tip release
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          printf 'Automatic build of %s (build #%s, version %s)\n\n%s\n' \
+            "$(git log -1 --format='%h — %s')" \
+            "${{ github.run_number }}" \
+            "${{ steps.version.outputs.version }}" \
+            "Ad-hoc signed only, not notarized. macOS: download-and-replace, no in-app install." \
+            > /tmp/tip-notes.md
+          cargo dtb-ke-bundle codeberg prepare \
+            --tag tip \
+            --target "${{ github.sha }}" \
+            --title "DTB Kampfrichtereinsatzpläne (Tip; ${{ steps.version.outputs.base }})" \
+            --notes-file /tmp/tip-notes.md \
+            --prerelease
+
+  linux-x86_64:
+    needs: prepare
+    runs-on: [linux-host]
+    env:
+      # Forgejo checks each job out into a fresh, random per-job directory
+      # (see RUNNERS.md § target-dir caching) — without an absolute, fixed
+      # CARGO_TARGET_DIR, "persistent target-folder caching" would silently
+      # do nothing, since the relative ./target from the last run is gone.
+      # Pre-created (and owned by the runner user) by runner-setup-linux.sh.
+      CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/x86_64-unknown-linux-gnu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Build
+        run: cargo dtb-ke-bundle bundle --release --formats none
+      - name: Package + upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=x86_64-unknown-linux-gnu
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          tar -C target/bundle/release -czf "$name" .
+          cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+
+  linux-arm64:
+    needs: prepare
+    runs-on: [linux-host]
+    env:
+      # See RUNNERS.md § Linux arm64 for how this sysroot was assembled
+      # (extracted Debian aarch64 .debs — no QEMU, nothing foreign-arch ever
+      # executed) and why fontconfig/freetype/wayland/EGL are the only real
+      # cross-link risk in this dependency tree.
+      # Fixed absolute path so incremental caching survives the ephemeral
+      # per-job checkout — see the linux-x86_64 job above / RUNNERS.md.
+      CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/aarch64-unknown-linux-gnu
+      PKG_CONFIG_ALLOW_CROSS: "1"
+      PKG_CONFIG_SYSROOT_DIR: /opt/sysroots/aarch64-linux-gnu
+      PKG_CONFIG_PATH: /opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/pkgconfig:/opt/sysroots/aarch64-linux-gnu/usr/share/pkgconfig
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # NOT --sysroot=/opt/sysroots/... — gcc already has a correct default
+      # sysroot (/usr/aarch64-linux-gnu, where the aarch64-linux-gnu-glibc
+      # pacman package puts libc/libm/etc.) baked in by the Arch package;
+      # --sysroot would *replace* that default wholesale rather than add to
+      # it, breaking glibc resolution entirely (confirmed against a real
+      # failure: `ld: cannot find /lib/libm.so.6: file in wrong format` — it
+      # fell through to the host's own /lib). -L instead, additive, pointing
+      # at the two multiarch dirs our extracted sysroot's libraries actually
+      # landed in (Debian's usr/lib vs lib split — see RUNNERS.md).
+      #
+      # -L alone isn't enough either: it only covers libraries the linker is
+      # told to find directly (-lfontconfig etc.) — it does NOT search -L
+      # paths to resolve *those* libraries' own further DT_NEEDED chain
+      # (confirmed against a real failure: ld warned "libexpat.so.1, needed
+      # by libfontconfig.so, not found" even though libexpat.so.1 was right
+      # there on an -L path, then failed for real with "undefined reference
+      # to XML_SetUserData" etc.). -Wl,-rpath-link is the flag that actually
+      # covers indirect/transitive resolution at link time.
+      RUSTFLAGS: "-C link-arg=-L/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-L/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cross-build for aarch64
+        run: cargo dtb-ke-bundle bundle --release --formats none --target aarch64-unknown-linux-gnu
+      - name: Package + upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=aarch64-unknown-linux-gnu
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          tar -C target/bundle/release -czf "$name" .
+          cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+
+  windows-x86_64:
+    needs: prepare
+    runs-on: [windows-host]
+    env:
+      # Same reasoning as the Linux jobs — fixed, pre-created by
+      # runner-setup-windows.ps1. Backslashes, not forward slashes: most
+      # Windows path APIs accept either, but gpui_windows's build.rs passes
+      # this straight through to fxc.exe (classic /switch-style MSVC
+      # toolchain argument parsing), which choked on an embedded forward
+      # slash with "The filename, directory name, or volume label syntax is
+      # incorrect" (error 123) — a plain, unquoted YAML scalar preserves
+      # backslashes literally (verified with PyYAML), so no escaping is
+      # needed for this either way.
+      CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\tip\x86_64-pc-windows-gnullvm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        # Persistent machine-wide registry policy, already set once by
+        # runner-setup-windows.ps1 — re-asserted here (idempotent, cheap) as
+        # a defensive measure in case it's ever reset out of band. See
+        # RUNNERS.md's Windows-VM section for why this is needed at all.
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Build
+        run: cargo dtb-ke-bundle bundle --release --formats none --target x86_64-pc-windows-gnullvm
+      - name: Package + upload
+        # Not shell: bash — a bare Windows Server install has no bash at all
+        # (Git for Windows, which bundles one, is never installed anywhere
+        # in this setup) — every one of these steps failed outright for
+        # exactly that reason. Native PowerShell (the default shell here,
+        # same as the Build step above) throughout instead.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $triple = "x86_64-pc-windows-gnullvm"
+          # "ä" is built from its code point, not typed literally — Windows
+          # Server only ships Windows PowerShell 5.1, which (unlike pwsh 7)
+          # reads a script file with no UTF-8 BOM using the system's ANSI
+          # code page: whatever encoding Forgejo's runner actually wrote the
+          # composited step script in, a literal "ä" here previously came out
+          # as raw mis-decoded bytes (confirmed against a real release: the
+          # asset showed up on Codeberg as "...KampfrichtereinsatzplÃ¤ne...").
+          # [char]0x00E4 is plain ASCII in the script source, so it can't be
+          # misread regardless of the file's actual encoding or which
+          # PowerShell reads it.
+          $ae = [char]0x00E4
+          # Spaced, matching meta::DISPLAY_NAME — self_update's Windows
+          # bundle_path_in_archive (updater::BIN_NAME) has to find this exact
+          # folder name inside the downloaded archive.
+          $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
+          if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
+          New-Item -ItemType Directory -Path "$folder" | Out-Null
+          # dtb-ke-bundle names the portable folder "...-x64" regardless of
+          # the actual target (cosmetic only) — the wildcard still finds it.
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          Copy-Item "$srcDir\*.exe" "$folder"
+          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
+          # Compress-Archive (.NET's ZipArchive), not `tar -a` (bsdtar):
+          # bsdtar wrote the folder's non-ASCII entry name into the zip
+          # without the UTF-8 language-encoding flag, so *any* extractor that
+          # falls back to a legacy code page for unflagged entries (confirmed
+          # against a real download: the .exe came out named
+          # "...Kampfrichtereinsatzpl„ne.exe") mangled it on extraction.
+          # ZipArchive sets that flag correctly for a non-ASCII entry name.
+          Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-arm64:
+    needs: prepare
+    runs-on: [windows-host]
+    env:
+      # See the windows-x86_64 job above for why this is backslashes, not
+      # forward slashes.
+      CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\tip\aarch64-pc-windows-gnullvm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Cross-build for aarch64
+        run: cargo dtb-ke-bundle bundle --release --formats none --target aarch64-pc-windows-gnullvm
+      - name: Package + upload
+        # See the windows-x86_64 job above for why this is PowerShell, not
+        # shell: bash (there is no bash on this VM at all).
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $triple = "aarch64-pc-windows-gnullvm"
+          # See the windows-x86_64 job above for why "ä" is built from its
+          # code point rather than typed literally, and why the zip is built
+          # with Compress-Archive rather than `tar -a` (bsdtar).
+          $ae = [char]0x00E4
+          $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
+          if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
+          New-Item -ItemType Directory -Path "$folder" | Out-Null
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          Copy-Item "$srcDir\*.exe" "$folder"
+          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
+          Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  macos-universal:
+    needs: prepare
+    runs-on: [macos-host]
+    env:
+      # --universal builds both apple-darwin slices under this one dir (cargo
+      # already segregates them into <dir>/<triple>/release/ itself) — one
+      # path covers the whole job. Pre-created by runner-setup-macos.sh.
+      CARGO_TARGET_DIR: /Users/Shared/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/universal-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Build universal binary
+        run: cargo dtb-ke-bundle bundle --release --universal
+      - name: Sign + package + upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=universal-apple-darwin
+          codesign --force --deep --sign - "target/bundle/release/DTB Kampfrichtereinsatzpläne.app"
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          # -C rather than staging a renamed copy first — the archive's
+          # top-level entry is the .app exactly as dtb-ke-bundle built it
+          # (meta::DISPLAY_NAME, spaced), matching what updater::BIN_NAME
+          # expects to find inside the downloaded archive.
+          tar -C target/bundle/release -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
+          cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+
+  publish:
+    needs:
+      - prepare
+      - linux-x86_64
+      - linux-arm64
+      - windows-x86_64
+      - windows-arm64
+      - macos-universal
+    runs-on: [linux-host]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Publish the release manifest
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          cargo dtb-ke-bundle codeberg manifest-publish \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --date "$(date -u +%Y-%m-%d)" \
+            --notes-url "https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/releases/tag/tip" \
+            --publish

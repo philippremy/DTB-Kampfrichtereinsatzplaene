@@ -1,0 +1,49 @@
+# DTB palette — the default, brand-neutral institutional colour scheme.
+#
+# Semantic roles only (no component names). Values are `#rgb` / `#rrggbb` /
+# `#rrggbbaa`. Each role has a `[light]` and a `[dark]` value. Compiled into the
+# binary via include_str!; in debug builds this file is re-read from disk.
+
+name = "DTB"
+
+[light]
+background         = "#F4F6F8"  # window / app ground
+surface            = "#FFFFFF"  # cards, content panes
+surface-foreground = "#1A1D21"  # text on `surface`
+foreground         = "#1A1D21"  # text on `background`
+muted-foreground   = "#5B6672"  # secondary text, captions
+border             = "#B1BECC"  # hairline borders, dividers
+line-strong        = "#C7CED6"  # heavier rules, control outlines
+primary            = "#007AFF"  # accent: primary buttons, selection, links
+primary-foreground = "#FFFFFF"  # text on `primary`
+accent-soft        = "#E7EEFC"  # tinted fills (chips, soft highlights)
+ring               = "#007AFF"  # focus ring
+ok                 = "#15bf6b"  # saved / success
+warn               = "#db9616"  # role conflicts, warnings
+critical           = "#e64f3e"  # destructive, errors
+selection          = "#EAF0FB"  # sidebar-row selection base (skin styles it)
+chrome             = "#EEF1F5"  # toolbar / sidebar surface base
+overlay            = "#1A1D2170" # ~44% ink — modal scrim
+emblem-plate       = "#FFFFFF"  # emblem plate — light in both themes
+emblem-ink         = "#1A1D21"  # text / monogram on the emblem plate
+
+[dark]
+background         = "#121417"
+surface            = "#191D22"
+surface-foreground = "#E6E9EC"
+foreground         = "#E6E9EC"
+muted-foreground   = "#9AA4B0"
+border             = "#2A3037"
+line-strong        = "#3A424C"
+primary            = "#007AFF"
+primary-foreground = "#0F1216"
+accent-soft        = "#1C2740"
+ring               = "#007AFF"
+ok                 = "#4FB17E"
+warn               = "#D6A24E"
+critical           = "#E0796F"
+selection          = "#232B38"
+chrome             = "#1B1F24"
+overlay            = "#00000099" # ~60% black — modal scrim
+emblem-plate       = "#F1F2F4"  # emblem plate — kept light in dark mode too
+emblem-ink         = "#1A1D21"

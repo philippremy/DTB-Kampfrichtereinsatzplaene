@@ -1,0 +1,65 @@
+[alias]
+dtb-ke-bundle = "run --quiet --package dtb-ke-bundle --"
+
+# This is required for allowing Windows to link a dynamic library on *-gnu(llvm)
+# targets, which otherwise might overflow the count of exported symbols.
+[target.i686-pc-windows-gnullvm]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.x86_64-pc-windows-gnullvm]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+]
+
+[target.aarch64-pc-windows-gnullvm]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.i686-pc-windows-gnu]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+]
+
+# This allows for further optimization by setting a specific CPU baseline
+# [target.aarch64-apple-darwin]
+# Does default to a sane baseline
+
+# ADDED ABOVE
+# [target.aarch64-pc-windows-gnullvm]
+# Does default to a sane baseline
+
+# [target.aarch64-unknown-linux-gnu]
+# Does default to a sane baseline
+
+# ADDED ABOVE
+# [target.i686-pc-windows-gnullvm]
+# Does default to a sane baseline
+
+# [target.i686-unknown-linux-gnu]
+# Does default to a sane baseline
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+]
+
+# ADDED ABOVE
+# [target.x86_64-pc-windows-gnullvm]
+# rustflags = [
+#     "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+# ]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+]

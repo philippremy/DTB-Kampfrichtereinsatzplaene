@@ -1,0 +1,9 @@
+[package]
+name = "dtb-ke-resource"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+# `debug-embed` forces compile-time embedding in debug builds too, so the
+# resource store never touches the filesystem at runtime.
+rust-embed = { version = "8", features = ["debug-embed", "include-exclude"] }

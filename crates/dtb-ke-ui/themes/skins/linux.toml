@@ -1,0 +1,16 @@
+# Linux skin — neutral modern, opaque, client-side decorations.
+
+material           = "opaque"       # blurred | mica | mica-alt | opaque
+material-opacity   = 1.0            # opaque skin: no translucency
+window-decorations = "client"       # we draw the frame + resize border
+menu-bar           = "hamburger"    # single ☰ button + popover (gpui renders no bar on Linux)
+title-bar-height   = 52.0
+radius             = 9.0
+radius-lg          = 9.0
+radius-control     = 6.0
+focus-ring         = "outline"
+selection-style    = "solid-subtle"
+shadow             = "flat"
+font-family        = ""             # empty → gpui system UI default
+mono-font-family   = ""
+motion-scale       = 0.8
