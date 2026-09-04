@@ -134,12 +134,14 @@ impl MenuBar {
         }
     }
 
-    /// The floating panel body: anchored under the trigger, capped at `max_h`
-    /// and scrolling past that so a long menu is always fully reachable.
+    /// The floating panel body: anchored under the trigger. `max_h`, when
+    /// given, caps the height and scrolls past that so a long menu is always
+    /// fully reachable — the hamburger mega-panel (Linux) is left uncapped
+    /// instead, sized to its content.
     fn panel(
         &self,
         id: &'static str,
-        max_h: Pixels,
+        max_h: Option<Pixels>,
         c: &PaletteColors,
         radius: Pixels,
     ) -> Stateful<Div> {
@@ -149,7 +151,7 @@ impl MenuBar {
             .top_full()
             //.mt(px(3.))
             .min_w(px(220.))
-            .max_h(max_h.max(px(180.)))
+            .when_some(max_h, |el, h| el.max_h(h.max(px(180.))).overflow_y_scroll())
             .flex()
             .flex_col()
             .py(px(4.))
@@ -160,7 +162,6 @@ impl MenuBar {
             .text_color(c.foreground)
             .shadow_lg()
             .occlude()
-            .overflow_y_scroll()
     }
 
     fn separator(c: &PaletteColors) -> Div {
@@ -189,7 +190,9 @@ impl MenuBar {
         let overrides = Settings::global(cx).keybindings;
         let items: Vec<_> = self.menus[menu_index].items.clone();
 
-        let mut col = self.panel("menu-dropdown", max_h, &c, radius).left_0();
+        let mut col = self
+            .panel("menu-dropdown", Some(max_h), &c, radius)
+            .left_0();
         // Coalesce separators: an item that renders as `None` (a `SystemMenu` /
         // submenu — e.g. macOS "Dienste") would otherwise leave the separators on
         // both sides of it visible as a double rule. Only emit a separator once a
@@ -216,13 +219,14 @@ impl MenuBar {
     }
 
     /// One popover holding every menu as a labelled section (hamburger mode).
-    fn mega_panel(&self, max_h: Pixels, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// Uncapped height — sized to its content, not to the viewport.
+    fn mega_panel(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_px();
         let overrides = Settings::global(cx).keybindings;
         let menus: Vec<OwnedMenu> = self.menus.clone();
 
-        let mut col = self.panel("menu-mega-panel", max_h, &c, radius).left_0();
+        let mut col = self.panel("menu-mega-panel", None, &c, radius).left_0();
         for (mi, menu) in menus.iter().enumerate() {
             if mi > 0 {
                 col = col.child(Self::separator(&c));
@@ -307,9 +311,8 @@ impl MenuBar {
             }))
     }
 
-    fn render_hamburger(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_hamburger(&mut self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_open = self.open.is_some();
-        let max_h = window.viewport_size().height - px(30.);
 
         div()
             .id("menu-hamburger")
@@ -325,7 +328,7 @@ impl MenuBar {
                     .on_click(cx.listener(|this, _, _window, cx| this.toggle(0, cx))),
             )
             .when(is_open, |el| {
-                let panel = Self::appear(self.mega_panel(max_h, cx), "menu-mega-anim", cx);
+                let panel = Self::appear(self.mega_panel(cx), "menu-mega-anim", cx);
                 el.child(deferred(panel))
             })
     }
