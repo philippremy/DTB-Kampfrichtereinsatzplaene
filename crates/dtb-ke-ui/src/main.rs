@@ -1,6 +1,8 @@
 // The UI layer is still being built out — the backend and theme layer expose
 // more API than the current (stub) views consume.
 #![allow(dead_code)]
+// Do not show a console on Windows
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod about;
 mod actions;
