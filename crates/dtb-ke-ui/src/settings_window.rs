@@ -5,7 +5,9 @@
 //! `app::OpenSettings` just activates it.
 //!
 //! * **Allgemein** — appearance (a three-way System / Hell / Dunkel switch),
-//!   reduce-motion, autosave delay.
+//!   reduce-motion, reduce-transparency (forces every window fully opaque —
+//!   see [`crate::material`] — applied live to already-open windows via
+//!   [`crate::material::apply_background_to_all_windows`]), autosave delay.
 //! * **Tastenkürzel** — every configurable menu command with its shortcut shown
 //!   as a single-block [`Kbd`]. "Aufnehmen" records a new chord via
 //!   [`App::intercept_keystrokes`]; the capture is checked against the other
@@ -368,6 +370,19 @@ impl SettingsWindow {
                         cx.set_reduce_motion(next);
                         Settings::update(cx, move |s| s.reduce_motion = next);
                         cx.refresh_windows();
+                    }))
+                    .into_any_element(),
+            ))
+            .child(divider(&c))
+            .child(setting_row(
+                "Transparenz reduzieren",
+                "Stellt jedes Fenster vollständig deckend dar — ohne Unschärfe, Mica oder Acrylic. \
+                 Nützlich bei eingeschränkter Grafikleistung oder für besseren Kontrast.",
+                &c,
+                Toggle::new("reduce-transparency", settings.reduce_transparency)
+                    .on_change(cx.processor(|_, next: bool, _window, cx| {
+                        Settings::update(cx, move |s| s.reduce_transparency = next);
+                        crate::material::apply_background_to_all_windows(cx);
                     }))
                     .into_any_element(),
             ))

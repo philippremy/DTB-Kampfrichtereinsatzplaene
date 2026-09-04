@@ -6,41 +6,70 @@
 //! (title bar, sidebar) is painted at reduced opacity so the real backdrop
 //! shows through. The **content** area always stays fully opaque — judging
 //! tables must never sit on a moving backdrop. On Windows, whether it's
-//! *actually* translucent depends on the OS build —
-//! [`is_translucent`]/[`window_background`] both resolve that for real via
-//! [`crate::skin::window::windows_backdrop_support`] rather than trusting the
-//! skin's nominal material, so an older build falls all the way back to a
-//! plain opaque window instead of a half-drawn, hard-to-read one.
+//! *actually* translucent depends on the OS build — [`effective`] resolves
+//! that for real via [`crate::skin::window::windows_backdrop_support`] rather
+//! than trusting the skin's nominal material, so an older build falls all the
+//! way back to a plain opaque window instead of a half-drawn, hard-to-read
+//! one. The user's `Settings::reduce_transparency` overrides all of this to
+//! `Opaque` outright, same idea as the OS-level "reduce transparency"
+//! accessibility toggles this mirrors.
 //!
 //! Colours are still token-derived: the translucent fills are the palette's
-//! `chrome` / `surface` roles with the skin's `material_opacity` alpha.
+//! `chrome` role, at an alpha the active skin authors
+//! ([`crate::theme::SkinMetrics::material_opacity_for`]).
 
-use gpui::{Hsla, WindowBackgroundAppearance};
+use gpui::{App, Hsla, WindowBackgroundAppearance};
 
+use crate::settings::Settings;
 use crate::skin::window::WindowsBackdropSupport;
-use crate::theme::{Theme, WindowMaterial};
+use crate::theme::{ActiveTheme, Theme, WindowMaterial};
 
-/// Whether the active skin's window material is actually going to render as
-/// translucent on this machine — not just whether it's nominally non-`Opaque`.
-///
-/// `Mica`/`MicaAlt` only have a visible effect on Windows 11 22H2+; see
-/// [`window_background`]'s doc comment for the full fallback chain. If the
-/// running build can't draw anything behind the window, painting our own
-/// chrome (title bar, sidebar) at reduced opacity anyway is exactly the
-/// "merely opacity-reduced, hard to read" bug this exists to avoid — so this
-/// checks the same *effective*, already-stepped-down material that
-/// [`window_background`] actually requests, not the skin's nominal one.
-pub fn is_translucent(theme: &Theme) -> bool {
+/// What actually gets requested from the OS / painted as the chrome's
+/// alpha-blend target — the skin's nominal [`WindowMaterial`], resolved
+/// against runtime facts (the real Windows OS build, the user's "reduce
+/// transparency" setting) that can step it down to something plainer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Effective {
+    Opaque,
+    /// A real blur — macOS's native compositor blur, or Windows' Acrylic
+    /// blur-behind fallback when Mica isn't available.
+    Blurred,
+    Mica,
+    MicaAlt,
+}
+
+/// Resolve the skin's nominal material down to what's actually going to be
+/// drawn right now. See the module doc comment and [`window_background`]'s
+/// for the full fallback chain this implements.
+fn effective(theme: &Theme, cx: &App) -> Effective {
+    if Settings::global(cx).reduce_transparency {
+        return Effective::Opaque;
+    }
     match theme.skin.material {
-        WindowMaterial::Opaque => false,
-        WindowMaterial::Blurred => true,
-        WindowMaterial::Mica | WindowMaterial::MicaAlt => {
-            crate::skin::window::windows_backdrop_support() != WindowsBackdropSupport::None
-        }
+        WindowMaterial::Opaque => Effective::Opaque,
+        WindowMaterial::Blurred => Effective::Blurred,
+        WindowMaterial::Mica => match crate::skin::window::windows_backdrop_support() {
+            WindowsBackdropSupport::Mica => Effective::Mica,
+            WindowsBackdropSupport::Acrylic => Effective::Blurred,
+            WindowsBackdropSupport::None => Effective::Opaque,
+        },
+        WindowMaterial::MicaAlt => match crate::skin::window::windows_backdrop_support() {
+            WindowsBackdropSupport::Mica => Effective::MicaAlt,
+            WindowsBackdropSupport::Acrylic => Effective::Blurred,
+            WindowsBackdropSupport::None => Effective::Opaque,
+        },
     }
 }
 
-/// The background mode to request when opening a window.
+/// Whether the active skin's window material is actually going to render as
+/// translucent on this machine right now — not just whether it's nominally
+/// non-`Opaque`. See [`effective`].
+pub fn is_translucent(theme: &Theme, cx: &App) -> bool {
+    effective(theme, cx) != Effective::Opaque
+}
+
+/// The background mode to request when opening (or re-requesting for an
+/// already-open) window.
 ///
 /// `Mica`/`MicaAlt` only ever have a visible effect on Windows 11 22H2+
 /// (`DWMWA_SYSTEMBACKDROP_TYPE`, build 22621) — asking for either on an
@@ -54,24 +83,33 @@ pub fn is_translucent(theme: &Theme) -> bool {
 /// 1809+ — which gpui sends on Windows via the older, undocumented
 /// `SetWindowCompositionAttribute` API's `ACCENT_ENABLE_ACRYLICBLURBEHIND`
 /// state, i.e. a real Acrylic-style blur, not a plain translucency — all the
-/// way down to `Opaque` on anything older that supports neither.
-/// [`is_translucent`] mirrors the same fallback so the chrome never paints
-/// translucent over a backdrop that was never actually drawn.
-pub fn window_background(theme: &Theme) -> WindowBackgroundAppearance {
-    match theme.skin.material {
-        WindowMaterial::Blurred => WindowBackgroundAppearance::Blurred,
-        WindowMaterial::Mica => match crate::skin::window::windows_backdrop_support() {
-            WindowsBackdropSupport::Mica => WindowBackgroundAppearance::MicaBackdrop,
-            WindowsBackdropSupport::Acrylic => WindowBackgroundAppearance::Blurred,
-            WindowsBackdropSupport::None => WindowBackgroundAppearance::Opaque,
-        },
-        WindowMaterial::MicaAlt => match crate::skin::window::windows_backdrop_support() {
-            WindowsBackdropSupport::Mica => WindowBackgroundAppearance::MicaAltBackdrop,
-            WindowsBackdropSupport::Acrylic => WindowBackgroundAppearance::Blurred,
-            WindowsBackdropSupport::None => WindowBackgroundAppearance::Opaque,
-        },
-        WindowMaterial::Opaque => WindowBackgroundAppearance::Opaque,
+/// way down to `Opaque` on anything older that supports neither, or when the
+/// user has `Settings::reduce_transparency` on. [`is_translucent`] mirrors
+/// the same resolution so the chrome never paints translucent over a
+/// backdrop that was never actually drawn.
+pub fn window_background(theme: &Theme, cx: &App) -> WindowBackgroundAppearance {
+    match effective(theme, cx) {
+        Effective::Opaque => WindowBackgroundAppearance::Opaque,
+        Effective::Blurred => WindowBackgroundAppearance::Blurred,
+        Effective::Mica => WindowBackgroundAppearance::MicaBackdrop,
+        Effective::MicaAlt => WindowBackgroundAppearance::MicaAltBackdrop,
     }
+}
+
+/// Re-requests [`window_background`] on every open window and repaints them —
+/// call after `Settings::reduce_transparency` (or anything else `effective`
+/// depends on) changes, so already-open windows pick it up immediately
+/// instead of only the next one opened. `cx.refresh_windows()` alone would
+/// redraw our own chrome at the new alpha but never touch the OS-level
+/// backdrop itself — that needs this explicit per-window call.
+pub fn apply_background_to_all_windows(cx: &mut App) {
+    for handle in cx.windows() {
+        let _ = handle.update(cx, |_, window, cx| {
+            let appearance = window_background(cx.theme(), cx);
+            window.set_background_appearance(appearance);
+        });
+    }
+    cx.refresh_windows();
 }
 
 fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
@@ -80,30 +118,35 @@ fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 
 /// Fill for the window root. Transparent under a translucent skin (so the blur
 /// is visible), the opaque background otherwise.
-pub fn root_fill(theme: &Theme) -> Hsla {
-    if is_translucent(theme) {
+pub fn root_fill(theme: &Theme, cx: &App) -> Hsla {
+    if is_translucent(theme, cx) {
         gpui::transparent_black()
     } else {
         theme.color.background
     }
 }
 
-/// Fill for the title bar / toolbar band.
-pub fn chrome_fill(theme: &Theme) -> Hsla {
-    if is_translucent(theme) {
-        with_alpha(theme.color.chrome, theme.skin.material_opacity)
-    } else {
-        theme.color.chrome
+/// Fill for the title bar / sidebar chrome — translucent (at the skin's
+/// [`crate::theme::SkinMetrics::material_opacity_for`]) when [`effective`]
+/// resolves to a real backdrop, otherwise the plain opaque chrome colour.
+fn chrome_like_fill(theme: &Theme, cx: &App) -> Hsla {
+    match effective(theme, cx) {
+        Effective::Opaque => theme.color.chrome,
+        Effective::Blurred => with_alpha(theme.color.chrome, theme.skin.material_opacity_for(true)),
+        Effective::Mica | Effective::MicaAlt => {
+            with_alpha(theme.color.chrome, theme.skin.material_opacity_for(false))
+        }
     }
 }
 
+/// Fill for the title bar / toolbar band.
+pub fn chrome_fill(theme: &Theme, cx: &App) -> Hsla {
+    chrome_like_fill(theme, cx)
+}
+
 /// Fill for the navigation sidebar.
-pub fn sidebar_fill(theme: &Theme) -> Hsla {
-    if is_translucent(theme) {
-        with_alpha(theme.color.chrome, theme.skin.material_opacity)
-    } else {
-        theme.color.chrome
-    }
+pub fn sidebar_fill(theme: &Theme, cx: &App) -> Hsla {
+    chrome_like_fill(theme, cx)
 }
 
 /// Fill for the content pane — always fully opaque.

@@ -16,7 +16,7 @@ use crate::theme::{ActiveTheme, WindowDecorations};
 /// frame (see [`crate::skin::decorations`]).
 pub fn main_window_options(cx: &mut App) -> WindowOptions {
     let theme = cx.theme();
-    let window_background = material::window_background(theme);
+    let window_background = material::window_background(theme, cx);
     let client_decorations = theme.skin.window_decorations == WindowDecorations::Client;
 
     WindowOptions {

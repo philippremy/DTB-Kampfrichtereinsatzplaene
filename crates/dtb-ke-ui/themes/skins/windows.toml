@@ -2,6 +2,11 @@
 
 material           = "mica"         # blurred | mica | mica-alt | opaque
 material-opacity   = 0.85           # chrome fill alpha when the window is translucent
+# Windows 11 22H2+ requested here gets real Mica at 0.85 above. Anything
+# older steps down to a real Acrylic-blur-behind (see skin/window.rs's
+# windows_backdrop_support) — a flat blur reads thinner than Mica at the
+# same alpha, so it gets a touch more opaque instead of matching exactly.
+material-opacity-blurred = 0.92
 window-decorations = "server"
 menu-bar           = "in-app"       # gpui renders no menu bar on Windows
 title-bar-height   = 48.0

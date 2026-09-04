@@ -329,7 +329,7 @@ impl Render for Sidebar {
             .flex_col()
             // Width is owned by the enclosing resizable panel in `AppShell`.
             .size_full()
-            .bg(material::sidebar_fill(theme))
+            .bg(material::sidebar_fill(theme, cx))
             .border_r_1()
             .border_color(c.border)
             .child(

@@ -149,6 +149,14 @@ pub struct SkinMetrics {
     /// Alpha applied to the chrome (title bar / sidebar) fill when [`Self::material`]
     /// is translucent. `1.0` for opaque skins.
     pub material_opacity: f32,
+    /// Alpha for a plain-blur backdrop specifically — macOS's native blur, or
+    /// Windows' Acrylic-blur-behind fallback when Mica isn't available (see
+    /// `material::window_background`'s doc comment). A flat blur reads
+    /// thinner than Mica at the same alpha, so this can run a little higher
+    /// than [`Self::material_opacity`]. Omit to just reuse `material_opacity`
+    /// unchanged — this is why every skin doesn't have to set it.
+    #[serde(default)]
+    pub material_opacity_blurred: Option<f32>,
     pub window_decorations: WindowDecorations,
     pub menu_bar: MenuStyle,
     pub title_bar_height: f32,
@@ -182,6 +190,19 @@ impl SkinMetrics {
     }
     pub fn title_bar_height_px(&self) -> Pixels {
         px(self.title_bar_height)
+    }
+
+    /// The chrome-fill alpha to use for a translucent window right now —
+    /// [`Self::material_opacity_blurred`] for a plain blur backdrop, falling
+    /// back to [`Self::material_opacity`] when unset; [`Self::material_opacity`]
+    /// unchanged for a real Mica/MicaAlt backdrop.
+    pub fn material_opacity_for(&self, blurred: bool) -> f32 {
+        if blurred {
+            self.material_opacity_blurred
+                .unwrap_or(self.material_opacity)
+        } else {
+            self.material_opacity
+        }
     }
 
     /// The font family to use, or `None` for gpui's system UI default.

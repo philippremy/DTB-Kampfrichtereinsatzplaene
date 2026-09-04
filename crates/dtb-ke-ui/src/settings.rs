@@ -23,6 +23,10 @@ pub struct Settings {
     pub theme_mode: ThemeMode,
     /// Snap every animation to its end state (accessibility / low-power).
     pub reduce_motion: bool,
+    /// Force every window fully opaque — no blur, no Mica/MicaAlt/Acrylic —
+    /// regardless of what the active skin's material would otherwise be.
+    /// See [`crate::material`].
+    pub reduce_transparency: bool,
     /// How long editing must be quiet before the autosave writes the blob.
     pub autosave: AutosaveDelay,
     /// Overrides the logger's automatic level detection (see [`dtb_ke_log`]).
@@ -47,6 +51,7 @@ impl Default for Settings {
         Self {
             theme_mode: ThemeMode::default(),
             reduce_motion: false,
+            reduce_transparency: false,
             autosave: AutosaveDelay::default(),
             log_level: LogLevel::default(),
             keybindings: BTreeMap::new(),

@@ -453,7 +453,7 @@ impl AppShell {
     fn title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bar_height = theme.skin.title_bar_height_px();
-        let (fill, border) = (material::chrome_fill(theme), theme.color.border);
+        let (fill, border) = (material::chrome_fill(theme, cx), theme.color.border);
 
         // Window drag / maximize / the min-max-close controls live on
         // `menu_bar_row` under CSD (Linux) — not here. They used to sit at the
@@ -557,7 +557,11 @@ impl AppShell {
             .flex()
             .flex_none()
             .items_center()
-            .bg(material::chrome_fill(theme))
+            // Always fully opaque, unlike the rest of the chrome — the
+            // in-app menu bar's own dropdowns/popovers already sit above
+            // arbitrary content, so a translucent strip behind them reads as
+            // a rendering bug rather than "Liquid Glass".
+            .bg(theme.color.chrome)
             .border_b_1()
             .border_color(theme.color.border)
             .when(owns_chrome, |el| {
@@ -680,7 +684,7 @@ impl Render for AppShell {
 
         let theme = cx.theme();
         let font = theme.skin.font_family();
-        let root_fill = material::root_fill(theme);
+        let root_fill = material::root_fill(theme, cx);
         let content_fill = material::content_fill(theme);
 
         let shell = div()
