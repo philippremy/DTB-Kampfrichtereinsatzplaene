@@ -2,7 +2,7 @@
 
 use gpui::{Div, Hsla, Styled, div, px};
 
-use crate::theme::{FocusRing, SelectionStyle, Theme};
+use crate::theme::{Appearance, FocusRing, SelectionStyle, Theme};
 
 /// The border colour a bordered field uses, given whether it is focused and the
 /// skin's focus treatment.
@@ -39,7 +39,19 @@ pub fn selection_fill(theme: &Theme) -> (Hsla, Hsla) {
     let c = &theme.color;
     match theme.skin.selection_style {
         SelectionStyle::GlassTint => (c.primary, gpui::white()),
-        SelectionStyle::WinuiPill => (c.surface, c.foreground),
+        // A crisp pill against the chrome, matching real WinUI 3 (File
+        // Explorer, Settings). In light mode `surface` (near-white) already
+        // pops against `chrome` (a very light grey) — but the dark palette's
+        // `surface` and `chrome` are only a couple of RGB points apart, so
+        // the "pill" was nearly invisible there (worse still on Windows'
+        // blurred backdrop, which further washes out the already-faint
+        // contrast). `selection` is the palette's dedicated token for
+        // exactly this ("sidebar-row selection base") and is meaningfully
+        // lighter than `chrome` in dark mode — use it there instead.
+        SelectionStyle::WinuiPill => match theme.appearance {
+            Appearance::Light => (c.surface, c.foreground),
+            Appearance::Dark => (c.selection, c.foreground),
+        },
         SelectionStyle::SolidSubtle => (c.selection, c.foreground),
     }
 }
