@@ -454,8 +454,11 @@ impl AppShell {
         let theme = cx.theme();
         let bar_height = theme.skin.title_bar_height_px();
         let (fill, border) = (material::chrome_fill(theme), theme.color.border);
-        let owns_chrome = titlebar::owns_window_chrome(window);
 
+        // Window drag / maximize / the min-max-close controls live on
+        // `menu_bar_row` under CSD (Linux) — not here. They used to sit at the
+        // end of this row, but that's the same row as the competition toolbar,
+        // so the toolbar visibly shifted left whenever the controls appeared.
         div()
             .id("title-bar")
             .flex()
@@ -468,39 +471,11 @@ impl AppShell {
             .bg(fill)
             .border_b_1()
             .border_color(border)
-            // Under CSD the title bar drives window move / maximize.
-            .when(owns_chrome, |el| {
-                el.window_control_area(WindowControlArea::Drag)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| this.drag_armed = true),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _window, _cx| this.drag_armed = false),
-                    )
-                    .on_mouse_down_out(cx.listener(|this, _, _window, _cx| this.drag_armed = false))
-                    .on_mouse_move(cx.listener(|this, _, window, _cx| {
-                        if this.drag_armed {
-                            this.drag_armed = false;
-                            window.start_window_move();
-                        }
-                    }))
-                    .on_click(cx.listener(|_, ev: &ClickEvent, window, _cx| {
-                        if ev.click_count() >= 2 {
-                            window.zoom_window();
-                        }
-                    }))
-            })
             .child(
                 Button::icon("toggle-sidebar", Icon::PanelLeft)
                     .on_click(cx.listener(|this, _, _window, cx| this.toggle_sidebar(cx))),
             )
             .child(self.toolbar.clone())
-            .when(owns_chrome, |el| {
-                el.child(div().flex_1())
-                    .child(self.window_controls(window, cx))
-            })
     }
 
     /// The min / max / close buttons — drawn only under client-side decorations.
@@ -567,15 +542,52 @@ impl AppShell {
 
     /// The in-app menu-bar strip — only on skins gpui doesn't give a native bar
     /// (Windows, Linux). Sits above the toolbar band.
-    fn menu_bar_row(&self, cx: &Context<Self>) -> impl IntoElement {
+    ///
+    /// Under client-side decorations (Linux) this row — not the toolbar band
+    /// below it — also drives window drag / maximize and carries the
+    /// min/max/close controls, GNOME/Adwaita-CSD-style: they sit beside the
+    /// hamburger button, so the toolbar band never shifts to make room for
+    /// them.
+    fn menu_bar_row(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let owns_chrome = titlebar::owns_window_chrome(window);
+
         div()
+            .id("menu-bar-row")
             .flex()
             .flex_none()
+            .items_center()
             .bg(material::chrome_fill(theme))
             .border_b_1()
             .border_color(theme.color.border)
+            .when(owns_chrome, |el| {
+                el.window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| this.drag_armed = true),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, _cx| this.drag_armed = false),
+                    )
+                    .on_mouse_down_out(cx.listener(|this, _, _window, _cx| this.drag_armed = false))
+                    .on_mouse_move(cx.listener(|this, _, window, _cx| {
+                        if this.drag_armed {
+                            this.drag_armed = false;
+                            window.start_window_move();
+                        }
+                    }))
+                    .on_click(cx.listener(|_, ev: &ClickEvent, window, _cx| {
+                        if ev.click_count() >= 2 {
+                            window.zoom_window();
+                        }
+                    }))
+            })
             .child(self.menu_bar.clone())
+            .when(owns_chrome, |el| {
+                el.child(div().flex_1())
+                    .child(self.window_controls(window, cx))
+            })
     }
 
     /// Show / hide the sidebar. Re-opening wipes the resizable state so the
@@ -739,7 +751,9 @@ impl Render for AppShell {
                     },
                 ))
             })
-            .when(skin_menu::in_app(cx), |el| el.child(self.menu_bar_row(cx)))
+            .when(skin_menu::in_app(cx), |el| {
+                el.child(self.menu_bar_row(window, cx))
+            })
             .child(self.title_bar(window, cx))
             .child(self.body(content_fill, cx))
             .children(self.updater_toast(cx));

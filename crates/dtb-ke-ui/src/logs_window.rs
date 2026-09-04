@@ -69,7 +69,7 @@ fn window_options(cx: &mut App) -> WindowOptions {
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some(TITLE.into()),
-            appears_transparent: true,
+            appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
         kind: WindowKind::Normal,

@@ -291,7 +291,7 @@ pub fn window_options(cx: &mut App) -> WindowOptions {
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some("DTB Kampfrichtereinsatzpläne · Vorschau".into()),
-            appears_transparent: true,
+            appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
         ..Default::default()

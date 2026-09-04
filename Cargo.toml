@@ -73,6 +73,9 @@ windows = { version = "0.61", features = [
     "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage",
     "Win32_System_Ole", "Win32_System_Variant", "Win32_UI_Shell",
     "Win32_UI_Shell_Common", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging",
+    # `RtlGetVersion` (skin/window.rs's `windows_backdrop_support`) — the real
+    # OS build number, since `GetVersionEx` lies without an app manifest.
+    "Wdk_System_SystemServices", "Win32_System_SystemInformation",
 ] }
 windows-core = { version = "0.61.2" }
 gpui_platform = { git = "https://github.com/zed-industries/zed.git" }

@@ -107,7 +107,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some(kind.title().into()),
-            appears_transparent: true,
+            appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
         kind: WindowKind::Normal,
