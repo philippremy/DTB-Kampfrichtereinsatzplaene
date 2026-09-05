@@ -498,6 +498,18 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     fresh_dir(&appdir).map_err(io)?;
     copy_tree(&prefix.join("usr"), &appdir.join("usr"))?;
 
+    // appimagetool only looks for the *legacy* AppStream name
+    // `<id>.appdata.xml` (still the one the AppImage docs prescribe), not the
+    // modern `<id>.metainfo.xml` we ship everywhere else — AppImage/
+    // appimagetool#77. Rename it inside the AppDir so the check passes; the
+    // `.deb`/`.rpm`/tarball keep `.metainfo.xml` (what distro tooling wants).
+    let meta_dir = appdir.join("usr/share/metainfo");
+    let modern = meta_dir.join(format!("{}.metainfo.xml", meta::IDENTIFIER));
+    if modern.exists() {
+        let legacy = meta_dir.join(format!("{}.appdata.xml", meta::IDENTIFIER));
+        std::fs::rename(&modern, &legacy).map_err(io)?;
+    }
+
     // AppRun launcher.
     let apprun = appdir.join("AppRun");
     write(
