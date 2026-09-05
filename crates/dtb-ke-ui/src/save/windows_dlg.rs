@@ -4,11 +4,19 @@
 //! A `DialogEvents` COM object ([`windows::core::implement`]) is advised on the
 //! dialog so it behaves like the macOS panel:
 //!
-//! * `OnTypeChange` shows only the option group for the chosen format —
-//!   `SetControlState` on a *group* id (from `StartVisualGroup`/
-//!   `EndVisualGroup`) does cascade to every control added inside it, per
-//!   Microsoft's own docs ("doing so affects all of the controls within
-//!   it") — confirmed against the actual API reference, not assumed.
+//! * `OnTypeChange` shows only the option group for the chosen format.
+//!   Microsoft's own docs for `StartVisualGroup` say a group's state
+//!   "affects all of the controls within it", which reads as "just call
+//!   `SetControlState` on the group id" — a first pass here did exactly
+//!   that, and a real run showed it doesn't reliably hold once the dialog
+//!   is already showing: switching to DOCX still rendered every PDF
+//!   checkbox, cramped into whatever room the DOCX section left, even with
+//!   the PDF group itself set to `CDCS_INACTIVE`. Whatever the docs mean by
+//!   that sentence, it evidently isn't "a later live `SetControlState` on
+//!   the group re-hides its children" — so `OnTypeChange` now also sets
+//!   every individual control's own state explicitly (each PDF checkbox +
+//!   `CONFLICT_INFO`, and the DOCX checkbox), which is the one thing the
+//!   API unambiguously supports and is what actually holds at runtime.
 //! * `OnCheckButtonToggled` re-runs [`pdf_standard_conflicts`] and disables
 //!   the PDF standards that would clash — **only** when the toggled control
 //!   was actually one of the PDF-standard checkboxes. A real bug (caught
@@ -254,11 +262,31 @@ impl IFileDialogEvents_Impl for DialogEvents_Impl {
             _ => (CDCS_INACTIVE, CDCS_INACTIVE),
         };
         unsafe {
+            // The *group* id's own state turned out not to reliably hide its
+            // children once the dialog is already showing — live testing
+            // still showed every PDF checkbox, cramped into whatever room
+            // DOCX's own section left, even with the group itself set to
+            // CDCS_INACTIVE here. That contradicts Microsoft's own docs for
+            // StartVisualGroup ("[a group's state] affects all of the
+            // controls within it") — evidently that only reliably holds for
+            // the group's *initial* configuration, not a later live change
+            // from an event handler. Setting every individual control's own
+            // state explicitly, not just the group's, is the fix that
+            // actually holds at runtime.
             customize.SetControlState(GROUP_PDF, pdf)?;
             customize.SetControlState(GROUP_DOCX, docx)?;
+            customize.SetControlState(CHECK_DOCX_EMBED, docx)?;
         }
         if pdf == CDCS_ENABLEDVISIBLE {
+            // Sets every PDF checkbox + CONFLICT_INFO individually.
             self.refresh_conflicts(&customize)?;
+        } else {
+            unsafe {
+                for (id, _) in &self.pdf_checks {
+                    customize.SetControlState(*id, CDCS_INACTIVE)?;
+                }
+                customize.SetControlState(CONFLICT_INFO, CDCS_INACTIVE)?;
+            }
         }
         Ok(())
     }
