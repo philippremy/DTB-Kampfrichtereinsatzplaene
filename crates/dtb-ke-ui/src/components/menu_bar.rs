@@ -149,7 +149,6 @@ impl MenuBar {
             .id(id)
             .absolute()
             .top_full()
-            //.mt(px(3.))
             .min_w(px(220.))
             .when_some(max_h, |el, h| el.max_h(h.max(px(180.))).overflow_y_scroll())
             .flex()
@@ -226,7 +225,7 @@ impl MenuBar {
         let overrides = Settings::global(cx).keybindings;
         let menus: Vec<OwnedMenu> = self.menus.clone();
 
-        let mut col = self.panel("menu-mega-panel", None, &c, radius).left_0();
+        let mut col = self.panel("menu-mega-panel", Some(px(420.)), &c, radius).left_0();
         for (mi, menu) in menus.iter().enumerate() {
             if mi > 0 {
                 col = col.child(Self::separator(&c));
