@@ -13,10 +13,16 @@
 //!   cargo dtb-ke-bundle helper  [--release]        just (re)stage the helper
 //!   cargo dtb-ke-bundle icons                      regenerate icon variants
 //!   cargo dtb-ke-bundle bundle  [--debug] [--formats a,b,c] [--sign <id>]
+//!   cargo dtb-ke-bundle debug-info [--universal | --target <t>] <out.tar.gz>
+//!     package `[profile.release] split-debuginfo = "packed"`'s sidecar —
+//!     macOS's `.dSYM`, Linux's `.dwp` — kept entirely separate from `bundle`
+//!     so it never leaks into an installed `.deb`/`.rpm`/`.AppImage`. Windows
+//!     (gnullvm) produces nothing to package here — see `debug_info.rs`.
 
 mod archive;
 mod bundle;
 mod codeberg;
+mod debug_info;
 mod helper;
 mod icon;
 mod linux;
@@ -71,6 +77,26 @@ fn main() {
                 sign,
                 universal,
                 target,
+            }) {
+                eprintln!("dtb-ke-bundle: {e}");
+                exit(1);
+            }
+        }
+        "debug-info" => {
+            let release = !has("--debug");
+            let universal = has("--universal");
+            let target = flag_value(&rest, "--target");
+            let Some(out) = rest.last().filter(|a| !a.starts_with("--")) else {
+                eprintln!(
+                    "dtb-ke-bundle: debug-info needs an output .tar.gz path as the last argument"
+                );
+                exit(2);
+            };
+            if let Err(e) = debug_info::run(debug_info::Options {
+                release,
+                universal,
+                target,
+                out: std::path::PathBuf::from(out),
             }) {
                 eprintln!("dtb-ke-bundle: {e}");
                 exit(1);
@@ -171,7 +197,11 @@ fn run_codeberg(rest: &[String]) {
                 .map(|(_, a)| std::path::PathBuf::from(a))
                 .filter(|p| p.exists())
                 .collect();
-            client.upload(&release_ids, &files)
+            if has("--plain") {
+                client.upload_plain(&release_ids, &files)
+            } else {
+                client.upload(&release_ids, &files)
+            }
         }
         "manifest-publish" => {
             let (Some(release_id), Some(version)) = (
@@ -228,14 +258,18 @@ fn usage() {
   cargo dtb-ke-bundle helper [--release]     just (re)stage the crash helper
   cargo dtb-ke-bundle icons                  regenerate .icns / .ico / PNG icons from the master
   cargo dtb-ke-bundle bundle [options]       build + package for the host OS
+  cargo dtb-ke-bundle debug-info [options] <out.tar.gz>  package the split-debuginfo sidecar
   cargo dtb-ke-bundle manifest [options] <archive>...   write the self_update release manifest
   cargo dtb-ke-bundle codeberg <prepare|upload|manifest-publish> [options]   CI release helpers
 
 codeberg subcommands (need $CODEBERG_TOKEN):
   prepare --tag <t> --target <commitish> --title <t> [--notes-file <p>] [--draft] [--prerelease]
       replace any existing release+tag named <t>, print/emit release_id=<id>
-  upload --release-id <id> [--release-id <id2> ...] <file>...
-      upload each file (+ a small manifest fragment) to every given release
+  upload [--plain] --release-id <id> [--release-id <id2> ...] <file>...
+      upload each file (+ a small manifest fragment) to every given release —
+      --plain skips the fragment, for assets self_update must never see
+      (e.g. a debug-info archive: it would otherwise look like a downloadable
+      app update to publish_manifest)
   manifest-publish --release-id <id> --version <v> [--date <d>] [--notes-url <u>] [--publish]
       merge every fragment on the release into manifest.json, upload it, clean up
 
@@ -252,6 +286,12 @@ bundle options:
   --sign <identity>    codesign identity for the macOS .app (default: ad-hoc \"-\")
   --universal          macOS only: build x86_64 + aarch64 and lipo them into one binary
   --target <triple>    cross/slice-build for this target instead of the host's native one
+
+debug-info options (never errors when there's nothing to package — see RUNNERS.md):
+  --debug              package the debug build's sidecar (default: release)
+  --universal          macOS only: merge the two --universal slices' .dSYM with lipo
+  --target <triple>    the specific target the sidecar was built for (default: host)
+  <out.tar.gz>         required, must be the last argument
 "
     );
 }

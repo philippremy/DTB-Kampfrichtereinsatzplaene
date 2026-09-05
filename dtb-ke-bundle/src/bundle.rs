@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use crate::util::{self, built_binary_path, bundle_dir, fresh_dir};
 use crate::{helper, icon, linux, macos, meta, windows};
 
-/// The two Mach-O slices a `--universal` build merges with `lipo`.
-const UNIVERSAL_TARGETS: [&str; 2] = ["x86_64-apple-darwin", "aarch64-apple-darwin"];
+/// The two Mach-O slices a `--universal` build merges with `lipo`. `pub(crate)`
+/// — `debug_info::universal_dsym` merges the same two slices' `.dSYM`s the
+/// same way.
+pub(crate) const UNIVERSAL_TARGETS: [&str; 2] = ["x86_64-apple-darwin", "aarch64-apple-darwin"];
 
 pub struct Options {
     /// Package the release binary (default) or the debug one (`--debug`).

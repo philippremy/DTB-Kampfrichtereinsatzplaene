@@ -112,7 +112,7 @@ lto = "fat" # Enables link-time-optimizations.
 opt-level = "z" # Smallest code. gpui / taffy are pinned back to 3 below (hot render path).
 panic = "abort" # Higher performance by disabling panic handlers.
 debug = "line-tables-only" # debug info, used by the offline symbolication helper (see next line)
-split-debuginfo = "packed" # dsymutil produces target/release/<bin>.dSYM (keep by UUID, don't ship)
+split-debuginfo = "packed" # Produces .dsym on Darwin and .dwp on Linux (.pdb for Windows is handled differently, see .cargo/config.toml)
 strip = "symbols" # Still strip the whole binary, debug info and symbols stay in the generated external bundle
 
 # The render / event / layout path must be optimized for speed or the UI is

@@ -622,6 +622,111 @@ unaffected either way (it doesn't touch entry names, only appends signature
 data) but hasn't been separately re-verified against a `Compress-Archive`-
 built zip specifically.
 
+## Debug info: dSYM / dwp / PDB alongside the release binaries
+
+CI uploads each platform's separate debug-info file — macOS's `.dSYM`,
+Linux's `.dwp`, Windows' `.pdb` — so a real crash minidump can be symbolised
+offline (`dtb-ke-symbolize`, `minidump-stackwalk`, `lldb`, WinDbg) without
+redistributing full debuginfo in the shipped binary. macOS/Linux get theirs
+from `[profile.release] split-debuginfo = "packed"` (workspace `Cargo.toml`,
+`debug = "line-tables-only"`) exactly as the rustc book describes; Windows
+needed a real investigation to get there, since that same setting is a dead
+end on `gnullvm` — established by testing rather than by trusting the rustc
+book's summary table at face value:
+
+- **macOS / Linux**: `packed` is genuinely, stably supported (per the rustc
+  book, confirmed for macOS by an actual local build — `target/release/
+  <bin>.dSYM` appears exactly as documented). `cargo dtb-ke-bundle debug-info`
+  (new subcommand, `dtb-ke-bundle/src/debug_info.rs`) locates it (`.dSYM` on
+  macOS, `.dwp` on Linux — unverified on Linux specifically, no linker for
+  that target on the dev machine, but it's the platform the rustc book is
+  most confident about) and `tar -czf`s it into its own archive, entirely
+  separate from `bundle`'s own packaging so it can never leak into an
+  installed `.deb`/`.rpm`/`.AppImage` (those all share `linux::stage_prefix`,
+  which `debug_info.rs` never touches). `--universal` merges the two
+  `apple-darwin` slices' `.dSYM`s with `lipo` on the inner DWARF binary,
+  mirroring how `bundle::build_universal` merges the slices' actual
+  executables. Uploaded via `codeberg upload --plain` — see below for why
+  `--plain` specifically.
+- **Windows (gnullvm)**: `split-debuginfo=packed` does not work at all, full
+  stop — tested directly rather than assumed. `-C split-debuginfo=packed -Z
+  unstable-options` on a real nightly toolchain, cross-compiling to
+  `x86_64-pc-windows-gnullvm`: accepted with **no error**, but the resulting
+  `.exe` carries **zero debug sections** (`objdump -h` — nothing, not even
+  with `-C debuginfo=2` forcing full debug info) and no sidecar file of any
+  kind appears. This matches a real, dated (May 2025) `users.rust-lang.org`
+  report of the identical `error: -Csplit-debuginfo=packed is unstable on
+  this platform` wall on plain `windows-gnu`, closed with no resolution, and
+  the upstream tracking issue (`rust-lang/rust#135531`) titled exactly
+  "`-C split-debuginfo=…` is (effectively) untested on windows-msvc and
+  windows-gnu" — a real, currently-unfixed gap in the Rust toolchain for
+  this target family, not something wrong on our end.
+
+  **A real, separate `.pdb` comes out anyway — a completely different
+  mechanism, nothing to do with `split-debuginfo` at all.** rustc's target
+  spec for `x86_64-pc-windows-gnullvm` names `x86_64-w64-mingw32-clang` as
+  the linker (`linker-flavor = "gnu-cc"` — confirmed via `rustc -Z
+  unstable-options --print target-spec-json`), i.e. clang is used purely as a
+  *driver*; llvm-mingw's own `<triple>-ld` is a thin wrapper that just execs
+  `ld.lld` (confirmed by reading the actual wrapper script, a plain shell
+  script shipped in llvm-mingw). `ld.lld`'s GNU-flavor COFF driver genuinely
+  supports `--pdb=<file>` (confirmed: `x86_64-w64-mingw32-ld --help` lists it
+  verbatim: *"Output PDB debug info file, chosen implicitly if the argument
+  is empty"*) — a real capability of LLD's COFF backend, independent of
+  whether `-C split-debuginfo` works on this target. Passed a bare `--pdb=`
+  through clang, which forwards any flag it doesn't recognise itself straight
+  to the linker via the standard `-Wl,<flag>` passthrough mechanism.
+  Confirmed working end to end on a real build:
+  `RUSTFLAGS="-C link-arg=-Wl,--pdb=./x.pdb -C strip=symbols" cargo build
+  --target x86_64-pc-windows-gnullvm --release` produced a file `file`
+  identifies as *"MSVC program database ver 7.00"* — a real, valid PDB, not
+  a guess — **and** the `.exe` came back down to its normal small stripped
+  size with zero debug sections (confirmed via `objdump -h`): `strip=symbols`
+  runs as a separate step *after* the linker has already written the PDB, so
+  it cleanly strips the binary without touching the file already on disk.
+  This is the *same* clean "small stripped binary + separate debug-info
+  file" split macOS and Linux get from `packed` — Windows just reaches it by
+  a different route, since `packed` itself is a dead end here.
+
+  Wired up via `.cargo/config.toml`'s `[target.x86_64-pc-windows-gnullvm]`/
+  `[target.aarch64-pc-windows-gnullvm]` `rustflags`, one fixed
+  `-Wl,--pdb=<literal filename>.pdb` each (`dtb-ke-ui-x86_64.pdb` /
+  `dtb-ke-ui-aarch64.pdb` — distinct names so a local dev machine building
+  both sequentially can't clobber one with the other). The path can't be
+  `$CARGO_TARGET_DIR`-aware — rustflags in a config file can't be templated,
+  and CI always overrides that env var to an absolute path elsewhere anyway
+  (see "Target-dir caching" above) — so it's a plain relative filename
+  instead, which resolves against whatever the *linker's* actual working
+  directory is. Confirmed that's the **workspace root**: every cargo
+  invocation this project makes goes through `dtb-ke-bundle`'s own
+  `util::run`, which always sets `current_dir(workspace_root())` — a real
+  test with a relative `--pdb=./x.pdb` landed exactly there, not inside
+  `target/`. `util::debug_info_path` (`dtb-ke-bundle`) knows this fixed
+  location for these two triples; `.gitignore`'s `*.pdb` covers the loose
+  file this leaves at the repo root for a local build. `cargo dtb-ke-bundle
+  debug-info --target <triple>` picks it up as a plain file (no special
+  casing needed vs. Linux's `.dwp` — `tar_entry` archives a file or a
+  directory tree alike) and `codeberg upload --plain` ships it, same as the
+  other two platforms.
+
+  *(Switching the Windows target from `gnullvm` to `msvc` was considered —
+  there, `packed` → a real `.pdb` is one of the officially stable
+  combinations, no linker-flag archaeology needed at all. Given the fix
+  above already gets a real PDB without switching, and this project's
+  Windows target is `gnullvm` by an explicit prior user requirement unrelated
+  to debug info — switching would still mean re-verifying the crash-handler's
+  Windows FFI (`dtb-ke-crash`) under a different C ABI/unwind-info
+  convention, a real risk to already-working, safety-critical infrastructure
+  — there's no reason left to reopen that question over this.)*
+
+**`codeberg upload --plain`** (new flag, `dtb-ke-bundle`): every upload
+normally also generates a small `<name>.fragment.json` sidecar that
+`publish_manifest` later folds into the self-update `manifest.json` — correct
+for real app archives, wrong for a debug-info archive, which must never look
+like a downloadable app update to `self_update`. `--plain` skips the
+fragment entirely (`Client::upload_plain`, vs. the fragment-generating
+`Client::upload`).
+
 ## Secrets
 
 Set these under Codeberg → this repo → **Settings → Actions → Secrets**:

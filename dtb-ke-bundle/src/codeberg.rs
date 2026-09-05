@@ -253,6 +253,37 @@ impl Client {
         Ok(())
     }
 
+    /// Like [`Self::upload`], but **without** a `.fragment.json` sidecar —
+    /// for release assets that must never be considered by the self-update
+    /// manifest (debug-info archives: `dtb-ke-bundle debug-info`'s output is
+    /// exactly the kind of thing that must never look like a downloadable
+    /// app update to `self_update`, which is what a fragment would make it
+    /// look like to [`Self::publish_manifest`]).
+    pub fn upload_plain(
+        &self,
+        release_ids: &[u64],
+        files: &[std::path::PathBuf],
+    ) -> Result<(), String> {
+        for path in files {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| format!("bad asset path: {}", path.display()))?
+                .to_string();
+            let size = std::fs::metadata(path)
+                .map_err(|e| format!("{}: {e}", path.display()))?
+                .len();
+            for &release_id in release_ids {
+                self.upload_raw(release_id, path)?;
+                eprintln!(
+                    "dtb-ke-bundle: uploaded {name} to release {release_id} ({}, no manifest fragment)",
+                    crate::util::human(size)
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Assemble `manifest.json` from every `*.fragment.json` asset on
     /// `release_id` (uploaded by [`Self::upload`], possibly across several
     /// parallel jobs/runners — this is the one place their output converges),

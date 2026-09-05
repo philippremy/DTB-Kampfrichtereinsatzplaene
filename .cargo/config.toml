@@ -12,11 +12,44 @@ rustflags = [
 rustflags = [
     "-C", "target-feature=+crt-static",
     "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+    # split-debuginfo=packed (workspace Cargo.toml [profile.release]) is only
+    # accepted on this target with nightly + -Z unstable-options, and even
+    # then produces nothing at all -- confirmed by testing: the resulting
+    # binary carries no debug sections whatsoever, packed or otherwise (a
+    # real, currently-unresolved gap in the Rust toolchain for this target
+    # family -- see RUNNERS.md's "Debug info" section for the investigation).
+    #
+    # This does the actual job instead, entirely independent of that: the
+    # linker driver here is x86_64-w64-mingw32-clang, which forwards an
+    # unrecognised -Wl,<flag> straight to its underlying linker (llvm-mingw's
+    # own ld.lld) -- and ld.lld's `--pdb=<file>` genuinely emits a real,
+    # valid Microsoft-format PDB (confirmed with `file`: "MSVC program
+    # database ver 7.00", and readable as such), separate from the .exe, no
+    # nightly/unstable anything required. Paired with the profile's normal
+    # strip=symbols (unmodified here -- it runs *after* the linker has
+    # already written the PDB, so it cleanly strips the .exe back down
+    # without touching the already-emitted file): confirmed via a real build
+    # that the .exe shrinks back to its normal stripped size and carries no
+    # debug sections at all, while the separate .pdb stays intact and valid.
+    #
+    # The path is a literal relative filename, not `$CARGO_TARGET_DIR`-aware
+    # anything -- rustflags in this file can't be templated, and CI always
+    # overrides CARGO_TARGET_DIR to an absolute path elsewhere anyway (see
+    # RUNNERS.md), so a path rooted in the target dir wouldn't resolve
+    # predictably. It lands relative to the linker's actual CWD instead,
+    # which `dtb-ke-bundle::util::run` (and every cargo invocation this
+    # project makes) always pins to the workspace root — confirmed directly:
+    # a relative `--pdb=./x.pdb` really does land at the workspace root, not
+    # inside `target/`. `debug_info.rs` knows to look for it there. Ignored
+    # via `.gitignore`'s `*.pdb` (nothing else here produces one).
+    "-C", "link-arg=-Wl,--pdb=dtb-ke-ui-x86_64.pdb",
 ]
 
 [target.aarch64-pc-windows-gnullvm]
 rustflags = [
     "-C", "target-feature=+crt-static",
+    # See the x86_64-pc-windows-gnullvm target above for the full story.
+    "-C", "link-arg=-Wl,--pdb=dtb-ke-ui-aarch64.pdb",
 ]
 
 [target.i686-pc-windows-gnu]

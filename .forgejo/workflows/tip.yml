@@ -109,6 +109,19 @@ jobs:
           name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
           tar -C target/bundle/release -czf "$name" .
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+      - name: Package + upload debug info
+        # split-debuginfo=packed (workspace Cargo.toml) is stably supported
+        # here — a real .dwp next to the binary — unlike Windows-gnullvm (see
+        # RUNNERS.md). --plain: this must never get a manifest fragment, or
+        # self_update would think it's a downloadable app update.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=x86_64-unknown-linux-gnu
+          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info "$dbgname"
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
 
   linux-arm64:
     needs: prepare
@@ -160,6 +173,16 @@ jobs:
           name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
           tar -C target/bundle/release -czf "$name" .
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+      - name: Package + upload debug info
+        # See the linux-x86_64 job above for why --plain and why this exists.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=aarch64-unknown-linux-gnu
+          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info --target aarch64-unknown-linux-gnu "$dbgname"
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
 
   windows-x86_64:
     needs: prepare
@@ -230,6 +253,25 @@ jobs:
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package + upload debug info
+        # dtb-ke-ui-x86_64.pdb: a real PDB, emitted straight into the
+        # workspace root by .cargo/config.toml's rustflags for this target
+        # (llvm-mingw's ld.lld, given --pdb= via -Wl, — split-debuginfo=packed
+        # doesn't work at all here, see RUNNERS.md). --plain: this must never
+        # get a manifest fragment, or self_update would think it's a
+        # downloadable app update.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # See the Package + upload step above for why "ä" is built from
+          # its code point rather than typed literally.
+          $ae = [char]0x00E4
+          $dbgname = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-gnullvm.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info --target x86_64-pc-windows-gnullvm "$dbgname"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64:
     needs: prepare
@@ -267,6 +309,18 @@ jobs:
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package + upload debug info
+        # See the windows-x86_64 job above for the full story.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ae = [char]0x00E4
+          $dbgname = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-aarch64-pc-windows-gnullvm.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info --target aarch64-pc-windows-gnullvm "$dbgname"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   macos-universal:
     needs: prepare
@@ -295,6 +349,20 @@ jobs:
           # expects to find inside the downloaded archive.
           tar -C target/bundle/release -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
+      - name: Package + upload debug info
+        # --universal: merges the two slices' own .dSYM (a side effect of the
+        # Build universal binary step above, one per arch) with lipo, the
+        # same way the binary itself was merged. --plain: this must never
+        # get a manifest fragment, or self_update would think it's a
+        # downloadable app update.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          triple=universal-apple-darwin
+          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info --universal "$dbgname"
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
 
   publish:
     needs:

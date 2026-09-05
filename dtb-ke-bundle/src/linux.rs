@@ -51,7 +51,9 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         // to skip packaging entirely and keep just the staged prefix tree
         // for the workflow to tar up itself. Matches how windows.rs skips
         // `.msi` and macos.rs skips `.icns` when they're not wanted.
-        eprintln!("dtb-ke-bundle: no Linux formats produced (see --formats) — leaving just the staged prefix");
+        eprintln!(
+            "dtb-ke-bundle: no Linux formats produced (see --formats) — leaving just the staged prefix"
+        );
     }
     Ok(())
 }

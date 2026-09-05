@@ -1,6 +1,9 @@
 /target/
 /crates/dtb-ke-crash/embedded/
 
+# Customized building of *-pc-windows-gnullvm targets drops a PDB in the workspace root
+*.pdb
+
 # OS / editor
 .DS_Store
 *.bak
