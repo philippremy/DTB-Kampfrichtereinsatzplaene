@@ -350,14 +350,26 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     let spec = top.join("SPECS").join(format!("{}.spec", meta::SLUG));
     write(&spec, rpm_spec(&src_stem))?;
 
+    // Arch/CachyOS (the CI host) has no populated system rpm database, so
+    // `rpmbuild` prints "cannot open Packages database in /var/lib/rpm".
+    // Point it at a throwaway db inside the build tree instead — `rpm
+    // --initdb` makes it, then `_dbpath` tells rpmbuild to use it. If `rpm`
+    // isn't on PATH the warning just stays (it's non-fatal on its own).
+    let topdir = format!("_topdir {}", top.display());
+    let mut rpm_args: Vec<String> = vec!["--define".into(), topdir];
+    let rpmdb = top.join("rpmdb");
+    if have("rpm") && std::fs::create_dir_all(&rpmdb).is_ok() {
+        let dbpath = rpmdb.to_string_lossy().into_owned();
+        try_run("rpm", &["--initdb", "--dbpath", &dbpath], &workspace_root()).ok();
+        rpm_args.push("--define".into());
+        rpm_args.push(format!("_dbpath {dbpath}"));
+    }
+    rpm_args.push("-bb".into());
+    rpm_args.push(spec.to_string_lossy().into_owned());
+
     try_run(
         "rpmbuild",
-        &[
-            "--define",
-            &format!("_topdir {}", top.display()),
-            "-bb",
-            &spec.to_string_lossy(),
-        ],
+        &rpm_args.iter().map(String::as_str).collect::<Vec<_>>(),
         &workspace_root(),
     )?;
 
@@ -378,7 +390,14 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
 
 fn rpm_spec(src_stem: &str) -> String {
     format!(
-        "Name:           {pkg}\n\
+        // The binary ships pre-stripped ([profile.release] strip = "symbols";
+        // debug info goes to a separate .dwp, never into the payload), so
+        // rpm's automatic `-debuginfo` subpackage has nothing to collect and
+        // `rpmbuild` dies with "Empty %files file … debugfiles.list". Turn it
+        // off.
+        "%global debug_package %{{nil}}\n\
+         \n\
+         Name:           {pkg}\n\
          Version:        {version}\n\
          Release:        1%{{?dist}}\n\
          Summary:        {summary}\n\
