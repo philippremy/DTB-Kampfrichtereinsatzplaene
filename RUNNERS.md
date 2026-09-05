@@ -176,12 +176,24 @@ parallel** — each slice needs its own architecture-matched embedded crash
 helper staged first (`dtb-ke-crash`'s build script stages whatever was most
 recently built; a mismatched-arch helper fails to `execve` at all), so the
 two builds can't share a `target/` at the same time. The two `.o`/binary
-slices are then merged with `lipo -create`. Release builds are also
-**Developer-ID signed and notarized** — required for the in-app updater's
-Gatekeeper-clean bundle swap-and-relaunch (see `UPDATER.md`); Tip builds stay
-ad-hoc signed, since Tip's updater path is download-and-replace, not in-app
-install (`updater::can_self_install` returns `false` on macOS for the Tip
-channel — see below).
+slices are then merged with `lipo -create`. Release builds are **Developer-ID
+signed and notarized** when `MACOS_SIGN_IDENTITY` is set (below); Tip builds,
+and a Release build cut without that secret, stay ad-hoc signed.
+
+**`lipo -create` leaves the merged binary's signature state inconsistent —
+strip it before anything signs the result.** On the runner's Apple Silicon
+host, `cargo build`'s own linker step embeds a minimal ad-hoc signature into
+the native `aarch64-apple-darwin` slice (arm64 Mach-O binaries need at least
+that to run at all), while the cross-linked `x86_64-apple-darwin` slice comes
+out unsigned. `lipo -create` merges the two Mach-O slices' code but doesn't
+reconcile that mismatch, and `codesign --force -s -` on the resulting `.app`
+then failed outright — confirmed against a real run — with "code object is
+not signed at all" on the main executable. Fixed in `bundle::build_universal`
+(`dtb-ke-bundle/src/bundle.rs`): `codesign --remove-signature` on the merged
+binary right after `lipo`, before it goes anywhere near the `.app` — a
+harmless no-op on an unsigned slice, but it guarantees the later real signing
+pass (`macos::bundle`'s `codesign()`) starts from a clean, uniformly-unsigned
+binary instead of a half-signed one.
 
 ## The two workflows
 
@@ -205,9 +217,11 @@ Every job starts with `rm -rf target` — a clean build with the workspace's
 normal profile (fat LTO, `codegen-units = 1`), trading speed for the smallest
 possible binary (see CLAUDE.md's binary-size notes). Adds the installer
 formats Tip skips (`.msi` via WiX, `.deb`/`.rpm`/`.AppImage`), zipsign-signs
-every archive, and — macOS only — hard-fails if `MACOS_SIGN_IDENTITY` isn't
-set rather than silently falling back to ad-hoc (a real release must be
-Developer-ID signed; see above). Publishes to **both** the version tag's own
+every archive, and — macOS only — signs Developer-ID and notarizes when
+`MACOS_SIGN_IDENTITY` is set, or falls back to ad-hoc (skipping the
+`Notarize` step, gated on the same secret) when it isn't: a small user base
+means ad-hoc-everywhere is an accepted trade-off here, unsigned is the only
+thing that's actually disallowed. Publishes to **both** the version tag's own
 release and a rolling `latest` release (force-moved the same way `tip` is) —
 `latest` is the stable URL the app's updater actually polls
 (`MANIFEST_URL_STABLE` in `crates/dtb-ke-ui/src/updater/mod.rs`).
@@ -768,8 +782,9 @@ Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
 |---|---|---|
 | `CODEBERG_TOKEN` | both workflows, every job that touches the API | a Codeberg personal access token with `repo` (write) scope — creates/updates releases, uploads assets, force-pushes the rolling `tip`/`latest` tags |
 | `ZIPSIGN_KEY` | `release.yml` only (Tip builds are unsigned) | base64 of the zipsign **private** key (`base64 -w0 release.priv`) — see `UPDATER.md` § 1 for key generation |
-| `MACOS_SIGN_IDENTITY` | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; the job hard-fails without it (see above) |
-| `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
+| `MACOS_SIGN_IDENTITY` (optional) | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; unset falls back to ad-hoc signing and skips notarization (see above) rather than failing the job |
+| `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` (optional, only matter with `MACOS_SIGN_IDENTITY` set) | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
+| `DTB_KE_SMTP_HOST`, `DTB_KE_SMTP_PORT`, `DTB_KE_SMTP_USER`, `DTB_KE_SMTP_PASS`, `DTB_KE_SMTP_FROM`, `DTB_KE_SMTP_TO` (optional) | both workflows, every build job (top-level `env:`) | the crash-reporter/feedback-window mail transport's credentials, baked in at compile time by `dtb-ke-ui/build.rs::emit_smtp_secret` (see `mail.rs`) — unset leaves the feature compiled in but disabled (`mail::available()` false), never a build failure |
 
 `CODEBERG_TOKEN` is also what `scripts/release.sh` needs *not* have —
 deliberately: the script only ever does local git operations (bump, tag,

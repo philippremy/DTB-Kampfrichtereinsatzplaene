@@ -27,6 +27,20 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  # Crash-reporter / feedback-window mail transport (`dtb-ke-ui/build.rs`'s
+  # emit_smtp_secret — see mail.rs). Read at *compile* time, so this has to be
+  # visible to every job that builds dtb-ke-ui, not just wherever the app
+  # later runs; a top-level env applies to all of them in one place. Absent
+  # secrets resolve to empty strings, which build.rs already treats as "mail
+  # disabled" (see mail::available()) — never a build failure.
+  DTB_KE_SMTP_HOST: ${{ secrets.DTB_KE_SMTP_HOST }}
+  DTB_KE_SMTP_PORT: ${{ secrets.DTB_KE_SMTP_PORT }}
+  DTB_KE_SMTP_USER: ${{ secrets.DTB_KE_SMTP_USER }}
+  DTB_KE_SMTP_PASS: ${{ secrets.DTB_KE_SMTP_PASS }}
+  DTB_KE_SMTP_FROM: ${{ secrets.DTB_KE_SMTP_FROM }}
+  DTB_KE_SMTP_TO: ${{ secrets.DTB_KE_SMTP_TO }}
+
 jobs:
   prepare:
     runs-on: [linux-host]
@@ -357,15 +371,27 @@ jobs:
       - name: Clean target/
         run: rm -rf target
       - name: Build + sign universal binary
+        # A real Developer ID + notarization is the good path (Gatekeeper
+        # trusts the result outright on relaunch — see UPDATER.md), but this
+        # app's user base is small enough that ad-hoc is an accepted
+        # fallback: unsigned is the only thing that's actually a no-go. If
+        # MACOS_SIGN_IDENTITY isn't set, build ad-hoc instead of hard-failing
+        # the release (dtb-ke-bundle's own --sign default when the flag is
+        # omitted) and skip notarization below — the in-app updater already
+        # tolerates an ad-hoc macOS build (it just costs a first-run
+        # Gatekeeper prompt, same as the Tip channel).
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
-          if [ -z "$MACOS_SIGN_IDENTITY" ]; then
-            echo "::error::MACOS_SIGN_IDENTITY is not set — a real release build must be Developer-ID signed (ad-hoc breaks the in-app updater's Gatekeeper-clean relaunch, see UPDATER.md). Set the secret once you have a Developer ID; until then, releases can't be cut from this runner." >&2
-            exit 1
+          set -euo pipefail
+          if [ -n "$MACOS_SIGN_IDENTITY" ]; then
+            cargo dtb-ke-bundle bundle --release --universal --sign "$MACOS_SIGN_IDENTITY" --formats dmg
+          else
+            echo "::warning::MACOS_SIGN_IDENTITY is not set — building ad-hoc signed instead of Developer-ID signed. Not notarized; Gatekeeper will show an 'unidentified developer' prompt on first launch." >&2
+            cargo dtb-ke-bundle bundle --release --universal --formats dmg
           fi
-          cargo dtb-ke-bundle bundle --release --universal --sign "$MACOS_SIGN_IDENTITY" --formats dmg
       - name: Notarize
+        if: ${{ secrets.MACOS_SIGN_IDENTITY != '' }}
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}

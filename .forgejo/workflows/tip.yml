@@ -25,6 +25,18 @@ env:
   CARGO_PROFILE_RELEASE_LTO: "false"
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   CARGO_INCREMENTAL: "1"
+  # Crash-reporter / feedback-window mail transport (`dtb-ke-ui/build.rs`'s
+  # emit_smtp_secret — see mail.rs). Read at *compile* time, so this has to be
+  # visible to every job that builds dtb-ke-ui, not just wherever the app
+  # later runs; a top-level env applies to all of them in one place. Absent
+  # secrets resolve to empty strings, which build.rs already treats as "mail
+  # disabled" (see mail::available()) — never a build failure.
+  DTB_KE_SMTP_HOST: ${{ secrets.DTB_KE_SMTP_HOST }}
+  DTB_KE_SMTP_PORT: ${{ secrets.DTB_KE_SMTP_PORT }}
+  DTB_KE_SMTP_USER: ${{ secrets.DTB_KE_SMTP_USER }}
+  DTB_KE_SMTP_PASS: ${{ secrets.DTB_KE_SMTP_PASS }}
+  DTB_KE_SMTP_FROM: ${{ secrets.DTB_KE_SMTP_FROM }}
+  DTB_KE_SMTP_TO: ${{ secrets.DTB_KE_SMTP_TO }}
 
 jobs:
   prepare:
@@ -76,7 +88,7 @@ jobs:
             "$(git log -1 --format='%h — %s')" \
             "${{ github.run_number }}" \
             "${{ steps.version.outputs.version }}" \
-            "Ad-hoc signed only, not notarized. macOS: download-and-replace, no in-app install." \
+            "Ad-hoc signed only, not notarized — installs in place on every platform, including macOS; expect a first-run Gatekeeper prompt there." \
             > /tmp/tip-notes.md
           cargo dtb-ke-bundle codeberg prepare \
             --tag tip \
@@ -334,14 +346,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Build universal binary
+        # dtb-ke-bundle already ad-hoc-signs the .app itself (macos.rs's
+        # codesign() — `--sign` defaults to "-" when omitted, as here); no
+        # separate signing step needed on top of that.
         run: cargo dtb-ke-bundle bundle --release --universal
-      - name: Sign + package + upload
+      - name: Package + upload
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
           triple=universal-apple-darwin
-          codesign --force --deep --sign - "target/bundle/release/DTB Kampfrichtereinsatzpläne.app"
           name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
           # -C rather than staging a renamed copy first — the archive's
           # top-level entry is the .app exactly as dtb-ke-bundle built it

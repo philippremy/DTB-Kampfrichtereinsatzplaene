@@ -57,11 +57,14 @@ correctly. `scripts/release.sh` bumps `main` to `x.y.z-dev.0` right after
 tagging a release, so the next Tip build's base version is already past the
 release just cut.
 
-**`can_self_install(channel)`** (`updater/mod.rs`) is `false` for macOS+Tip:
-Tip archives are only ad-hoc signed (release archives are Developer-ID
-signed + notarized), so an in-app Gatekeeper-clean bundle swap isn't
-reliable there. macOS Tip users — and all Linux users, every channel — get a
-"Herunterladen" link instead of an in-app install.
+**`can_self_install(channel)`** (`updater/mod.rs`) is `true` for macOS and
+Windows on both channels — only Linux users, on every channel, get a
+"Herunterladen" link instead of an in-app install. Tip archives (and a
+Release build cut without `MACOS_SIGN_IDENTITY` — see § 3) are only ad-hoc
+signed, so a self-swapped `.app` does cost a first-run Gatekeeper prompt on
+relaunch; accepted deliberately for a small-user-base app rather than
+forcing a manual reinstall every Tip build (`self_update`'s signature check
+already tolerates an unsigned archive gracefully — see § 4).
 
 ---
 
@@ -86,7 +89,7 @@ platform. The `.app` / folder name *inside* the archive must be exactly
 `dtb-ke-bundle::meta::DISPLAY_NAME`; **not** the kebab-case `RAW_BIN_NAME`
 cargo itself builds — see CLAUDE.md's Bundling section).
 
-### Signing (release builds only — Tip ships unsigned-by-zipsign, ad-hoc-signed archives)
+### Signing (release builds only — Tip ships unsigned-by-zipsign, always ad-hoc-signed archives; a release cut with no `MACOS_SIGN_IDENTITY` set stays ad-hoc-signed on macOS too, see `RUNNERS.md`)
 
 ```sh
 zipsign sign tar "$archive" release.priv        # .tar.gz
@@ -95,8 +98,10 @@ zipsign sign zip "$archive" release.priv        # .zip
 
 `zipsign sign` appends the signature to the archive in place (still a valid
 tar.gz / zip). `self_update`'s `signatures` feature verifies it against the
-embedded key before extracting. Tip builds skip this entirely — see
-`updater::can_self_install` above for the consequence.
+embedded key before extracting, but tolerates its absence gracefully rather
+than rejecting the download — see § 4's Install bullet. Tip builds skip this
+entirely, so a Tip install only ever gets the manifest's digest check, not a
+real signature check.
 
 ### Manifest
 
@@ -160,16 +165,20 @@ since every upload in a given workflow run targets the same `release_id`(s).
   Veröffentlicht, and *Überspringen* / *Später* / *Installieren & neu starten*
   (or *Herunterladen* when `can_self_install` is false for this platform +
   channel). Clicking outside the expanded card collapses it back to the pill.
-- **Install** (macOS + Windows, Stable — and Tip except macOS): `self_update::
+- **Install** (macOS + Windows, both channels): `self_update::
   backends::manifest::Update` re-fetches, downloads the target-matched
   archive, verifies signature + digest (skips signature verification when the
   archive carries none, i.e. Tip), and swaps the `.app` bundle / Windows
   folder as one unit. The app then flushes every open competition and
   re-execs the new binary.
-- **macOS, Stable:** relies on the downloaded `.app` being **Developer-ID
-  signed and notarized** (Gatekeeper trusts it on relaunch without a fresh
-  quarantine prompt). macOS Tip builds are only ad-hoc signed, hence
-  `can_self_install` is false there — see § 2.
+- **macOS:** when the downloaded `.app` is **Developer-ID signed and
+  notarized** (a Release build with `MACOS_SIGN_IDENTITY` set), Gatekeeper
+  trusts it on relaunch without a fresh quarantine prompt. An ad-hoc-signed
+  `.app` (Tip, always; Release when that secret is unset) still installs —
+  `can_self_install` is `true` on macOS for both channels, see § 2 — it just
+  costs a one-time "unidentified developer" Gatekeeper prompt on first
+  launch after the swap, accepted deliberately for this app's small user
+  base.
 - **Settings:** the channel switch (Allgemein tab) clears
   `Settings.skipped_update` on change, since a skipped Stable version has no
   bearing on the Tip channel's version numbering or vice versa.
