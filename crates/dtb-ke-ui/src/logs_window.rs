@@ -43,12 +43,13 @@ thread_local! {
 
 /// Open (or focus) the log-viewer window.
 pub fn open(cx: &mut App) {
+    // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
     let existing = OPEN.with(|h| *h.borrow());
     if let Some(handle) = existing {
-        if handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
+        if cx.windows().contains(&handle) {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
             return;
         }
         OPEN.with(|h| *h.borrow_mut() = None);

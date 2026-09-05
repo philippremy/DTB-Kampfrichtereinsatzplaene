@@ -75,13 +75,17 @@ pub fn open_named(cx: &mut App, name: &str) {
 }
 
 fn open_kind(cx: &mut App, kind: Kind) {
-    // Already open? Just bring it forward.
+    // Already open? Bring it forward and stop. Existence is checked against
+    // `cx.windows()`, not the return of `handle.update` — when this runs from
+    // the menu action *while that window is the one dispatching it*, the
+    // re-entrant `update` fails, and keying off that would drop the handle and
+    // open a second window.
     let existing = OPEN.with(|m| m.borrow().get(&kind).copied());
     if let Some(handle) = existing {
-        if handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
+        if cx.windows().contains(&handle) {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
             return;
         }
         OPEN.with(|m| {

@@ -834,10 +834,10 @@ thread_local! {
 /// it to the front.
 pub fn open_main_window(cx: &mut App) {
     if let Some(handle) = MAIN_WINDOW.with(|m| *m.borrow()) {
-        if handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
+        if cx.windows().contains(&handle) {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
             return;
         }
         MAIN_WINDOW.with(|m| *m.borrow_mut() = None);

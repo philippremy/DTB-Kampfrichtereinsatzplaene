@@ -111,12 +111,13 @@ pub fn open_feature(cx: &mut App) {
 }
 
 fn open_kind(cx: &mut App, kind: Kind) {
+    // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
     let existing = OPEN.with(|m| m.borrow().get(&kind).copied());
     if let Some(handle) = existing {
-        if handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
+        if cx.windows().contains(&handle) {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
             return;
         }
         OPEN.with(|m| {
