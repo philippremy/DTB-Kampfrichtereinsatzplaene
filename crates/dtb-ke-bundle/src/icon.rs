@@ -250,13 +250,13 @@ fn build_hicolor(master: &Master) -> Result<(), String> {
         std::fs::create_dir_all(&dir).map_err(io("hicolor dir"))?;
         write_png(
             &master.rasterise(size)?,
-            &dir.join(format!("{}.png", meta::IDENTIFIER)),
+            &dir.join(format!("{}.png", meta::RDNS_ID)),
         )?;
     }
     if let Master::Svg(bytes) = master {
         let dir = root.join("scalable").join("apps");
         std::fs::create_dir_all(&dir).map_err(io("hicolor scalable dir"))?;
-        std::fs::write(dir.join(format!("{}.svg", meta::IDENTIFIER)), bytes)
+        std::fs::write(dir.join(format!("{}.svg", meta::RDNS_ID)), bytes)
             .map_err(io("scalable icon"))?;
     }
     Ok(())

@@ -10,6 +10,9 @@ name = "dtb-ke-bundle"
 path = "src/main.rs"
 
 [dependencies]
+# `<release date>` in the AppStream metainfo (linux.rs) — appstreamcli
+# rejects a release with no date and appimagetool treats that as fatal.
+chrono = { workspace = true }
 # Icon pipeline: rasterise the SVG master, resize to every target size.
 image = { workspace = true, features = ["png"] }
 resvg.workspace = true

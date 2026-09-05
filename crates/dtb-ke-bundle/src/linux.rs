@@ -104,7 +104,7 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     write(
         &prefix
             .join("usr/share/applications")
-            .join(format!("{}.desktop", meta::IDENTIFIER)),
+            .join(format!("{}.desktop", meta::RDNS_ID)),
         desktop_entry(),
     )?;
 
@@ -120,7 +120,7 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     write(
         &prefix
             .join("usr/share/metainfo")
-            .join(format!("{}.metainfo.xml", meta::IDENTIFIER)),
+            .join(format!("{}.metainfo.xml", meta::RDNS_ID)),
         metainfo(),
     )?;
 
@@ -153,7 +153,7 @@ fn desktop_entry() -> String {
         name = meta::DISPLAY_NAME,
         summary = meta::SUMMARY,
         slug = meta::SLUG,
-        id = meta::IDENTIFIER,
+        id = meta::RDNS_ID,
         categories = meta::FREEDESKTOP_CATEGORIES,
         // Kept as the raw kebab-case name, not meta::DISPLAY_NAME — a WM_CLASS
         // with a space in it is unconventional and this preserves the exact
@@ -178,15 +178,16 @@ fn metainfo() -> String {
   </description>
   <launchable type="desktop-id">{id}.desktop</launchable>
   <url type="homepage">{homepage}</url>
+  <content_rating type="oars-1.1" />
   <developer id="de.philippremy">
     <name>{publisher}</name>
   </developer>
   <releases>
-    <release version="{version}" />
+    <release version="{version}" date="{date}" />
   </releases>
 </component>
 "#,
-        id = meta::IDENTIFIER,
+        id = meta::RDNS_ID,
         license = meta::LICENSE,
         name = xml(meta::DISPLAY_NAME),
         summary = xml(meta::SUMMARY),
@@ -194,6 +195,9 @@ fn metainfo() -> String {
         homepage = xml(meta::HOMEPAGE),
         publisher = xml(meta::PUBLISHER),
         version = meta::numeric_version(),
+        // `appstreamcli validate` (run by appimagetool, fatal on error)
+        // rejects a `<release>` with no `date`/`timestamp`.
+        date = chrono::Utc::now().format("%Y-%m-%d"),
     )
 }
 
@@ -242,7 +246,7 @@ fn install_script(install: bool) -> String {
              rm -rf \"$PREFIX/share/doc/{slug}\"\n\
              echo done\n",
             slug = meta::SLUG,
-            id = meta::IDENTIFIER,
+            id = meta::RDNS_ID,
         )
     }
 }
@@ -486,7 +490,7 @@ fn rpm_spec(src_stem: &str, arch: &str) -> String {
         src_stem = src_stem,
         arch = arch,
         description = meta::DESCRIPTION,
-        id = meta::IDENTIFIER,
+        id = meta::RDNS_ID,
     )
 }
 
@@ -504,9 +508,9 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     // appimagetool#77. Rename it inside the AppDir so the check passes; the
     // `.deb`/`.rpm`/tarball keep `.metainfo.xml` (what distro tooling wants).
     let meta_dir = appdir.join("usr/share/metainfo");
-    let modern = meta_dir.join(format!("{}.metainfo.xml", meta::IDENTIFIER));
+    let modern = meta_dir.join(format!("{}.metainfo.xml", meta::RDNS_ID));
     if modern.exists() {
-        let legacy = meta_dir.join(format!("{}.appdata.xml", meta::IDENTIFIER));
+        let legacy = meta_dir.join(format!("{}.appdata.xml", meta::RDNS_ID));
         std::fs::rename(&modern, &legacy).map_err(io)?;
     }
 
@@ -527,20 +531,20 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     copy(
         &appdir
             .join("usr/share/applications")
-            .join(format!("{}.desktop", meta::IDENTIFIER)),
-        &appdir.join(format!("{}.desktop", meta::IDENTIFIER)),
+            .join(format!("{}.desktop", meta::RDNS_ID)),
+        &appdir.join(format!("{}.desktop", meta::RDNS_ID)),
     )
     .map_err(io)?;
 
     if cx.have_icon {
         let png = icon::png_512_path();
         if png.exists() {
-            copy(&png, &appdir.join(format!("{}.png", meta::IDENTIFIER))).map_err(io)?;
+            copy(&png, &appdir.join(format!("{}.png", meta::RDNS_ID))).map_err(io)?;
             copy(&png, &appdir.join(".DirIcon")).map_err(io)?;
         }
         let svg = icon::scalable_svg_path();
         if svg.exists() {
-            copy(&svg, &appdir.join(format!("{}.svg", meta::IDENTIFIER))).map_err(io)?;
+            copy(&svg, &appdir.join(format!("{}.svg", meta::RDNS_ID))).map_err(io)?;
         }
     }
 
@@ -644,4 +648,31 @@ fn xml(s: &str) -> String {
 
 fn io<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn metainfo_names_the_ascii_component_id() {
+        let xml = super::metainfo();
+        let id_line = xml.lines().find(|l| l.contains("<id>")).unwrap();
+        assert_eq!(
+            id_line.trim(),
+            "<id>de.philippremy.DTB-Kampfrichtereinsatzplaene</id>"
+        );
+        assert!(
+            id_line.is_ascii(),
+            "component id must be ASCII for appstreamcli"
+        );
+        // appstreamcli fails a <release> with no date; it must be ISO YYYY-MM-DD.
+        let date = xml
+            .split_once("date=\"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(d, _)| d)
+            .expect("release has a date attribute");
+        assert!(
+            date.len() == 10 && date.split('-').count() == 3,
+            "date {date:?} is not YYYY-MM-DD"
+        );
+    }
 }

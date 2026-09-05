@@ -32,8 +32,19 @@ pub const DISPLAY_NAME: &str = "DTB Kampfrichtereinsatzpläne";
 pub const MACOS_EXECUTABLE_NAME: &str = "DTB-Kampfrichtereinsatzplaene";
 
 /// Reverse-DNS bundle / application identifier. Must match
-/// `filesystem::APPLICATION_IDENTIFIER` and `build_info::IDENTIFIER`.
+/// `filesystem::APPLICATION_IDENTIFIER` and `build_info::IDENTIFIER`. Carries
+/// the non-ASCII `ä` because it's the data-directory / preferences-domain key
+/// on macOS and changing it would strand existing installs' databases — so it
+/// is **not** used for the freedesktop artifacts below (see [`RDNS_ID`]).
 pub const IDENTIFIER: &str = "de.philippremy.DTB-Kampfrichtereinsatzpläne";
+
+/// ASCII reverse-DNS app ID for every freedesktop artifact on Linux: the
+/// `.desktop` file, the AppStream metainfo file *and* its `<id>`, the hicolor
+/// icon file names. An AppStream component ID must be `[A-Za-z0-9._-]` only —
+/// `appstreamcli validate` (which `appimagetool` runs and treats as fatal)
+/// rejects the `ä` in [`IDENTIFIER`] with `cid-invalid-character`. Uses the
+/// same transliteration as [`MACOS_EXECUTABLE_NAME`].
+pub const RDNS_ID: &str = "de.philippremy.DTB-Kampfrichtereinsatzplaene";
 
 /// An ASCII-only slug for paths that dislike spaces / non-ASCII: the Linux
 /// binary name, the tarball stem, the AppDir, the RPM/DEB package name.
