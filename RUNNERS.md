@@ -845,9 +845,10 @@ using the secret above. Nothing on a developer's own machine ever needs
 on a release-notes template pre-filled with the commit list and
 `git shortlog` contributors since the last version tag, creates an
 **annotated** `vX.Y.Z` tag with those notes as the tag message (which
-`release.yml`'s `prepare` job reads back verbatim with
-`git tag -l --format='%(contents)'` rather than re-deriving anything), pushes
-`main` + the tag, then bumps `main` again to `x.y.z-dev.0` so the next Tip
-build reports a version unambiguously ahead of the release just cut. See the
-script's own comments for the exact sequence; see `release.yml` for what
-happens after the tag lands.
+`release.yml`'s `prepare` job reads back with
+`git tag -l --format='%(contents)'`, then `sed`s off the trailing PGP block
+if the tag is signed — `git config tag.gpgsign` — rather than re-deriving
+anything), atomic-pushes `main` + the tag, then bumps `main` again to
+`x.y.(z+1)-dev.0` (see UPDATER.md § 3) so `tip` sits one commit ahead of
+`latest` and semver-greater. See the script's own comments for the exact
+sequence; see `release.yml` for what happens after the tag lands.

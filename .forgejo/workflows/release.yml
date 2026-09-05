@@ -64,9 +64,14 @@ jobs:
 
       # release.sh already wrote the release notes into the *tag message* —
       # reuse them verbatim rather than re-deriving anything here.
+      # `%(contents)` would also drag in the PGP block for a signed tag
+      # (`git config tag.gpgsign`), so cut everything from the signature on.
       - id: notes
         name: Read the release notes from the tag message
-        run: git tag -l --format='%(contents)' "${{ steps.version.outputs.tag }}" > /tmp/release-notes.md
+        run: |
+          git tag -l --format='%(contents)' "${{ steps.version.outputs.tag }}" \
+            | sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' \
+            > /tmp/release-notes.md
 
       - id: prepare
         name: Create/replace the version release
