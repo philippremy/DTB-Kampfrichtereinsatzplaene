@@ -128,7 +128,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
             ..Default::default()
         }),
         kind: WindowKind::Normal,
-        is_resizable: !matches!(kind, Kind::About),
+        is_resizable: false,
         is_minimizable: false,
         ..Default::default()
     }
