@@ -61,6 +61,13 @@ fn main() {
             .display()
     );
 
+    // Housekeeping: a session log accumulates on every launch and nothing
+    // else ever removes an old one, so they grow without the user noticing.
+    match filesystem::FilesystemHelper::instance().gc_old_logs() {
+        0 => debug!("log gc: nothing older than 7 days"),
+        removed => info!("log gc: removed {removed} log file(s) older than 7 days"),
+    }
+
     // Crash capture, before anything else can fault. On a hardware fault or a
     // panic an out-of-process helper writes a minidump (`.dmp`) under `logs/
     // crashes/` for offline symbolisation (the shipped binary is stripped — see
