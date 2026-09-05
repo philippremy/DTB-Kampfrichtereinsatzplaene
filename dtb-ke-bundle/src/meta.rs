@@ -10,6 +10,10 @@
 /// Cargo.toml's own comment for why.
 pub const RAW_BIN_NAME: &str = "dtb-ke-ui";
 
+/// The file dsymutil generates inside the .dsym bundle, it is simply
+/// RAW_BINARY_NAME converted to snake case.
+pub const RAW_DSYM_NAME: &str = "dtb_ke_ui";
+
 /// The name shown to users — window titles, the `.app`, Start-menu entries,
 /// and (applied by each packager at package time, not by cargo at build
 /// time) the actual shipped executable's file name inside the portable

@@ -95,11 +95,11 @@ fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
     let merged_dir = util::workspace_root()
         .join("target/universal")
         .join(if release { "release" } else { "debug" })
-        .join(format!("{}.dSYM", meta::RAW_BIN_NAME));
+        .join(format!("{}.dSYM", meta::RAW_DSYM_NAME));
     util::fresh_dir(&merged_dir).map_err(|e| format!("prepare {}: {e}", merged_dir.display()))?;
     copy_tree(first, &merged_dir)?;
 
-    let dwarf_rel = Path::new("Contents/Resources/DWARF").join(meta::RAW_BIN_NAME);
+    let dwarf_rel = Path::new("Contents/Resources/DWARF").join(meta::RAW_DSYM_NAME);
     let status = Command::new("lipo")
         .arg("-create")
         .arg("-output")
