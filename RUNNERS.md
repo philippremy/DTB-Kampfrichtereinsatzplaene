@@ -180,20 +180,24 @@ slices are then merged with `lipo -create`. Release builds are **Developer-ID
 signed and notarized** when `MACOS_SIGN_IDENTITY` is set (below); Tip builds,
 and a Release build cut without that secret, stay ad-hoc signed.
 
-**`lipo -create` leaves the merged binary's signature state inconsistent —
-strip it before anything signs the result.** On the runner's Apple Silicon
-host, `cargo build`'s own linker step embeds a minimal ad-hoc signature into
-the native `aarch64-apple-darwin` slice (arm64 Mach-O binaries need at least
-that to run at all), while the cross-linked `x86_64-apple-darwin` slice comes
-out unsigned. `lipo -create` merges the two Mach-O slices' code but doesn't
-reconcile that mismatch, and `codesign --force -s -` on the resulting `.app`
-then failed outright — confirmed against a real run — with "code object is
-not signed at all" on the main executable. Fixed in `bundle::build_universal`
-(`dtb-ke-bundle/src/bundle.rs`): `codesign --remove-signature` on the merged
-binary right after `lipo`, before it goes anywhere near the `.app` — a
-harmless no-op on an unsigned slice, but it guarantees the later real signing
-pass (`macos::bundle`'s `codesign()`) starts from a clean, uniformly-unsigned
-binary instead of a half-signed one.
+**The macOS bundle's main executable is named `meta::MACOS_EXECUTABLE_NAME`
+(`DTB-Kampfrichtereinsatzplaene`, an ASCII transliteration), not the branded
+`meta::DISPLAY_NAME`.** `codesign` on macOS 26 cannot ad-hoc-sign an
+app bundle whose main executable's *filename* contains a non-ASCII character
+(the "ä" in "Kampfrichtereinsatzpläne"): `codesign --sign` fails outright
+with `code object is not signed at all / In subcomponent: …/MacOS/<name>`,
+and even a bundle that does get signed fails `codesign --verify --strict`
+with `a sealed resource is missing or invalid`. Reproduced and narrowed
+locally against this exact binary — `DTB App` (ASCII + space) signs and
+verifies fine, `DTB Kampfrichtereinsatzpläne` does not; an ASCII executable
+name fixes both. The bundle *directory* keeps the branded name (an "ä" there
+is fine), and so do `CFBundleName` / `CFBundleDisplayName` — Finder, the menu
+bar, the Dock and Force-Quit all read those, so the only user-visible change
+is the process name in Activity Monitor / `ps`. (The per-slice signature
+state — the native `aarch64-apple-darwin` slice comes out linker-signed
+ad-hoc, the cross-linked `x86_64-apple-darwin` one unsigned — is *not* the
+problem: signing tolerates that mismatch fine once the executable name is
+ASCII.)
 
 ## The two workflows
 

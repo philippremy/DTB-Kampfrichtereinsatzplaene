@@ -27,9 +27,19 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     std::fs::create_dir_all(contents.join("MacOS")).map_err(io)?;
     std::fs::create_dir_all(contents.join("Resources")).map_err(io)?;
 
-    // Executable — the shipped/branded name (meta::DISPLAY_NAME), not the raw
-    // cargo build artifact's kebab-case name.
-    let exe = contents.join("MacOS").join(meta::DISPLAY_NAME);
+    // Executable — `meta::MACOS_EXECUTABLE_NAME` (ASCII), NOT the branded
+    // `meta::DISPLAY_NAME`. codesign on macOS 26 cannot ad-hoc-sign an app
+    // bundle whose main executable's *filename* contains a non-ASCII
+    // character (the "ä" in "Kampfrichtereinsatzpläne"): `codesign --sign`
+    // fails outright with "code object is not signed at all / In
+    // subcomponent: …/MacOS/<name>", and even a bundle that does get signed
+    // fails `codesign --verify --strict` ("a sealed resource is missing or
+    // invalid"). Both go away with an ASCII executable name — verified
+    // locally against this exact binary. The bundle *directory* keeps the
+    // branded name, and so do `CFBundleName` / `CFBundleDisplayName` (what
+    // Finder, the menu bar and Force-Quit show) — only the on-disk
+    // executable, visible mainly in Activity Monitor / `ps`, changes.
+    let exe = contents.join("MacOS").join(meta::MACOS_EXECUTABLE_NAME);
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
 
@@ -116,7 +126,7 @@ fn info_plist(icon_file: Option<&str>) -> String {
         name = meta::DISPLAY_NAME,
         display = meta::DISPLAY_NAME,
         id = meta::IDENTIFIER,
-        bin = meta::DISPLAY_NAME,
+        bin = meta::MACOS_EXECUTABLE_NAME,
         icon = icon_entry,
         short_version = meta::numeric_version(),
         version = meta::numeric_version(),

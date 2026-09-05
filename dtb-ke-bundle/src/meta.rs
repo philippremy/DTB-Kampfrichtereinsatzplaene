@@ -12,9 +12,20 @@ pub const RAW_BIN_NAME: &str = "dtb-ke-ui";
 
 /// The name shown to users — window titles, the `.app`, Start-menu entries,
 /// and (applied by each packager at package time, not by cargo at build
-/// time) the actual shipped executable's file name inside the `.app` /
-/// portable Windows folder.
+/// time) the actual shipped executable's file name inside the portable
+/// Windows folder. **Not** the macOS executable file name — see
+/// [`MACOS_EXECUTABLE_NAME`].
 pub const DISPLAY_NAME: &str = "DTB Kampfrichtereinsatzpläne";
+
+/// The file name of the executable inside the macOS `.app`
+/// (`Contents/MacOS/`), and its `CFBundleExecutable`. An ASCII
+/// transliteration of [`DISPLAY_NAME`] rather than the name itself: `codesign`
+/// on macOS 26 cannot ad-hoc-sign a bundle whose main executable's file name
+/// carries a non-ASCII character, and even a forced signature fails
+/// `codesign --verify --strict` (see `macos.rs` / RUNNERS.md). The bundle
+/// *directory*, `CFBundleName` and `CFBundleDisplayName` all keep
+/// `DISPLAY_NAME`, so this only surfaces in Activity Monitor / `ps`.
+pub const MACOS_EXECUTABLE_NAME: &str = "DTB-Kampfrichtereinsatzplaene";
 
 /// Reverse-DNS bundle / application identifier. Must match
 /// `filesystem::APPLICATION_IDENTIFIER` and `build_info::IDENTIFIER`.
