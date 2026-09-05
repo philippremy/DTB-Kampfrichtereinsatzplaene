@@ -6,7 +6,12 @@
 # manifest publish) once it sees the `vX.Y.Z` tag. This script never talks to
 # the Codeberg API itself; it only has to get the tag + its message right.
 #
-#   scripts/release.sh [new-version]      e.g. scripts/release.sh 0.2.0
+#   scripts/release.sh [--force] [new-version]     e.g. scripts/release.sh 0.2.0
+#
+# --force re-cuts an *existing* version: it moves the `vX.Y.Z` tag to a fresh
+# release commit and force-pushes it. Use it to re-trigger release.yml after a
+# CI-config fix; the old `chore:` commits stay in history until you rebase
+# them out.
 #
 # See RUNNERS.md for the secrets release.yml needs and UPDATER.md for how the
 # resulting manifest/versioning is consumed.
@@ -42,6 +47,17 @@ set_workspace_version() {
 have git || die "git is required"
 [[ -d .git ]] || die "not a git repository — run this from the project root after the repo migration is done"
 
+# ── args: [--force] [new-version] in any order ──────────────────────────
+FORCE=0
+new_version=""
+for arg in "$@"; do
+  case "$arg" in
+    -f | --force) FORCE=1 ;;
+    -*) die "unknown option: $arg" ;;
+    *) [[ -z "$new_version" ]] && new_version="$arg" || die "unexpected argument: $arg" ;;
+  esac
+done
+
 # ── 0. sanity checks ────────────────────────────────────────────────────
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$branch" == "main" ]] || die "must be on 'main' (currently on '$branch')"
@@ -64,27 +80,38 @@ current_version="$(awk '/^\[workspace.package\]/{f=1} f && /^version = /{gsub(/"
 [[ -n "$current_version" ]] || die "could not read the current version from $CARGO_TOML"
 echo "current version: $current_version"
 
-new_version="${1:-}"
 if [[ -z "$new_version" ]]; then
   read -r -p "New version (semver, no leading 'v') [current: $current_version]: " new_version
 fi
 [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "'$new_version' doesn't look like a plain x.y.z semver"
 [[ "$new_version" != "$current_version" ]] || die "new version equals the current one"
 tag="v${new_version}"
-git rev-parse "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
 
-# ── 2. figure out the commit range + collect notes material ─────────────
-last_tag="$(git tag -l 'v*' --sort=-v:refname | head -1 || true)"
-if [[ -n "$last_tag" ]]; then
-  range="${last_tag}..HEAD"
-  echo "commit range since last release ($last_tag): $range"
-else
-  range="HEAD"
-  echo "no previous version tag found — this looks like the first release"
+retag=0
+if git rev-parse "$tag" >/dev/null 2>&1; then
+  [[ "$FORCE" == 1 ]] || die "tag $tag already exists (pass --force to move it and re-cut)"
+  retag=1
+  echo "--force: $tag will be re-pointed at a fresh release commit and force-pushed"
 fi
 
-commits="$(git log $range --no-merges --format='- %s (%h)' 2>/dev/null || true)"
-contributors="$(git shortlog -sne $range 2>/dev/null | sed 's/^[[:space:]]*[0-9]*[[:space:]]*/- /' || true)"
+# ── 2. gather the notes prefill ─────────────────────────────────────────
+if [[ "$retag" == 1 ]]; then
+  # Re-cut: reuse the message already on the tag (minus any PGP block).
+  echo "re-cut of $tag — seeding the editor with its current notes"
+  prefill="$(git tag -l --format='%(contents)' "$tag" | sed '/^-----BEGIN PGP SIGNATURE-----$/,$d')"
+else
+  last_tag="$(git tag -l 'v*' --sort=-v:refname | head -1 || true)"
+  if [[ -n "$last_tag" ]]; then
+    range="${last_tag}..HEAD"
+    echo "commit range since last release ($last_tag): $range"
+  else
+    range="HEAD"
+    echo "no previous version tag found — this looks like the first release"
+  fi
+  commits="$(git log $range --no-merges --format='- %s (%h)' 2>/dev/null || true)"
+  contributors="$(git shortlog -sne $range 2>/dev/null | sed 's/^[[:space:]]*[0-9]*[[:space:]]*/- /' || true)"
+  prefill="$(printf '## Changes\n\n%s\n\n## Contributors\n\n%s' "$commits" "$contributors")"
+fi
 
 # ── 3. open $EDITOR on a pre-filled notes template ───────────────────────
 NOTES_FILE="$(mktemp /tmp/dtb-ke-release-notes.XXXXXX.md)"
@@ -95,17 +122,11 @@ cat > "$NOTES_FILE" <<EOF
 # instructions and are stripped automatically — no need to delete them.
 # Markdown headings ("## …") are kept. Write the notes below as plain prose
 # and "- " bullets; what remains becomes the annotated tag message and, from
-# there, the Codeberg release body. The generated lists are a starting point,
+# there, the Codeberg release body. The generated content is a starting point,
 # not the final wording. Save + exit to continue; leave the file empty (or
 # with only these "# " lines) to abort — nothing is tagged or pushed.
 
-## Changes
-
-$commits
-
-## Contributors
-
-$contributors
+$prefill
 EOF
 
 editor="${EDITOR:-${VISUAL:-nano}}"
@@ -124,7 +145,7 @@ echo
 echo "── release notes ──"
 cat "$NOTES_FILE"
 echo "───────────────────"
-read -r -p "Tag $tag with these notes and push? [y/N] " confirm
+read -r -p "$([[ "$retag" == 1 ]] && echo "Re-cut $tag (move + force-push the tag)" || echo "Tag $tag") with these notes and push? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || die "aborted by user"
 
 # ── 4. release commit + tag ─────────────────────────────────────────────
@@ -134,7 +155,9 @@ grep -qF "version = \"$new_version\"" "$CARGO_TOML" || die "version bump failed 
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
 git add "$CARGO_TOML" Cargo.lock 2>/dev/null || git add "$CARGO_TOML"
 git commit -m "chore: release $tag"
-git tag -a -F "$NOTES_FILE" "$tag"
+tag_flags=(-a -F "$NOTES_FILE")
+[[ "$retag" == 1 ]] && tag_flags=(-f "${tag_flags[@]}")
+git tag "${tag_flags[@]}" "$tag"
 
 # ── 5. bump to the next patch's -dev.0 ──────────────────────────────────
 #      `X.Y.Z` → `X.Y.(Z+1)-dev.0`: semver-strictly-greater than the release
@@ -150,9 +173,14 @@ git commit -m "chore: bump to $next_dev"
 
 # ── 6. push — the release commit + tag + the dev bump, all at once, so the
 #      tag push triggers release.yml and the same main push triggers tip.yml
-#      with the -dev.0 base already in place.
+#      with the -dev.0 base already in place. On --force, `+` force-updates
+#      only the tag (main stays a fast-forward push).
 echo "pushing main + $tag …"
-push_retry --atomic origin main "$tag"
+if [[ "$retag" == 1 ]]; then
+  push_retry --atomic origin main "+refs/tags/$tag"
+else
+  push_retry --atomic origin main "$tag"
+fi
 
 cat <<EOF
 

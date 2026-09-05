@@ -852,3 +852,10 @@ anything), atomic-pushes `main` + the tag, then bumps `main` again to
 `x.y.(z+1)-dev.0` (see UPDATER.md § 3) so `tip` sits one commit ahead of
 `latest` and semver-greater. See the script's own comments for the exact
 sequence; see `release.yml` for what happens after the tag lands.
+
+`scripts/release.sh --force x.y.z` re-cuts an **existing** version: same flow,
+but it seeds the editor with the tag's current notes, `git tag -f`, and
+force-pushes only the tag (`+refs/tags/vX.Y.Z`). Use it to re-trigger
+`release.yml` after a CI-config fix; the extra `chore:` commits stay in
+history until rebased out. A plain (non-`--force`) run refuses if the tag
+exists.
