@@ -15,6 +15,7 @@
 //! crash helper `include_bytes!`d), so nothing else needs to go inside.
 
 use std::path::Path;
+use std::process::Command;
 
 use crate::bundle::Context;
 use crate::util::{copy, fresh_dir, report, try_run, workspace_root};
@@ -42,6 +43,12 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     let exe = contents.join("MacOS").join(meta::MACOS_EXECUTABLE_NAME);
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
+
+    // Restamp the recorded macOS SDK version so AppKit gives the app the
+    // macOS 26 interface (larger window controls, Liquid Glass) regardless of
+    // which macOS SDK the linker on the build host had. No-op when it's
+    // already ≥ the floor. See `meta::MACOS_SDK_FLOOR` / RUNNERS.md.
+    ensure_min_sdk(&exe)?;
 
     // Icon.
     let icon_file = if cx.have_icon && icon::icns_path().exists() {
@@ -134,6 +141,89 @@ fn info_plist(icon_file: Option<&str>) -> String {
         category = meta::MACOS_CATEGORY,
         copyright = xml_escape(meta::COPYRIGHT),
     )
+}
+
+/// Ensure the binary's `LC_BUILD_VERSION` records an SDK ≥
+/// [`meta::MACOS_SDK_FLOOR`], restamping it with `vtool` when it doesn't.
+///
+/// The macOS 26 interface redesign (larger traffic-light controls, Liquid
+/// Glass window chrome) is gated by AppKit on the SDK the binary was *linked*
+/// against — `dyld_program_sdk_at_least` reading this field — not on the OS it
+/// runs on. Our Intel CI host maxes out at the macOS 13 SDK, so without this
+/// its builds would ship the pre-redesign look even when run on Tahoe. `vtool`
+/// rewrites the field in place (all slices of a universal binary at once);
+/// `codesign` runs afterwards, so the mutation is inside the signed bundle.
+/// The deployment target (`minos`) is kept at [`meta::MACOS_MIN_VERSION`].
+///
+/// A build *on* macOS 26 already has SDK ≥ the floor and is left untouched
+/// (we never lower it).
+fn ensure_min_sdk(binary: &Path) -> Result<(), String> {
+    let floor = parse_version(meta::MACOS_SDK_FLOOR)
+        .ok_or_else(|| format!("bad MACOS_SDK_FLOOR {:?}", meta::MACOS_SDK_FLOOR))?;
+
+    let shown = Command::new("vtool")
+        .arg("-show-build")
+        .arg(binary)
+        .output()
+        .map_err(|e| format!("spawn vtool: {e}"))?;
+    if !shown.status.success() {
+        return Err(format!(
+            "vtool -show-build failed: {}",
+            String::from_utf8_lossy(&shown.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&shown.stdout);
+    // Lowest `sdk` across all slices — if any is below the floor we restamp
+    // (vtool rewrites every slice to the same value regardless).
+    let current = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("sdk "))
+        .filter_map(|v| parse_version(v.trim()))
+        .min()
+        .ok_or("vtool -show-build reported no LC_BUILD_VERSION sdk")?;
+
+    if current >= floor {
+        eprintln!(
+            "dtb-ke-bundle: macOS SDK stamp {}.{} already ≥ {} — left as is",
+            current.0,
+            current.1,
+            meta::MACOS_SDK_FLOOR
+        );
+        return Ok(());
+    }
+
+    let path = binary.to_string_lossy();
+    let path = path.as_ref();
+    try_run(
+        "vtool",
+        &[
+            "-set-build-version",
+            "macos",
+            meta::MACOS_MIN_VERSION,
+            meta::MACOS_SDK_FLOOR,
+            "-replace",
+            "-output",
+            path,
+            path,
+        ],
+        &workspace_root(),
+    )?;
+    eprintln!(
+        "dtb-ke-bundle: restamped macOS SDK {}.{} → {} for the macOS 26 interface",
+        current.0,
+        current.1,
+        meta::MACOS_SDK_FLOOR
+    );
+    Ok(())
+}
+
+/// `"26"` / `"26.0"` / `"26.1.2"` → `(major, minor)`; trailing components are
+/// ignored (the SDK gate only cares about major.minor).
+fn parse_version(s: &str) -> Option<(u32, u32)> {
+    let mut parts = s.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor))
 }
 
 fn codesign(app: &Path, identity: &str) -> Result<(), String> {

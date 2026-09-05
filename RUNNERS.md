@@ -199,6 +199,48 @@ ad-hoc, the cross-linked `x86_64-apple-darwin` one unsigned — is *not* the
 problem: signing tolerates that mismatch fine once the executable name is
 ASCII.)
 
+### macOS SDK restamp (Tahoe interface)
+
+macOS 26 ("Tahoe") gates its redesigned interface — larger traffic-light
+window controls, Liquid Glass chrome — on the **SDK version the binary was
+linked against**, recorded in the Mach-O `LC_BUILD_VERSION` load command's
+`sdk` field and read by AppKit via `dyld_program_sdk_at_least`. It is *not*
+a runtime-OS check: a binary linked against an SDK < 26 gets the
+pre-redesign look even when run on Tahoe.
+
+The `macos-host` runner is a 2017 Intel MacBook Pro — Ventura is its last
+supported macOS, so its linker can only stamp the **13.x** SDK, and Xcode 26
+(needed for the 26 SDK) requires macOS 15.5+. There is no Info.plist opt-in
+to the new look from an old SDK (`UIDesignRequiresCompatibility` only forces
+the *old* look with a *new* SDK).
+
+So `dtb-ke-bundle`'s macOS packaging (`macos::ensure_min_sdk`) restamps the
+field with **`vtool`** right after copying the binary into the `.app` and
+before `codesign` (so the change is inside the signed bundle):
+
+```sh
+vtool -show-build <exe>                                  # read current sdk
+vtool -set-build-version macos 11.0 26.0 -replace -output <exe> <exe>
+```
+
+- Floor is `meta::MACOS_SDK_FLOOR` (`"26.0"`); deployment target
+  (`minos` / `LSMinimumSystemVersion`) stays `meta::MACOS_MIN_VERSION`
+  (`"11.0"`).
+- Never lowers: a build *on* macOS 26 (SDK ≥ floor, e.g. a local
+  `cargo dtb-ke-bundle bundle`) is left untouched.
+- `vtool` handles a universal binary directly — every slice is rewritten.
+  It drops the `LC_BUILD_VERSION` tool sub-entries (`ntools 0`), which are
+  informational only.
+- `vtool` ships with the Command Line Tools (`/usr/bin/vtool`, same shim as
+  `lipo`) — no extra runner setup.
+
+**Faking the SDK means AppKit enables *every* 26-SDK-gated behavior** on a
+binary compiled without the 26 headers — for this app that surface is small
+(gpui draws its own UI; the exceptions are `NSSavePanel` in `src/save/` and
+the native menu bar), but a real smoke test on both Ventura and Tahoe is
+warranted after the first CI-built release. If the newer Mac ever becomes
+the `macos-host` runner, this step becomes a no-op and can be dropped.
+
 ## The two workflows
 
 `.forgejo/workflows/tip.yml` — every push to `main`. Builds all five targets

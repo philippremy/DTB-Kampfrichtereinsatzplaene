@@ -69,6 +69,16 @@ pub const MACOS_CATEGORY: &str = "public.app-category.productivity";
 /// Lowest macOS the app is expected to run on.
 pub const MACOS_MIN_VERSION: &str = "11.0";
 
+/// Minimum macOS **SDK** version stamped into the built binary's
+/// `LC_BUILD_VERSION` (`macos::ensure_min_sdk`). macOS 26 ("Tahoe") gates its
+/// redesigned interface — larger window controls, Liquid Glass chrome — on the
+/// SDK the binary was *linked against* being ≥ this, independent of the OS it
+/// runs on. A build on an older macOS (the Intel CI host tops out at the 13.x
+/// SDK) would otherwise ship the pre-redesign look even on Tahoe. Only the
+/// recorded SDK is touched; the deployment target ([`MACOS_MIN_VERSION`]) is
+/// left alone. Raise this when a later redesign moves the gate. See RUNNERS.md.
+pub const MACOS_SDK_FLOOR: &str = "26.0";
+
 /// **Stable** WiX upgrade code — a fixed GUID that identifies the product line
 /// across versions so an `.msi` upgrades in place. Never change this.
 pub const WIX_UPGRADE_CODE: &str = "8F3A1C57-2D94-4E6B-9A11-6C0F5B2E7D84";
