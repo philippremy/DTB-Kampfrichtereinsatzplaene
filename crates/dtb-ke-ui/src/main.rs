@@ -131,8 +131,8 @@ fn main() {
         }
 
         // Debug aids: open a secondary window straight away.
-        if std::env::var_os("DTB_KE_ABOUT").is_some() {
-            about::open(cx);
+        if let Some(v) = std::env::var_os("DTB_KE_ABOUT") {
+            about::open_named(cx, &v.to_string_lossy());
         }
         if std::env::var_os("DTB_KE_SETTINGS").is_some() {
             settings_window::open(cx);

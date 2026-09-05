@@ -12,10 +12,11 @@ use std::sync::{Arc, OnceLock};
 
 use gpui::{
     AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
-    ImageFormat, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, Size,
-    StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowKind,
-    WindowOptions, div, img, prelude::FluentBuilder, px,
+    ImageFormat, InteractiveElement, IntoElement, ParentElement, Pixels, Render, ScrollHandle,
+    Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowKind,
+    WindowOptions, div, img, prelude::FluentBuilder, px, size,
 };
+use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 
 use crate::build_info::{self, D};
 use crate::components::{Button, ButtonTone};
@@ -59,6 +60,18 @@ thread_local! {
 /// Open (or focus) the About window. Entry point for the `app::About` action.
 pub fn open(cx: &mut App) {
     open_kind(cx, Kind::About);
+}
+
+/// Debug aid (`DTB_KE_ABOUT=ack|build|license`): open one companion window
+/// directly. Any other value opens the About window itself.
+pub fn open_named(cx: &mut App, name: &str) {
+    let kind = match name {
+        "ack" | "acknowledgements" | "danksagungen" => Kind::Acknowledgements,
+        "build" | "buildinfo" => Kind::BuildInfo,
+        "license" | "lizenz" => Kind::License,
+        _ => Kind::About,
+    };
+    open_kind(cx, kind);
 }
 
 fn open_kind(cx: &mut App, kind: Kind) {
@@ -241,14 +254,43 @@ fn app_icon(size: f32) -> impl IntoElement {
 
 // ── the three companion windows ──────────────────────────────────────────
 
+/// Acknowledgements row heights (px, border-box) — the virtual list needs each
+/// row's exact height up front, so both parts are drawn at a forced size.
+const ACK_ROW_H: f32 = 39.0;
+/// The expanded licence panel is capped at this and scrolls inside itself.
+const ACK_LICENSE_BOX_H: f32 = 220.0;
+
 struct InfoWindow {
     kind: Kind,
     /// Acknowledgements only: which rows are expanded to show their licence.
     expanded: Rc<RefCell<HashSet<usize>>>,
-    /// Every scrolling view (Acknowledgements / Build-Info / Lizenz) scrolls here.
+    /// Build-Info / Lizenz scroll here (plain columns).
     scroll: ScrollHandle,
+    /// Acknowledgements only: the virtual dependency list's scroll position.
+    ack_scroll: VirtualListScrollHandle,
+    /// Acknowledgements only: per-row heights, rebuilt whenever a row is
+    /// expanded or collapsed (`ACK_ROW_H`, plus `ACK_LICENSE_BOX_H` when open).
+    ack_sizes: Rc<Vec<Size<Pixels>>>,
+    /// Acknowledgements only: the inner licence panels' own scroll positions,
+    /// kept across frames so a row scrolled out of view and back is unchanged.
+    ack_license_scrolls: HashMap<usize, ScrollHandle>,
     /// Lizenz only: the AGPL text reflowed into natural paragraphs.
     license_blocks: Vec<LicenseBlock>,
+}
+
+/// Height of every acknowledgements row for the current expansion state.
+fn ack_row_sizes(expanded: &HashSet<usize>) -> Vec<Size<Pixels>> {
+    (0..build_info::DEPENDENCIES.len())
+        .map(|ix| {
+            let h = if expanded.contains(&ix) {
+                ACK_ROW_H + ACK_LICENSE_BOX_H
+            } else {
+                ACK_ROW_H
+            };
+            // Width is ignored for a vertical list (it takes the list's width).
+            size(px(1.), px(h))
+        })
+        .collect()
 }
 
 impl Drop for InfoWindow {
@@ -268,6 +310,9 @@ impl InfoWindow {
             kind,
             expanded: Rc::new(RefCell::new(HashSet::new())),
             scroll: ScrollHandle::new(),
+            ack_scroll: VirtualListScrollHandle::new(),
+            ack_sizes: Rc::new(ack_row_sizes(&HashSet::new())),
+            ack_license_scrolls: HashMap::new(),
             license_blocks,
         }
     }
@@ -317,18 +362,39 @@ impl InfoWindow {
         let expanded = self.expanded.clone();
         let entity = cx.entity();
         let c = cx.theme().color;
+        let sizes = self.ack_sizes.clone();
 
-        // A plain scrolling column (not `gpui::list`): `list` paints no scrollbar
-        // and re-measuring it on expand jumps the view back to the top. A
-        // `track_scroll`'d scroll container keeps its offset when a child grows.
+        // Virtualised: only the visible rows are laid out. Row heights are known
+        // up front (`ack_row_sizes`) because both the header strip and the
+        // expanded licence panel are drawn at a forced height; the licence text
+        // scrolls inside its own capped panel rather than growing the row.
         div()
-            .id("ack-scroll")
+            .relative()
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .children(
-                (0..build_info::DEPENDENCIES.len()).map(|ix| dep_row(ix, &c, &expanded, &entity)),
+            .overflow_hidden()
+            .child(
+                v_virtual_list(
+                    cx.entity(),
+                    "ack-list",
+                    sizes,
+                    move |this, range, _window, _cx| {
+                        range
+                            .map(|ix| {
+                                let lic_scroll = this
+                                    .ack_license_scrolls
+                                    .entry(ix)
+                                    .or_insert_with(ScrollHandle::new)
+                                    .clone();
+                                let is_open = expanded.borrow().contains(&ix);
+                                dep_row(ix, c, is_open, entity.clone(), lic_scroll)
+                            })
+                            .collect()
+                    },
+                )
+                .track_scroll(&self.ack_scroll)
+                .size_full(),
             )
+            .child(Scrollbar::vertical(&self.ack_scroll))
             .into_any_element()
     }
 
@@ -480,40 +546,43 @@ fn license_block_el(b: &LicenseBlock, c: &crate::theme::PaletteColors) -> gpui::
 
 fn dep_row(
     ix: usize,
-    c: &crate::theme::PaletteColors,
-    expanded: &Rc<RefCell<HashSet<usize>>>,
-    entity: &Entity<InfoWindow>,
+    c: crate::theme::PaletteColors,
+    is_open: bool,
+    entity: Entity<InfoWindow>,
+    license_scroll: ScrollHandle,
 ) -> impl IntoElement {
     let dep: &D = &build_info::DEPENDENCIES[ix];
-    let is_open = expanded.borrow().contains(&ix);
     let license = build_info::dep_license(dep);
 
-    let toggle = {
-        let expanded = expanded.clone();
-        let entity = entity.clone();
-        move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+    let toggle = move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+        entity.update(cx, |this, cx| {
             {
-                let mut e = expanded.borrow_mut();
+                let mut e = this.expanded.borrow_mut();
                 if !e.remove(&ix) {
                     e.insert(ix);
                 }
             }
-            entity.update(cx, |_, cx| cx.notify());
-        }
+            // The virtual list keys layout off these — rebuild on every toggle.
+            this.ack_sizes = Rc::new(ack_row_sizes(&this.expanded.borrow()));
+            cx.notify();
+        });
     };
 
     div()
-        .id(ix)
-        .border_b_1()
-        .border_color(c.border)
+        .w_full()
+        .flex()
+        .flex_col()
         .child(
             div()
-                .id("row")
+                .id(ix)
+                .h(px(ACK_ROW_H))
+                .flex_none()
+                .border_b_1()
+                .border_color(c.border)
                 .flex()
-                .items_baseline()
+                .items_center()
                 .gap(px(8.))
                 .px(px(20.))
-                .py(px(9.))
                 .cursor_pointer()
                 .hover(|el| el.bg(c.selection))
                 .on_click(toggle)
@@ -534,17 +603,29 @@ fn dep_row(
         .when(is_open, |el| {
             el.child(
                 div()
-                    .px(px(20.))
-                    .pt(px(14.))
-                    .pb(px(16.))
+                    .h(px(ACK_LICENSE_BOX_H))
+                    .flex_none()
+                    .relative()
                     .bg(c.surface)
-                    .text_size(px(10.5))
-                    .text_color(c.muted_foreground)
+                    .border_b_1()
+                    .border_color(c.border)
                     .child(
-                        license
-                            .map(str::to_string)
-                            .unwrap_or_else(|| "Kein Lizenztext eingebettet.".to_string()),
-                    ),
+                        div()
+                            .id(("license", ix))
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&license_scroll)
+                            .px(px(20.))
+                            .py(px(14.))
+                            .text_size(px(10.5))
+                            .text_color(c.muted_foreground)
+                            .child(
+                                license
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| "Kein Lizenztext eingebettet.".to_string()),
+                            ),
+                    )
+                    .child(Scrollbar::vertical(&license_scroll)),
             )
         })
 }
