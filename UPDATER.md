@@ -181,6 +181,14 @@ since every upload in a given workflow run targets the same `release_id`(s).
   suchen*. Gated by the *Einstellungen → Aktualisierung* toggle (default on);
   skips re-checking automatically while a result (`Available`/`Failed`/
   `UpToDate`) is already on screen.
+  - A **404** on the manifest URL is treated as "no update available"
+    (`Ok(None)`), not an error: a rolling channel tag legitimately has
+    nothing published yet — `latest` until the first `release.yml` run, `tip`
+    until the first `tip.yml` run. So a Stable-channel user before the first
+    tagged release sees "Neueste Version bereits installiert" on a manual
+    check, not "Aktualisierung fehlgeschlagen". (Codeberg's `latest` and
+    `tip` are *separate* releases — being on Stable while only `tip` exists
+    is the usual cause.)
 - **Toast:** a corner pill / card (`updater::toast`) — Version, Größe,
   Veröffentlicht, and *Überspringen* / *Später* / *Installieren & neu starten*
   (or *Herunterladen* when `can_self_install` is false for this platform +

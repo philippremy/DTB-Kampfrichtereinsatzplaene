@@ -471,9 +471,19 @@ fn asset_priority(name: &str) -> Option<u32> {
 /// Fetch + parse the manifest at `url`, return the newest release strictly
 /// newer than the running build (and newer than `skipped`, if given).
 fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, String> {
-    let body = self_update::ureq::get(url)
-        .call()
-        .map_err(|e| format!("Manifest nicht erreichbar: {e}"))?
+    let mut response = match self_update::ureq::get(url).call() {
+        Ok(response) => response,
+        // A missing manifest is not a failure: a rolling channel tag has
+        // nothing published yet — `latest` before the first `release.yml`
+        // run, `tip` before the first `tip.yml` run. Treat it as "no update
+        // available" rather than surfacing a scary error on a manual check.
+        Err(self_update::ureq::Error::StatusCode(404)) => {
+            log::info!("no update manifest on this channel yet: {url}");
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("Manifest nicht erreichbar: {e}")),
+    };
+    let body = response
         .body_mut()
         .read_to_string()
         .map_err(|e| format!("Manifest unlesbar: {e}"))?;
