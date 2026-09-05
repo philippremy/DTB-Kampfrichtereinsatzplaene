@@ -39,6 +39,9 @@ pub struct Context {
     pub out_dir: PathBuf,
     pub formats: Option<Vec<String>>,
     pub sign: Option<String>,
+    /// The `--target` triple this was built for (`None` = the host). Linux
+    /// packaging derives its arch labels (`amd64`/`arm64`, …) from it.
+    pub target: Option<String>,
     /// Whether an icon master was found and the icon cache is populated.
     pub have_icon: bool,
 }
@@ -86,6 +89,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         out_dir,
         formats: opts.formats,
         sign: opts.sign,
+        target: opts.target,
         have_icon,
     };
 

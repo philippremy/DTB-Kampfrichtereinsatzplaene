@@ -13,10 +13,41 @@ use crate::bundle::Context;
 use crate::util::{copy, fresh_dir, have, report, try_run, workspace_root};
 use crate::{icon, meta};
 
-/// Debian architecture / RPM arch / AppImage suffix for a 64-bit x86 build.
-const DEB_ARCH: &str = "amd64";
-const RPM_ARCH: &str = "x86_64";
-const APPIMAGE_ARCH: &str = "x86_64";
+/// Architecture spellings for the target being packaged. Debian and RPM name
+/// the same CPU differently (`amd64` vs `x86_64`, `arm64` vs `aarch64`);
+/// AppImage's `ARCH` env and the tarball stem follow the RPM/kernel spelling.
+struct ArchLabels {
+    /// `Architecture:` in the `.deb` control file.
+    deb: &'static str,
+    /// `BuildArch:` in the `.spec`, the `RPMS/<arch>/` dir, the `.AppImage`
+    /// `ARCH` env, and the tarball stem.
+    rpm: &'static str,
+}
+
+/// Resolve [`ArchLabels`] from `cx.target` (the `--target` triple; `None` = a
+/// native build, so the host arch). Errors on an arch we don't have labels for
+/// rather than silently mislabelling the package.
+fn arch_labels(cx: &Context) -> Result<ArchLabels, String> {
+    let arch = match cx.target.as_deref() {
+        Some(triple) => triple.split('-').next().unwrap_or(""),
+        None => std::env::consts::ARCH,
+    };
+    match arch {
+        "x86_64" => Ok(ArchLabels {
+            deb: "amd64",
+            rpm: "x86_64",
+        }),
+        "aarch64" => Ok(ArchLabels {
+            deb: "arm64",
+            rpm: "aarch64",
+        }),
+        other => Err(format!(
+            "Linux packaging has no arch labels for `{other}` (target {:?}) — \
+             add it to linux::arch_labels",
+            cx.target
+        )),
+    }
+}
 
 /// Runtime shared libraries gpui needs that aren't part of a base system.
 /// Conservative on purpose — too many `Depends` breaks installs on lean
@@ -169,7 +200,8 @@ fn metainfo() -> String {
 // ── tarball ────────────────────────────────────────────────────────────────
 
 fn tarball(cx: &Context, prefix: &Path) -> Result<(), String> {
-    let stem = format!("{}-{}-{}", meta::SLUG, meta::numeric_version(), RPM_ARCH);
+    let arch = arch_labels(cx)?;
+    let stem = format!("{}-{}-{}", meta::SLUG, meta::numeric_version(), arch.rpm);
     let root = cx.out_dir.join(&stem);
     fresh_dir(&root).map_err(io)?;
     copy_tree(&prefix.join("usr"), &root.join("usr"))?;
@@ -218,6 +250,7 @@ fn install_script(install: bool) -> String {
 // ── .deb ───────────────────────────────────────────────────────────────────
 
 fn deb(cx: &Context, prefix: &Path) -> Result<(), String> {
+    let arch = arch_labels(cx)?;
     let work = cx.out_dir.join("deb");
     fresh_dir(&work).map_err(io)?;
 
@@ -230,7 +263,10 @@ fn deb(cx: &Context, prefix: &Path) -> Result<(), String> {
     let ctl_dir = work.join("control");
     std::fs::create_dir_all(&ctl_dir).map_err(io)?;
     let installed_kb = dir_size_kb(&prefix.join("usr"));
-    write(&ctl_dir.join("control"), deb_control(installed_kb))?;
+    write(
+        &ctl_dir.join("control"),
+        deb_control(installed_kb, arch.deb),
+    )?;
     write(&ctl_dir.join("md5sums"), deb_md5sums(prefix)?)?;
     write(&ctl_dir.join("postinst"), maintainer_script())?;
     write(&ctl_dir.join("postrm"), maintainer_script())?;
@@ -243,7 +279,7 @@ fn deb(cx: &Context, prefix: &Path) -> Result<(), String> {
         "{}_{}_{}.deb",
         meta::SLUG,
         meta::numeric_version(),
-        DEB_ARCH
+        arch.deb
     ));
     archive::ar_deb(&out, &ctl_tgz, &data_tgz)?;
     crate::util::remove(&work).ok();
@@ -251,7 +287,7 @@ fn deb(cx: &Context, prefix: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn deb_control(installed_kb: u64) -> String {
+fn deb_control(installed_kb: u64, arch: &str) -> String {
     format!(
         "Package: {pkg}\n\
          Version: {version}\n\
@@ -266,7 +302,7 @@ fn deb_control(installed_kb: u64) -> String {
          {desc_body}\n",
         pkg = meta::SLUG,
         version = meta::numeric_version(),
-        arch = DEB_ARCH,
+        arch = arch,
         publisher = meta::PUBLISHER,
         size = installed_kb,
         depends = DEB_DEPENDS,
@@ -332,6 +368,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
         return Ok(());
     }
 
+    let arch = arch_labels(cx)?;
     let top = cx.out_dir.join("rpmbuild");
     for sub in ["SPECS", "SOURCES", "BUILD", "BUILDROOT", "RPMS", "SRPMS"] {
         std::fs::create_dir_all(top.join(sub)).map_err(io)?;
@@ -348,7 +385,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     crate::util::remove(&cx.out_dir.join("rpm-src")).ok();
 
     let spec = top.join("SPECS").join(format!("{}.spec", meta::SLUG));
-    write(&spec, rpm_spec(&src_stem))?;
+    write(&spec, rpm_spec(&src_stem, arch.rpm))?;
 
     // Arch/CachyOS (the CI host) has no populated system rpm database, so
     // `rpmbuild` prints "cannot open Packages database in /var/lib/rpm".
@@ -374,7 +411,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     )?;
 
     // Move the built rpm out of RPMS/<arch>/.
-    let built = top.join("RPMS").join(RPM_ARCH);
+    let built = top.join("RPMS").join(arch.rpm);
     if let Ok(entries) = std::fs::read_dir(&built) {
         for e in entries.flatten() {
             if e.path().extension().is_some_and(|x| x == "rpm") {
@@ -388,7 +425,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn rpm_spec(src_stem: &str) -> String {
+fn rpm_spec(src_stem: &str, arch: &str) -> String {
     format!(
         // The binary ships pre-stripped ([profile.release] strip = "symbols";
         // debug info goes to a separate .dwp, never into the payload), so
@@ -447,7 +484,7 @@ fn rpm_spec(src_stem: &str) -> String {
         license = meta::LICENSE,
         homepage = meta::HOMEPAGE,
         src_stem = src_stem,
-        arch = RPM_ARCH,
+        arch = arch,
         description = meta::DESCRIPTION,
         id = meta::IDENTIFIER,
     )
@@ -456,6 +493,7 @@ fn rpm_spec(src_stem: &str) -> String {
 // ── .AppImage ──────────────────────────────────────────────────────────────
 
 fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
+    let arch = arch_labels(cx)?;
     let appdir = cx.out_dir.join(format!("{}.AppDir", meta::SLUG));
     fresh_dir(&appdir).map_err(io)?;
     copy_tree(&prefix.join("usr"), &appdir.join("usr"))?;
@@ -507,11 +545,11 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
         "{}-{}-{}.AppImage",
         meta::DISPLAY_NAME.replace(' ', "_"),
         meta::numeric_version(),
-        APPIMAGE_ARCH
+        arch.rpm
     ));
     // ARCH env is required by appimagetool for the runtime it embeds.
     let status = Command::new("appimagetool")
-        .env("ARCH", APPIMAGE_ARCH)
+        .env("ARCH", arch.rpm)
         .arg(&appdir)
         .arg(&out)
         .current_dir(&cx.out_dir)
