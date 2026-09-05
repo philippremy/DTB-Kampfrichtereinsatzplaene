@@ -4,14 +4,16 @@
 //! checkboxes and a bulk-delete action.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use gpui::FontWeight;
 use gpui::{
     App, AppContext, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
-    ParentElement, Pixels, PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription,
-    Window, div, prelude::FluentBuilder, px,
+    ParentElement, Pixels, PromptLevel, Render, Size, StatefulInteractiveElement, Styled,
+    Subscription, Window, div, prelude::FluentBuilder, px, size,
 };
 use gpui_base::input::{InputEvent, InputState};
+use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
@@ -32,12 +34,18 @@ pub const SIDEBAR_MAX: Pixels = px(460.);
 /// Releasing the resize handle below this width snaps the sidebar to hidden.
 pub const SIDEBAR_SNAP: Pixels = px(172.);
 
+/// Row heights (px) for the virtualised list — the list needs each up front.
+const SB_YEAR_H_FIRST: f32 = 18.0;
+const SB_YEAR_H: f32 = 30.0;
+const SB_COMP_H: f32 = 42.0;
+
 pub struct Sidebar {
     store: Entity<AppStore>,
     search: Entity<InputState>,
     /// Bulk-selection mode — entered / left explicitly via the toolbar buttons.
     multi_select: bool,
     checked: HashSet<Uuid>,
+    list_scroll: VirtualListScrollHandle,
     _subs: Vec<Subscription>,
 }
 
@@ -62,6 +70,7 @@ impl Sidebar {
             search,
             multi_select: false,
             checked: HashSet::new(),
+            list_scroll: VirtualListScrollHandle::new(),
             _subs: subs,
         }
     }
@@ -207,6 +216,95 @@ enum Row {
     },
 }
 
+/// One virtual-list row. Height is forced to the `SB_*` constant the list's
+/// `sizes` table declares for this index, so layout stays exact.
+#[allow(clippy::too_many_arguments)]
+fn sidebar_row(
+    this: &Sidebar,
+    idx: usize,
+    row: &Row,
+    c: crate::theme::PaletteColors,
+    radius: Pixels,
+    sel_fill: gpui::Hsla,
+    sel_fg: gpui::Hsla,
+    multi: bool,
+    selected: Option<Uuid>,
+    cx: &mut Context<Sidebar>,
+) -> gpui::AnyElement {
+    match row {
+        Row::Year(year) => div()
+            .h(px(if idx == 0 { SB_YEAR_H_FIRST } else { SB_YEAR_H }))
+            .flex()
+            .items_end()
+            .px(px(10.))
+            .pb(px(4.))
+            .text_size(px(10.))
+            .text_color(c.muted_foreground)
+            .font_weight(FontWeight::BOLD)
+            .child(year.to_string())
+            .into_any_element(),
+        Row::Competition { id, name, meta } => {
+            let id = *id;
+            let checked = this.checked.contains(&id);
+            let is_selected = !multi && selected == Some(id);
+            let highlight = is_selected || (multi && checked);
+            div()
+                .id(id)
+                .h(px(SB_COMP_H))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .mx(px(4.))
+                .px(px(8.))
+                .rounded(radius)
+                .cursor_pointer()
+                .when(highlight, |el| el.bg(sel_fill).text_color(sel_fg))
+                .when(!highlight, |el| el.hover(|el| el.bg(c.surface)))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    if this.multi_select {
+                        this.toggle_check(id, cx);
+                    } else {
+                        this.store.update(cx, |store, cx| store.select(id, cx));
+                    }
+                }))
+                .when(multi, |el| {
+                    el.child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(15.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(if checked { c.primary } else { c.line_strong })
+                            .when(checked, |el| el.bg(c.primary))
+                            .when(checked, |el| {
+                                el.child(Icon::Check.size(px(11.)).color(c.primary_foreground))
+                            }),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().text_size(px(12.5)).truncate().child(name.clone()))
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .text_color(if highlight {
+                                    sel_fg
+                                } else {
+                                    c.muted_foreground
+                                })
+                                .child(meta.clone()),
+                        ),
+                )
+                .into_any_element()
+        }
+    }
+}
+
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -238,91 +336,47 @@ impl Render for Sidebar {
         }
         let is_empty = rows.is_empty();
 
+        // Virtualised: only the visible rows are laid out. `sidebar_row` forces
+        // each row to the height `sizes` declares here (`SB_*` constants).
+        let sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
+            rows.iter()
+                .enumerate()
+                .map(|(idx, row)| {
+                    let h = match row {
+                        Row::Year(_) if idx == 0 => SB_YEAR_H_FIRST,
+                        Row::Year(_) => SB_YEAR_H,
+                        Row::Competition { .. } => SB_COMP_H,
+                    };
+                    size(px(1.), px(h))
+                })
+                .collect(),
+        );
+        let colors = *c;
         let list = div()
-            .id("competition-list")
+            .relative()
             .flex_1()
             .min_h(px(0.))
-            .overflow_y_scroll()
-            .pb(px(6.))
-            .children(rows.into_iter().enumerate().map(|(idx, row)| {
-                match row {
-                    Row::Year(year) => div()
-                        .px(px(10.))
-                        .when(idx != 0, |el| el.pt(px(12.)))
-                        .pb(px(4.))
-                        .text_size(px(10.))
-                        .text_color(c.muted_foreground)
-                        .font_weight(FontWeight::BOLD)
-                        .child(year.to_string())
-                        .into_any_element(),
-                    Row::Competition { id, name, meta } => {
-                        let checked = self.checked.contains(&id);
-                        let is_selected = !multi && selected == Some(id);
-                        let highlight = is_selected || (multi && checked);
-                        div()
-                            .id(id)
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .mx(px(4.))
-                            .px(px(8.))
-                            .py(px(5.))
-                            .rounded(radius)
-                            .cursor_pointer()
-                            .when(highlight, |el| el.bg(sel_fill).text_color(sel_fg))
-                            .when(!highlight, |el| el.hover(|el| el.bg(c.surface)))
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                if this.multi_select {
-                                    this.toggle_check(id, cx);
-                                } else {
-                                    this.store.update(cx, |store, cx| store.select(id, cx));
-                                }
-                            }))
-                            .when(multi, |el| {
-                                el.child(
-                                    div()
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .size(px(15.))
-                                        .rounded(px(3.))
-                                        .border_1()
-                                        .border_color(if checked {
-                                            c.primary
-                                        } else {
-                                            c.line_strong
-                                        })
-                                        .when(checked, |el| el.bg(c.primary))
-                                        .when(checked, |el| {
-                                            el.child(
-                                                Icon::Check
-                                                    .size(px(11.))
-                                                    .color(c.primary_foreground),
-                                            )
-                                        }),
+            .child(
+                v_virtual_list(
+                    cx.entity(),
+                    "competition-list",
+                    sizes,
+                    move |this, range, _window, cx| {
+                        range
+                            .map(|idx| {
+                                sidebar_row(
+                                    this, idx, &rows[idx], colors, radius, sel_fill, sel_fg, multi,
+                                    selected, cx,
                                 )
                             })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(div().text_size(px(12.5)).truncate().child(name))
-                                    .child(
-                                        div()
-                                            .text_size(px(10.))
-                                            .text_color(if highlight {
-                                                sel_fg
-                                            } else {
-                                                c.muted_foreground
-                                            })
-                                            .child(meta),
-                                    ),
-                            )
-                            .into_any_element()
-                    }
-                }
-            }));
+                            .collect()
+                    },
+                )
+                .track_scroll(&self.list_scroll)
+                .pb(px(6.))
+                .size_full(),
+            )
+            .child(Scrollbar::vertical(&self.list_scroll));
 
         div()
             .flex()

@@ -2,19 +2,22 @@
 //!
 //! A separate window that re-renders the selected competition to page bitmaps
 //! whenever it (or the selection) changes, debounced. The render runs on the
-//! background executor via a shared [`Exporter`]; a [`gpui::ScrollHandle`] owned
-//! by the view keeps the scroll position across re-renders so visual proofing
-//! stays put.
+//! background executor via a shared [`Exporter`]. Pages are drawn with
+//! `gpui_base::v_virtual_list` (only the visible ones are laid out); a
+//! view-owned `VirtualListScrollHandle` keeps the scroll position across
+//! re-renders so visual proofing stays put.
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_export::{Exporter, PreviewOptions};
 use gpui::{
-    App, Bounds, Context, Entity, InteractiveElement, IntoElement, ParentElement, RenderImage,
-    ScrollHandle, Size, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, div, hsla, img, prelude::FluentBuilder, px, white,
+    App, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, RenderImage, Size, Styled,
+    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img,
+    prelude::FluentBuilder, px, size, white,
 };
+use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use image::{Frame, RgbaImage};
 use log::{debug, trace, warn};
 use uuid::Uuid;
@@ -41,7 +44,7 @@ pub struct PreviewWindow {
     render_task: Option<Task<()>>,
 
     /// Owned by the view, so the scroll offset survives a full re-render.
-    scroll: ScrollHandle,
+    scroll: VirtualListScrollHandle,
 
     watched: Option<Uuid>,
     _store_sub: Subscription,
@@ -75,7 +78,7 @@ impl PreviewWindow {
             status: Status::Idle,
             generation: 0,
             render_task: None,
-            scroll: ScrollHandle::new(),
+            scroll: VirtualListScrollHandle::new(),
             watched: None,
             _store_sub: store_sub,
             _doc_sub: None,
@@ -239,44 +242,72 @@ impl gpui::Render for PreviewWindow {
             )
             .child(
                 div()
-                    .id("preview-scroll")
+                    .relative()
                     .flex_1()
                     .min_h(px(0.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
                     .bg(ground)
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(18.))
-                    .p(px(28.))
-                    .when(self.pages.is_empty() && !failed, |el| {
+                    .when(self.pages.is_empty(), |el| {
                         el.child(
-                            div()
-                                .mt(px(80.))
-                                .text_size(px(13.))
-                                .text_color(c.muted_foreground)
-                                .child(match self.status {
-                                    Status::Idle => {
-                                        "Wähle einen Wettkampf, um die Vorschau zu sehen."
-                                    }
-                                    _ => "Wird gerendert …",
-                                }),
+                            div().size_full().flex().justify_center().child(
+                                div()
+                                    .mt(px(80.))
+                                    .text_size(px(13.))
+                                    .text_color(c.muted_foreground)
+                                    .child(if failed {
+                                        "Vorschau fehlgeschlagen — siehe Statuszeile."
+                                    } else {
+                                        match self.status {
+                                            Status::Idle => {
+                                                "Wähle einen Wettkampf, um die Vorschau zu sehen."
+                                            }
+                                            _ => "Wird gerendert …",
+                                        }
+                                    }),
+                            ),
                         )
                     })
-                    .children(self.pages.iter().map(|page| {
-                        let scale = content_px / page.width as f32;
-                        let display_h = px(page.height as f32 * scale);
-                        div()
-                            .flex_none()
-                            .w(content_w)
-                            .h(display_h)
-                            .bg(white())
-                            .border_1()
-                            .border_color(c.border)
-                            .shadow_md()
-                            .child(img(page.image.clone()).size_full())
-                    })),
+                    .when(!self.pages.is_empty(), |el| {
+                        // Only the visible pages are laid out — heights are the
+                        // exact fit-to-width display size of each rendered page.
+                        let sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
+                            self.pages
+                                .iter()
+                                .map(|p| {
+                                    let scale = content_px / p.width as f32;
+                                    size(content_w, px(p.height as f32 * scale))
+                                })
+                                .collect(),
+                        );
+                        let border = c.border;
+                        el.child(
+                            v_virtual_list(
+                                cx.entity(),
+                                "preview-pages",
+                                sizes,
+                                move |this, range, _window, _cx| {
+                                    range
+                                        .map(|ix| {
+                                            let page = &this.pages[ix];
+                                            let scale = content_px / page.width as f32;
+                                            div()
+                                                .w(content_w)
+                                                .h(px(page.height as f32 * scale))
+                                                .bg(white())
+                                                .border_1()
+                                                .border_color(border)
+                                                .shadow_md()
+                                                .child(img(page.image.clone()).size_full())
+                                        })
+                                        .collect()
+                                },
+                            )
+                            .track_scroll(&self.scroll)
+                            .p(px(28.))
+                            .gap(px(18.))
+                            .size_full(),
+                        )
+                        .child(Scrollbar::vertical(&self.scroll))
+                    }),
             )
     }
 }
