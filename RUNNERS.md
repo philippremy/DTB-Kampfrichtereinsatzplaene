@@ -785,7 +785,7 @@ Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
 | secret | used by | what it is |
 |---|---|---|
 | `CODEBERG_TOKEN` | both workflows, every job that touches the API | a Codeberg personal access token with `repo` (write) scope — creates/updates releases, uploads assets, force-pushes the rolling `tip`/`latest` tags |
-| `ZIPSIGN_KEY` | `release.yml` only (Tip builds are unsigned) | base64 of the zipsign **private** key (`base64 -w0 release.priv`) — see `UPDATER.md` § 1 for key generation |
+| `ZIPSIGN_KEY` | both workflows (every archive on both channels is zipsign-signed) | base64 of the zipsign **private** key (`base64 -w0 release.priv`) — see `UPDATER.md` § 1 for key generation |
 | `MACOS_SIGN_IDENTITY` (optional) | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; unset falls back to ad-hoc signing and skips notarization (see above) rather than failing the job |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` (optional, only matter with `MACOS_SIGN_IDENTITY` set) | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
 | `DTB_KE_SMTP_HOST`, `DTB_KE_SMTP_PORT`, `DTB_KE_SMTP_USER`, `DTB_KE_SMTP_PASS`, `DTB_KE_SMTP_FROM`, `DTB_KE_SMTP_TO` (optional) | both workflows, every build job (top-level `env:`) | the crash-reporter/feedback-window mail transport's credentials, baked in at compile time by `dtb-ke-ui/build.rs::emit_smtp_secret` (see `mail.rs`) — unset leaves the feature compiled in but disabled (`mail::available()` false), never a build failure |

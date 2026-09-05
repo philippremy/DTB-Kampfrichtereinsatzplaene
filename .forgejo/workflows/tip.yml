@@ -114,12 +114,18 @@ jobs:
         run: cargo dtb-ke-bundle bundle --release --formats none
       - name: Package + upload
         env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
           triple=x86_64-unknown-linux-gnu
           name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
           tar -C target/bundle/release -czf "$name" .
+          # Tip archives are zipsign-signed too — the app requires a valid
+          # signature on both channels (see UPDATER.md).
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
       - name: Package + upload debug info
         # split-debuginfo=packed (workspace Cargo.toml) is stably supported
@@ -178,12 +184,16 @@ jobs:
         run: cargo dtb-ke-bundle bundle --release --formats none --target aarch64-unknown-linux-gnu
       - name: Package + upload
         env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
           triple=aarch64-unknown-linux-gnu
           name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
           tar -C target/bundle/release -czf "$name" .
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
       - name: Package + upload debug info
         # See the linux-x86_64 job above for why --plain and why this exists.
@@ -228,6 +238,7 @@ jobs:
         # exactly that reason. Native PowerShell (the default shell here,
         # same as the Build step above) throughout instead.
         env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -263,6 +274,14 @@ jobs:
           # "...Kampfrichtereinsatzpl„ne.exe") mangled it on extraction.
           # ZipArchive sets that flag correctly for a non-ASCII entry name.
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          # Tip archives are zipsign-signed too — the app requires a valid
+          # signature on both channels (see UPDATER.md).
+          $keyPath = Join-Path $env:TEMP "release.priv"
+          [System.IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:ZIPSIGN_KEY_B64))
+          zipsign sign zip "$name" "$keyPath"
+          $zipsignExit = $LASTEXITCODE
+          Remove-Item -Force $keyPath
+          if ($zipsignExit -ne 0) { exit $zipsignExit }
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload debug info
@@ -303,6 +322,7 @@ jobs:
         # See the windows-x86_64 job above for why this is PowerShell, not
         # shell: bash (there is no bash on this VM at all).
         env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -319,6 +339,12 @@ jobs:
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
+          $keyPath = Join-Path $env:TEMP "release.priv"
+          [System.IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:ZIPSIGN_KEY_B64))
+          zipsign sign zip "$name" "$keyPath"
+          $zipsignExit = $LASTEXITCODE
+          Remove-Item -Force $keyPath
+          if ($zipsignExit -ne 0) { exit $zipsignExit }
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload debug info
@@ -352,6 +378,7 @@ jobs:
         run: cargo dtb-ke-bundle bundle --release --universal
       - name: Package + upload
         env:
+          ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
@@ -362,6 +389,11 @@ jobs:
           # (meta::DISPLAY_NAME, spaced), matching what updater::BIN_NAME
           # expects to find inside the downloaded archive.
           tar -C target/bundle/release -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
+          # Tip archives are zipsign-signed too — the app requires a valid
+          # signature on both channels (see UPDATER.md).
+          echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
+          zipsign sign tar "$name" /tmp/release.priv
+          shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
       - name: Package + upload debug info
         # --universal: merges the two slices' own .dSYM (a side effect of the
