@@ -719,6 +719,39 @@ book's summary table at face value:
   convention, a real risk to already-working, safety-critical infrastructure
   — there's no reason left to reopen that question over this.)*
 
+  **What this PDB actually contains — verified against a real CI-built binary, not assumed.**
+  Downloaded a real `.exe` + `.pdb` pair from an actual Tip run and checked them with
+  `llvm-readobj`/`llvm-pdbutil`/`llvm-symbolizer` (all shipped by llvm-mingw): the `.exe`'s embedded
+  CodeView debug directory (`llvm-readobj --coff-debug-directory`) names the exact PDB GUID/age, which
+  matches the PDB's own header (`llvm-pdbutil dump --summary`) exactly — a genuinely matched pair, not
+  just two files that happen to sit together. The PDB carries **354,797 real public symbols** —
+  genuine demangled project code (`dtb_ke_ui::components::menu_bar::MenuBar::render_strip`,
+  `dtb_ke_ui::store::AppStore::import_decoded`, …) — and `llvm-symbolizer --obj=<exe> <address>`
+  correctly resolves arbitrary code addresses to the right function name every time.
+
+  **But it has no file/line info at all** — `llvm-pdbutil dump -l` shows zero line records in every
+  `dtb_ke_ui` module, and every `llvm-symbolizer` lookup comes back `??:0:0` for the source location,
+  regardless of `debug = "line-tables-only"` vs. full `debug = 2` (tested both directly — identical
+  result). This turned out to be a genuine, confirmed **upstream limitation of LLD's COFF PDB writer
+  itself**, not a missing flag or a tuning problem: read LLD's actual `lld/COFF/PDB.cpp` from upstream
+  and confirmed it contains **zero** occurrences of "dwarf", "debug_line", "debug_info", or `.debug_`
+  anywhere in the file — it only ever reads native CodeView `.debug$S` subsections
+  (`DebugSHandler::handleDebugS`, dispatching on `DebugSubsectionKind::Lines`/`InlineeLines`) for
+  line-table data, which our pipeline never produces (rustc's own LLVM codegen emits DWARF for
+  `windows-gnu`/`gnullvm` targets unconditionally — there's no rustc `-C`/`-Z` flag to ask for CodeView
+  instead, and `-gcodeview` is a *clang frontend* flag that would need clang to actually compile the
+  code, which it never does here — clang only runs as the linker driver). The 354K public symbols come
+  from a completely separate function, `PDBLinker::addPublicsToPDB()`, which walks the linker's own
+  symbol table (`ctx.symtab.forEachSymbol`) independent of whatever's in `.debug$S` — confirmed this
+  runs, and produces Publics, even with zero CodeView debug subsections present. Also checked
+  `lld/COFF/MinGW.cpp` (LLD's MinGW-mode driver logic specifically) for any DWARF→CodeView conversion
+  pass that might feed `PDB.cpp` — none exists; `--pdb=` reaches the same generic, CodeView-only writer
+  regardless of MinGW mode. **Net effect**: function-name-level symbolication works and is genuinely
+  useful; file/line does not and structurally can't, without either switching to MSVC (real CodeView
+  from the ground up) or converting DWARF to Breakpad `.sym` with a dedicated tool like Mozilla's
+  `dump_syms` (built for exactly this MinGW+DWARF scenario) instead of using the PDB path at all —
+  neither pursued, both left as a known, deliberate limitation of the current setup.
+
 **`codeberg upload --plain`** (new flag, `dtb-ke-bundle`): every upload
 normally also generates a small `<name>.fragment.json` sidecar that
 `publish_manifest` later folds into the self-update `manifest.json` — correct
