@@ -13,6 +13,7 @@ const SHUF16: [u8; 16] = [2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15];
 ///
 /// `buf.len()` is expected to be a multiple of 4; a trailing partial pixel is
 /// left untouched.
+#[inline(always)]
 pub fn swap_rb(buf: &mut [u8]) {
     #[cfg(target_arch = "aarch64")]
     {
@@ -39,6 +40,7 @@ pub fn swap_rb(buf: &mut [u8]) {
 }
 
 /// The portable path. Also handles the ragged tail left by the SIMD paths.
+#[inline(always)]
 pub fn swap_rb_scalar(buf: &mut [u8]) {
     let (pixels, _tail) = buf.as_chunks_mut::<4>();
     for px in pixels {
