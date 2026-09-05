@@ -22,6 +22,8 @@ mod toast;
 
 pub use toast::UpdaterToast;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui::{Context, EventEmitter, Task};
@@ -107,8 +109,13 @@ pub enum State {
     UpToDate,
     /// An update is available and the toast is showing.
     Available(Release),
-    /// The archive is downloading / installing.
-    Installing(Release),
+    /// The archive is downloading / installing. `progress` is the download
+    /// fraction (`0.0..=1.0`), `None` until the total size is known and again
+    /// once the download finishes and the (progress-less) verify + swap runs.
+    Installing {
+        release: Release,
+        progress: Option<f32>,
+    },
     /// Installed — the app needs to relaunch to finish.
     Restart(Release),
     /// The last check or install failed.
@@ -162,7 +169,7 @@ impl Updater {
                 self.state,
                 State::UpToDate
                     | State::Available(_)
-                    | State::Installing(_)
+                    | State::Installing { .. }
                     | State::Restart(_)
                     | State::Failed(_)
             )
@@ -171,7 +178,9 @@ impl Updater {
     /// The version the toast is about, for the menu / logs.
     pub fn pending_version(&self) -> Option<&str> {
         match &self.state {
-            State::Available(r) | State::Installing(r) | State::Restart(r) => Some(&r.version),
+            State::Available(r) | State::Restart(r) | State::Installing { release: r, .. } => {
+                Some(&r.version)
+            }
             _ => None,
         }
     }
@@ -224,7 +233,7 @@ impl Updater {
         }
         if matches!(
             self.state,
-            State::Checking | State::Installing(_) | State::Restart(_)
+            State::Checking | State::Installing { .. } | State::Restart(_)
         ) {
             return;
         }
@@ -325,17 +334,48 @@ impl Updater {
             return;
         }
         log::info!("installing update {} ({channel:?})", release.version);
-        self.state = State::Installing(release.clone());
+        self.state = State::Installing {
+            release: release.clone(),
+            progress: None,
+        };
         self.expanded = true;
         cx.notify();
         cx.emit(UpdaterEvent::Changed);
 
         let url = manifest_url(channel);
         self._task = Some(cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { run_install(&url) })
-                .await;
+            let bg = cx.background_executor().clone();
+            let progress = Arc::new(DownloadProgress::default());
+            let install = {
+                let progress = progress.clone();
+                bg.spawn(async move { run_install(&url, &progress) })
+            };
+            let mut install = std::pin::pin!(install);
+
+            // Poll the install task; between polls, push the download fraction
+            // into `State::Installing` so the toast can draw a bar.
+            let result = loop {
+                let tick = std::pin::pin!(bg.timer(Duration::from_millis(120)));
+                match futures::future::select(install.as_mut(), tick).await {
+                    futures::future::Either::Left((result, _)) => break result,
+                    futures::future::Either::Right(((), _)) => {
+                        let frac = progress.fraction();
+                        if this
+                            .update(cx, |this, cx| {
+                                if let State::Installing { progress: p, .. } = &mut this.state
+                                    && *p != frac
+                                {
+                                    *p = frac;
+                                    cx.notify();
+                                }
+                            })
+                            .is_err()
+                        {
+                            return; // the Updater entity is gone
+                        }
+                    }
+                }
+            };
 
             this.update(cx, |this, cx| match result {
                 Ok(()) => {
@@ -383,7 +423,7 @@ impl Updater {
     /// The URL the "Herunterladen" / "Änderungen anzeigen" affordances open.
     pub fn release_page(&self) -> String {
         match &self.state {
-            State::Available(r) | State::Installing(r) | State::Restart(r) => r
+            State::Available(r) | State::Restart(r) | State::Installing { release: r, .. } => r
                 .notes_url
                 .clone()
                 .unwrap_or_else(|| crate::actions::REPOSITORY_URL.to_owned()),
@@ -491,10 +531,38 @@ fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, Str
     Ok(best)
 }
 
+/// Shared download counters — written by `self_update`'s progress callback on
+/// its download thread, read by the install task's poll loop.
+#[derive(Default)]
+struct DownloadProgress {
+    downloaded: AtomicU64,
+    /// Bytes; `0` until the server's `Content-Length` is seen.
+    total: AtomicU64,
+}
+
+impl DownloadProgress {
+    fn set(&self, downloaded: u64, total: Option<u64>) {
+        self.downloaded.store(downloaded, Ordering::Relaxed);
+        if let Some(total) = total {
+            self.total.store(total, Ordering::Relaxed);
+        }
+    }
+
+    /// Download fraction in `0.0..=1.0`, `None` until a non-zero total is known.
+    fn fraction(&self) -> Option<f32> {
+        let total = self.total.load(Ordering::Relaxed);
+        (total > 0).then(|| {
+            let done = self.downloaded.load(Ordering::Relaxed).min(total);
+            (done as f64 / total as f64) as f32
+        })
+    }
+}
+
 /// Download the newest release's archive, verify it, and swap it in.
-fn run_install(manifest_url: &str) -> Result<(), String> {
+fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(), String> {
     let key = key::VERIFY_KEY.ok_or("kein Prüfschlüssel in dieser Programmversion")?;
 
+    let progress = progress.clone();
     let mut builder = self_update::backends::manifest::Update::configure();
     builder
         .manifest_url(manifest_url)
@@ -503,8 +571,11 @@ fn run_install(manifest_url: &str) -> Result<(), String> {
         .no_confirm(true)
         .show_output(false)
         .show_download_progress(false)
+        // Both channels' archives are zipsign-signed (Tip too — see
+        // `.forgejo/workflows/tip.yml`) and digest-pinned in the manifest.
         .verify_release_digest(true)
         .verifying_keys([key])
+        .progress_callback(move |downloaded, total| progress.set(downloaded, total))
         // Replace self_update's built-in target-substring match: prefer a
         // native, arch-specific archive exactly as it would, but allow a
         // `universal-apple-darwin` fat archive as a last resort on macOS

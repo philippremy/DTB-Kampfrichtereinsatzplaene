@@ -125,7 +125,7 @@ impl UpdaterToast {
                 format!("Update verfügbar: {}", r.version),
                 PillTone::Accent,
             ),
-            State::Installing(_) => (
+            State::Installing { .. } => (
                 Icon::Download,
                 "Wird installiert …".to_owned(),
                 PillTone::Accent,
@@ -172,10 +172,10 @@ impl UpdaterToast {
             .cursor_pointer()
             .hover(|el| el.opacity(0.92))
             .on_click(move |_, window, cx| toggle(window, cx))
-            .when(matches!(self.state, State::Installing(_)), |el| {
+            .when(matches!(self.state, State::Installing { .. }), |el| {
                 el.child(Spinner::new().size(px(12.)).color(fg))
             })
-            .when(!matches!(self.state, State::Installing(_)), |el| {
+            .when(!matches!(self.state, State::Installing { .. }), |el| {
                 el.child(icon.size(px(13.)).color(fg))
             })
             .child(label)
@@ -186,19 +186,9 @@ impl UpdaterToast {
     fn card(&self, c: crate::theme::PaletteColors, radius: gpui::Pixels) -> impl IntoElement {
         let body: AnyElement = match &self.state {
             State::Available(release) => self.available_body(release, c).into_any_element(),
-            State::Installing(_) => div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .py(px(4.))
-                .child(Spinner::new().size(px(14.)))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(c.muted_foreground)
-                        .child("Wird heruntergeladen, überprüft und installiert …"),
-                )
-                .into_any_element(),
+            State::Installing { progress, .. } => {
+                self.installing_body(*progress, c).into_any_element()
+            }
             State::Restart(_) => self.restart_body(c).into_any_element(),
             State::Failed(msg) => self.failed_body(msg, c).into_any_element(),
             State::UpToDate => div()
@@ -326,6 +316,61 @@ impl UpdaterToast {
                         .child(Icon::ExternalLink.size(px(11.)).color(c.muted_foreground)),
                 )
             })
+    }
+
+    fn installing_body(
+        &self,
+        progress: Option<f32>,
+        c: crate::theme::PaletteColors,
+    ) -> impl IntoElement {
+        let (label, fraction) = match progress {
+            Some(f) => (
+                format!(
+                    "Wird heruntergeladen … {}\u{00A0}%",
+                    (f * 100.0).round() as u32
+                ),
+                Some(f.clamp(0.0, 1.0)),
+            ),
+            None => ("Wird überprüft und installiert …".to_owned(), None),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .py(px(2.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(Spinner::new().size(px(13.)))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(c.muted_foreground)
+                            .child(label),
+                    ),
+            )
+            .child(
+                // Track + fill. An indeterminate phase (`None`) shows an empty
+                // track — the spinner already signals "working".
+                div()
+                    .w_full()
+                    .h(px(4.))
+                    .rounded_full()
+                    .bg(c.border)
+                    .overflow_hidden()
+                    .when_some(fraction, |el, f| {
+                        el.child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(f))
+                                .rounded_full()
+                                .bg(c.primary),
+                        )
+                    }),
+            )
     }
 
     fn restart_body(&self, c: crate::theme::PaletteColors) -> impl IntoElement {

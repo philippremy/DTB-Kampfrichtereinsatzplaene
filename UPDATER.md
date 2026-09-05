@@ -63,8 +63,9 @@ Windows on both channels — only Linux users, on every channel, get a
 Release build cut without `MACOS_SIGN_IDENTITY` — see § 3) are only ad-hoc
 signed, so a self-swapped `.app` does cost a first-run Gatekeeper prompt on
 relaunch; accepted deliberately for a small-user-base app rather than
-forcing a manual reinstall every Tip build (`self_update`'s signature check
-already tolerates an unsigned archive gracefully — see § 4).
+forcing a manual reinstall every Tip build. (Tip archives *are*
+zipsign-signed — see § 3 — so `run_install` verifies the signature on both
+channels; only the macOS code-signing / notarization differs.)
 
 ---
 
@@ -102,7 +103,10 @@ keeps its manifest `digest`, so `verify_release_digest` is unaffected. No
 `self_update` fork — `manifest::UpdateBuilder::asset_matcher` is a public
 hook.
 
-### Signing (release builds only — Tip ships unsigned-by-zipsign, always ad-hoc-signed archives; a release cut with no `MACOS_SIGN_IDENTITY` set stays ad-hoc-signed on macOS too, see `RUNNERS.md`)
+### Signing (zipsign — both channels; macOS code-signing differs, see `RUNNERS.md`)
+
+Every updatable archive on **both** channels is zipsign-signed in CI
+(`.forgejo/workflows/{tip,release}.yml`, using the `ZIPSIGN_KEY` secret):
 
 ```sh
 zipsign sign tar "$archive" release.priv        # .tar.gz
@@ -111,10 +115,13 @@ zipsign sign zip "$archive" release.priv        # .zip
 
 `zipsign sign` appends the signature to the archive in place (still a valid
 tar.gz / zip). `self_update`'s `signatures` feature verifies it against the
-embedded key before extracting, but tolerates its absence gracefully rather
-than rejecting the download — see § 4's Install bullet. Tip builds skip this
-entirely, so a Tip install only ever gets the manifest's digest check, not a
-real signature check.
+embedded key before extracting — and, once `verifying_keys` is set (which
+`run_install` does unconditionally), it *requires* one: a missing signature
+is `SignatureError: could not find read signatures`, not a skip. This is why
+Tip archives are signed too — the alternative (dropping `verifying_keys` for
+Tip) would leave a Tip install gated by the manifest digest alone, and the
+private key is a CI secret regardless. macOS code-signing / notarization is a
+separate axis (§ 2 / `RUNNERS.md`): Tip and a secret-less Release stay ad-hoc.
 
 ### Manifest
 
@@ -179,11 +186,14 @@ since every upload in a given workflow run targets the same `release_id`(s).
   (or *Herunterladen* when `can_self_install` is false for this platform +
   channel). Clicking outside the expanded card collapses it back to the pill.
 - **Install** (macOS + Windows, both channels): `self_update::
-  backends::manifest::Update` re-fetches, downloads the target-matched
-  archive, verifies signature + digest (skips signature verification when the
-  archive carries none, i.e. Tip), and swaps the `.app` bundle / Windows
-  folder as one unit. The app then flushes every open competition and
-  re-execs the new binary.
+  backends::manifest::Update` re-fetches, downloads the archive
+  (`asset_priority` chooses it — native triple first, then a
+  `universal-apple-darwin` fat archive on macOS), verifies its zipsign
+  signature and manifest digest (both, on both channels), and swaps the
+  `.app` bundle / Windows folder as one unit. Download progress is reported
+  through `self_update`'s `progress_callback` into `State::Installing { progress }`
+  and drawn as a bar in the toast card. The app then flushes every open
+  competition and re-execs the new binary.
 - **macOS:** when the downloaded `.app` is **Developer-ID signed and
   notarized** (a Release build with `MACOS_SIGN_IDENTITY` set), Gatekeeper
   trusts it on relaunch without a fresh quarantine prompt. An ad-hoc-signed
