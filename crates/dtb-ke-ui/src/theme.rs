@@ -235,7 +235,7 @@ impl Theme {
         colors.accent = c.accent_soft;
         colors.accent_foreground = c.primary;
         colors.destructive = c.critical;
-        colors.destructive_foreground = c.primary_foreground;
+        colors.destructive_foreground = c.destructive_foreground;
         colors.border = c.border;
         colors.input = c.border;
         colors.ring = c.ring;

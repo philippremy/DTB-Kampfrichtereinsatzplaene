@@ -145,7 +145,7 @@ impl RenderOnce for Button {
             ),
             ButtonTone::Danger => (
                 c.critical,
-                c.primary_foreground,
+                c.destructive_foreground,
                 c.critical,
                 darken(c.critical, 0.06),
                 darken(c.critical, 0.10),

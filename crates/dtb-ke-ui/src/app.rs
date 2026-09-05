@@ -496,7 +496,7 @@ impl AppShell {
                 .text_color(c.muted_foreground)
                 .hover(|el| {
                     if danger {
-                        el.bg(c.critical).text_color(c.primary_foreground)
+                        el.bg(c.critical).text_color(c.destructive_foreground)
                     } else {
                         el.bg(gpui::Hsla {
                             a: 0.10,

@@ -43,6 +43,7 @@ struct RawColors {
     line_strong: String,
     primary: String,
     primary_foreground: String,
+    destructive_foreground: String,
     accent_soft: String,
     ring: String,
     ok: String,
@@ -67,6 +68,7 @@ impl RawColors {
             line_strong: hex(&self.line_strong)?,
             primary: hex(&self.primary)?,
             primary_foreground: hex(&self.primary_foreground)?,
+            destructive_foreground: hex(&self.destructive_foreground)?,
             accent_soft: hex(&self.accent_soft)?,
             ring: hex(&self.ring)?,
             ok: hex(&self.ok)?,
@@ -100,8 +102,13 @@ pub struct PaletteColors {
     pub line_strong: Hsla,
     /// Accent — primary buttons, selection, links.
     pub primary: Hsla,
-    /// Text on [`Self::primary`].
+    /// Text on [`Self::primary`] — white in both themes (the accent is the same
+    /// blue in both, so the foreground must be too).
     pub primary_foreground: Hsla,
+    /// Text on [`Self::critical`] — separate from [`Self::primary_foreground`]
+    /// because the dark palette's `critical` is a light salmon that needs dark
+    /// text, while `primary` needs white.
+    pub destructive_foreground: Hsla,
     /// Tinted fills (chips, soft highlights).
     pub accent_soft: Hsla,
     /// Focus ring.
