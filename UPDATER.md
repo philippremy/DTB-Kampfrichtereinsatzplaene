@@ -50,23 +50,48 @@ API can't retarget a tag itself and the workaround). A version tag like
 second copy of the same assets under a stable URL the app can always poll
 without knowing the newest version number in advance.
 
-**Tip versioning:** `{base}-tip.{run_number}`, e.g. `0.2.0-tip.47` — a
-numeric identifier so `self_update`'s semver ordering (which compares
-digit-only prerelease identifiers numerically) sorts every Tip build
-correctly. `scripts/release.sh` bumps `main` to `x.y.z-dev.0` right after
-tagging a release, so the next Tip build's base version is already past the
-release just cut.
+### Versioning
 
-This version is **baked into the binary**: `tip.yml` sets `DTB_KE_VERSION`
-(= `{base}-tip.{run_number}`) as a job env var on every build job, and
-`dtb-ke-ui`'s `build_info::APP_VERSION` prefers it over `CARGO_PKG_VERSION`.
-Without this, every Tip build self-reported the plain `{base}` (the
-workspace `Cargo.toml` version never changes between Tip runs), and the
-updater — comparing an installed `0.1.0` against a published `0.1.0-tip.35`
-— sees a *prerelease of a version it already has* (semver: `0.1.0-tip.35 <
-0.1.0`) and reports "no update". `build.rs` also emits
-`cargo:rerun-if-env-changed=DTB_KE_VERSION` so the persistent Tip target
-dir doesn't cache a stale version in.
+The workspace `Cargo.toml` `[workspace.package] version` sits at
+**`X.Y.(Z+1)-dev.0`** between releases (`X.Y.Z` = the last release). `release.sh`
+puts it there: it commits `X.Y.Z`, tags `vX.Y.Z`, then commits the
+`X.Y.(Z+1)-dev.0` bump, and pushes the tag + both commits **atomically** — so
+`latest` and `tip` diverge by exactly one commit, and `main`'s version is
+semver-**strictly greater** than the release just cut.
+
+| build | version it reports | how |
+|---|---|---|
+| **Release** (`release.yml`, checks out the `vX.Y.Z` tag) | `X.Y.Z` | tag commit's `CARGO_PKG_VERSION` |
+| **Tip** (`tip.yml`, builds `main`) | `X.Y.(Z+1)-dev.N` | `DTB_KE_VERSION` env, per build job |
+| **local** `cargo run` | `X.Y.(Z+1)-dev.0` | `CARGO_PKG_VERSION` |
+
+`N` = `git rev-list --count --first-parent vX.Y.Z..HEAD` — commits on `main`
+since the last release tag (or since the repo root before the first release).
+Monotonic, resets itself at every release, derived from history so there is no
+counter to store or bump. `self_update` compares digit-only prerelease
+identifiers numerically, so `…-dev.7 < …-dev.12`. The `tip.yml` `prepare` job
+checks out `fetch-depth: 0` for this; the build jobs stay shallow.
+
+The Tip version is **baked into the binary** via `DTB_KE_VERSION` because
+`CARGO_PKG_VERSION` alone is the unchanging `X.Y.(Z+1)-dev.0` for every Tip
+build — the updater would then compare an installed `X.Y.(Z+1)-dev.0` against a
+published `X.Y.(Z+1)-dev.12` and *would* see it as newer, but it would never
+be able to tell `dev.12` from `dev.13`. `build_info::APP_VERSION` prefers
+`option_env!("DTB_KE_VERSION")` over `CARGO_PKG_VERSION`; `build.rs` emits
+`cargo:rerun-if-env-changed=DTB_KE_VERSION` so the persistent Tip target dir
+doesn't cache a stale version in.
+
+**Channel switching** has no memory — a check is purely `newest version in the
+selected channel's manifest > installed APP_VERSION` (semver), plus
+`Settings.skipped_update` is cleared on the flip. Consequences:
+
+- **Stable → Tip** always finds an update: Tip is at least `X.Y.(Z+1)-dev.1`,
+  which is `> X.Y.Z`.
+- **Tip → Stable** either lands on the current release (`X.Y.Z` outranks any
+  `X.Y.Z-dev.*` — and since a `dev.*` build was *building toward* that release,
+  it's not a code downgrade), or finds nothing if the Tip build's base has
+  already moved past the newest release (`X.Y.(Z+1)-dev.* > X.Y.Z`), in which
+  case it rejoins Stable at the next release.
 
 **`can_self_install(channel)`** (`updater/mod.rs`) is `true` for macOS and
 Windows on both channels — only Linux users, on every channel, get a
@@ -186,8 +211,8 @@ since every upload in a given workflow run targets the same `release_id`(s).
 - **Check:** `updater::check` resolves the channel's manifest URL
   (`Settings.update_channel` → `manifest_url()`), then `fetch_newest` GETs it
   (`ureq`), parses it, and picks the highest release whose version is
-  `> build_info::APP_VERSION` (see "Tip versioning" above — this is
-  `CARGO_PKG_VERSION` unless CI baked in a `DTB_KE_VERSION` override) and `>`
+  `> build_info::APP_VERSION` (see § 3 "Versioning" — `CARGO_PKG_VERSION`
+  unless CI baked in a `DTB_KE_VERSION` override) and `>`
   any version the user chose to "Skip", via
   `self_update::version::bump_is_greater`. Runs ~4 s after launch, then every
   6 h, and on demand from *DTB Kampfrichtereinsatzpläne → Nach Updates

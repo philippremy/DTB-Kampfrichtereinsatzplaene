@@ -252,10 +252,11 @@ because these are **persistent, not ephemeral, self-hosted runners** —
 `target/` is simply never wiped between Tip runs, so every push after the
 first gets real incremental-build speedup for free. Produces one rolling
 release under the `tip` tag (force-moved to the new commit each run,
-`--prerelease`), versioned `{base}-tip.{run_number}` (a numeric identifier so
-`self_update`'s semver comparison — which orders digit-only prerelease
-identifiers numerically, not lexically — sorts every Tip build correctly; a
-raw commit SHA would not sort meaningfully at all).
+`--prerelease`), versioned `X.Y.(Z+1)-dev.N` where `N = git rev-list --count
+--first-parent vX.Y.Z..HEAD` (commits since the last release — monotonic,
+resets per release, needs the `prepare` job's `fetch-depth: 0`). `self_update`
+orders digit-only prerelease identifiers numerically, so `dev.7 < dev.12`.
+Full scheme in **UPDATER.md § 3**.
 
 `.forgejo/workflows/release.yml` — triggered by a `vX.Y.Z` tag push (only
 `scripts/release.sh` should ever create one) or manual `workflow_dispatch`.

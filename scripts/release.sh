@@ -118,37 +118,41 @@ echo "───────────────────"
 read -r -p "Tag $tag with these notes and push? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || die "aborted by user"
 
-# ── 4. bump Cargo.toml, commit, tag, push ────────────────────────────────
+# ── 4. release commit + tag ─────────────────────────────────────────────
 set_workspace_version "$new_version"
 grep -qF "version = \"$new_version\"" "$CARGO_TOML" || die "version bump failed — check $CARGO_TOML manually"
-
 # The bump touches Cargo.lock too (workspace members inherit the version).
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
-
 git add "$CARGO_TOML" Cargo.lock 2>/dev/null || git add "$CARGO_TOML"
 git commit -m "chore: release $tag"
 git tag -a -F "$NOTES_FILE" "$tag"
 
-echo "pushing main + $tag …"
-git push origin main
-git push origin "$tag"
-
-# ── 5. bump straight past it, so Tip builds report a version that's ─────
-#      unambiguously newer than the release just cut, not equal to it.
-next_dev="${new_version}-dev.0"
+# ── 5. bump to the next patch's -dev.0 ──────────────────────────────────
+#      `X.Y.Z` → `X.Y.(Z+1)-dev.0`: semver-strictly-greater than the release
+#      just cut (so switching to the Tip channel always finds an update),
+#      and `main` — hence every Tip build — sits exactly one commit ahead of
+#      `latest`. tip.yml turns this into `X.Y.(Z+1)-dev.<commits-since-tag>`.
+IFS=. read -r _maj _min _pat <<<"$new_version"
+next_dev="${_maj}.${_min}.$((_pat + 1))-dev.0"
 set_workspace_version "$next_dev"
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
 git add "$CARGO_TOML" Cargo.lock 2>/dev/null || git add "$CARGO_TOML"
 git commit -m "chore: bump to $next_dev"
-git push origin main
+
+# ── 6. push — the release commit + tag + the dev bump, all at once, so the
+#      tag push triggers release.yml and the same main push triggers tip.yml
+#      with the -dev.0 base already in place.
+echo "pushing main + $tag …"
+git push --atomic origin main "$tag"
 
 cat <<EOF
 
-Done. $tag is pushed — .forgejo/workflows/release.yml takes it from here:
+Done. $tag is pushed — CI takes it from here:
   https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/actions
 
-It builds every target, signs + notarizes macOS, and publishes the release
-(both under $tag and the rolling 'latest' tag) once every leg succeeds.
-main is now at $next_dev so the next Tip build reports a version clearly
-ahead of $new_version.
+  release.yml (the tag)  → builds every target, signs + notarizes macOS,
+                           publishes under $tag and the rolling 'latest'.
+  tip.yml  (the main push) → publishes ${next_dev%-dev.0}-dev.1 to 'tip'.
+
+main is at $next_dev, one commit ahead of $tag and semver-greater than it.
 EOF
