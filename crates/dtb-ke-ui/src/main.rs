@@ -137,6 +137,9 @@ fn main() {
         if std::env::var_os("DTB_KE_SETTINGS").is_some() {
             settings_window::open(cx);
         }
+        if std::env::var_os("DTB_KE_LOGS").is_some() {
+            logs_window::open(cx);
+        }
         match std::env::var("DTB_KE_FEEDBACK").as_deref() {
             Ok("bug") => feedback_window::open_bug(cx),
             Ok("feature") => feedback_window::open_feature(cx),

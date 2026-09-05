@@ -24,6 +24,7 @@ use gpui::{
     StyledText, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowKind,
     WindowOptions, div, prelude::FluentBuilder, px, uniform_list,
 };
+use gpui_base::Scrollbar;
 
 use crate::components::icon::Icon;
 use crate::components::toggle::Toggle;
@@ -241,52 +242,66 @@ impl LogsWindow {
             )
             .child(
                 div()
-                    .id("log-file-list")
+                    .relative()
                     .flex_1()
                     .min_h(px(0.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.list_scroll)
-                    .px(px(6.))
-                    .pb(px(8.))
-                    .children(self.files.iter().enumerate().map(|(ix, file)| {
-                        let selected = self.selected == Some(ix);
-                        let meta = file_meta_line(file);
+                    .child(Scrollbar::vertical(&self.list_scroll))
+                    .child(
                         div()
-                            .id(("log-file", ix))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .px(px(10.))
-                            .py(px(7.))
-                            .rounded(cx.theme().skin.radius_control_px())
-                            .when(selected, |el| {
-                                el.bg(gpui::Hsla {
-                                    a: 0.14,
-                                    ..c.primary
-                                })
-                            })
-                            .when(!selected, |el| {
-                                el.cursor_pointer().hover(|el| {
-                                    el.bg(gpui::Hsla {
-                                        a: 0.06,
-                                        ..c.foreground
+                            .id("log-file-list")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.list_scroll)
+                            .px(px(6.))
+                            .pb(px(8.))
+                            .children(self.files.iter().enumerate().map(|(ix, file)| {
+                                let selected = self.selected == Some(ix);
+                                let meta = file_meta_line(file);
+                                div()
+                                    .id(("log-file", ix))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.))
+                                    .px(px(10.))
+                                    .py(px(7.))
+                                    .rounded(cx.theme().skin.radius_control_px())
+                                    .when(selected, |el| {
+                                        el.bg(gpui::Hsla {
+                                            a: 0.14,
+                                            ..c.primary
+                                        })
                                     })
-                                })
-                            })
-                            .child(
-                                div()
-                                    .text_size(px(12.5))
-                                    .text_color(if selected { c.primary } else { c.foreground })
-                                    .child(file.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .text_color(c.muted_foreground)
-                                    .child(meta),
-                            )
-                            .on_click(cx.listener(move |this, _, _window, cx| this.select(ix, cx)))
-                    })),
+                                    .when(!selected, |el| {
+                                        el.cursor_pointer().hover(|el| {
+                                            el.bg(gpui::Hsla {
+                                                a: 0.06,
+                                                ..c.foreground
+                                            })
+                                        })
+                                    })
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .text_color(if selected {
+                                                c.primary
+                                            } else {
+                                                c.foreground
+                                            })
+                                            .child(file.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .text_color(c.muted_foreground)
+                                            .child(meta),
+                                    )
+                                    .on_click(
+                                        cx.listener(move |this, _, _window, cx| {
+                                            this.select(ix, cx)
+                                        }),
+                                    )
+                            })),
+                    ),
             )
     }
 
@@ -363,7 +378,7 @@ impl LogsWindow {
                 let colorize = self.colorize;
                 let colors = *c;
 
-                uniform_list("log-lines", lines.len(), move |range, _window, _cx| {
+                let list = uniform_list("log-lines", lines.len(), move |range, _window, _cx| {
                     range
                         .filter_map(|ix| lines.get(ix).cloned())
                         .map(|span| log_line_el(&text[span], colorize, &colors))
@@ -372,14 +387,20 @@ impl LogsWindow {
                 .track_scroll(&self.body_scroll)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(Some(widest))
-                .flex_1()
-                .min_h(px(0.))
+                .size_full()
                 .px(px(14.))
                 .py(px(10.))
                 .font_family(mono_family())
                 .text_size(px(11.5))
-                .text_color(c.foreground)
-                .into_any_element()
+                .text_color(c.foreground);
+
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(list)
+                    .child(Scrollbar::vertical(&self.body_scroll))
+                    .into_any_element()
             }
         }
     }
