@@ -1,15 +1,16 @@
 //! The application shell: window frame + title bar + [sidebar | detail] + status
 //! strip. Owns the root [`AppStore`] and the sidebar / toolbar entities.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_export::Exporter;
 use gpui::{
-    Animation, AnimationExt, App, AppContext, ClickEvent, Context, Entity, FocusHandle,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions, PromptLevel,
-    Render, StatefulInteractiveElement, Styled, Subscription, Window, WindowControlArea,
-    WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, ClickEvent, Context, Entity,
+    FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions,
+    PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, Window,
+    WindowControlArea, WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
 };
 use gpui_base::{ResizableState, h_resizable, resizable_panel};
 use log::{debug, error, info, warn};
@@ -114,6 +115,18 @@ impl AppShell {
             Theme::set_os_appearance(Appearance::from(window.appearance()), cx);
         });
 
+        // Closing the main window on macOS doesn't quit the app (so the
+        // per-document `on_app_quit` flush won't run) — flush any pending edits
+        // while the store is still alive. (The `MAIN_WINDOW` handle is cleared
+        // in `Drop`, on the actual teardown.)
+        window.on_window_should_close(cx, {
+            let store = store.clone();
+            move |_window, cx| {
+                store.update(cx, |store, cx| store.flush_all(cx)).detach();
+                true
+            }
+        });
+
         Self {
             store,
             sidebar,
@@ -138,7 +151,17 @@ impl AppShell {
             _updater_loop: updater_loop,
         }
     }
+}
 
+impl Drop for AppShell {
+    fn drop(&mut self) {
+        // The main window is gone — let `open_main_window` (and the macOS dock
+        // `on_reopen`) build a fresh one instead of trying to focus this.
+        MAIN_WINDOW.with(|m| *m.borrow_mut() = None);
+    }
+}
+
+impl AppShell {
     /// The corner update toast, `deferred` so it floats over everything.
     fn updater_toast(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         if !updater::available() || !self.updater.read(cx).toast_visible() {
@@ -246,8 +269,18 @@ impl AppShell {
         self.exporter.clone()
     }
 
-    /// Open the preview window, or close it if it's already open.
+    /// Open the preview window; if it's already open but hidden behind another
+    /// window bring it forward; if it's already frontmost close it (toggle).
     fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.preview_window {
+            let frontmost = cx.active_window() == Some(handle.into());
+            if !frontmost {
+                handle
+                    .update(cx, |_, window, _| window.activate_window())
+                    .ok();
+                return;
+            }
+        }
         if let Some(handle) = self.preview_window.take() {
             debug!("closing the preview window");
             if handle
@@ -790,10 +823,30 @@ fn default_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-/// Open the application's main window.
+thread_local! {
+    /// The single main window, while one is open. `open_main_window` activates
+    /// this instead of opening a second; `cx.on_reopen` (the macOS dock icon)
+    /// re-opens it after it's been closed.
+    static MAIN_WINDOW: RefCell<Option<AnyWindowHandle>> = const { RefCell::new(None) };
+}
+
+/// Open the application's main window — or, if one is already open, just bring
+/// it to the front.
 pub fn open_main_window(cx: &mut App) {
+    if let Some(handle) = MAIN_WINDOW.with(|m| *m.borrow()) {
+        if handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+        {
+            return;
+        }
+        MAIN_WINDOW.with(|m| *m.borrow_mut() = None);
+    }
+
     info!("opening the main window");
     let options = skin_window::main_window_options(cx);
-    cx.open_window(options, |window, cx| cx.new(|cx| AppShell::new(window, cx)))
-        .expect("failed to open the main window");
+    match cx.open_window(options, |window, cx| cx.new(|cx| AppShell::new(window, cx))) {
+        Ok(handle) => MAIN_WINDOW.with(|m| *m.borrow_mut() = Some(handle.into())),
+        Err(err) => error!("failed to open the main window: {err}"),
+    }
 }

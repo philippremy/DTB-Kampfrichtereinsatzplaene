@@ -89,7 +89,11 @@ fn main() {
         build_info::PROFILE
     );
 
-    gpui_platform::application().run(|cx| {
+    let app = gpui_platform::application();
+    // macOS: the app keeps running when the main window is closed; clicking the
+    // dock icon re-opens it (or re-focuses it if it's still around).
+    app.on_reopen(app::open_main_window);
+    app.run(|cx| {
         // `gpui-base` global infrastructure (input engine, popovers, …). It
         // installs a default `gpui_base::Theme`; our `Theme::install` overrides
         // its colour tokens right after.
