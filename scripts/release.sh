@@ -19,6 +19,15 @@ cd "$ROOT"
 have() { command -v "$1" >/dev/null 2>&1; }
 die() { echo "release.sh: $*" >&2; exit 1; }
 
+# `git push "$@"`, retried once. Codeberg intermittently rejects the first
+# push of a session (a known upstream bug); a second attempt goes through.
+push_retry() {
+  git push "$@" && return 0
+  echo "release.sh: push failed — retrying once in 5s (known Codeberg flakiness) …" >&2
+  sleep 5
+  git push "$@"
+}
+
 # Rewrite the first `version = "…"` line under [workspace.package] to $1.
 # awk, not `sed -i`, because BSD/macOS sed has neither the GNU `0,/re/`
 # address nor `{ … }` command grouping (`sed: bad flag … '}'`).
@@ -143,7 +152,7 @@ git commit -m "chore: bump to $next_dev"
 #      tag push triggers release.yml and the same main push triggers tip.yml
 #      with the -dev.0 base already in place.
 echo "pushing main + $tag …"
-git push --atomic origin main "$tag"
+push_retry --atomic origin main "$tag"
 
 cat <<EOF
 
