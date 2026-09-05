@@ -234,6 +234,7 @@ fn sidebar_row(
     match row {
         Row::Year(year) => div()
             .h(px(if idx == 0 { SB_YEAR_H_FIRST } else { SB_YEAR_H }))
+            .w_full()
             .flex()
             .items_end()
             .px(px(10.))
@@ -251,6 +252,7 @@ fn sidebar_row(
             div()
                 .id(id)
                 .h(px(SB_COMP_H))
+                .w_full()
                 .flex()
                 .items_center()
                 .gap(px(8.))
@@ -374,6 +376,7 @@ impl Render for Sidebar {
                 )
                 .track_scroll(&self.list_scroll)
                 .pb(px(6.))
+                .px(px(4.))
                 .size_full(),
             )
             .child(Scrollbar::vertical(&self.list_scroll));

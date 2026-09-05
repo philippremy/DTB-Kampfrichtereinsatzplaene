@@ -404,7 +404,8 @@ impl InfoWindow {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .p(px(20.))
+            .px(px(20.))
+            .py(px(14.))
             .flex()
             .flex_col()
             .children(build_info::rows().into_iter().map(|(label, value)| {
