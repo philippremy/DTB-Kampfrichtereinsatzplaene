@@ -22,10 +22,11 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, App, AppContext, Context, Entity, EntityId, InteractiveElement,
-    IntoElement, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Subscription, TextRun, Window, canvas, div, ease_out_quint,
     px,
 };
+use gpui_base::Scrollbar;
 use uuid::Uuid;
 
 use crate::actions::file::ExportCompetition;
@@ -73,6 +74,9 @@ pub struct DetailView {
     /// next frame. Interior mutability so the probe can update it without a
     /// re-entrant entity borrow.
     toolbar_compact: Rc<Cell<bool>>,
+
+    /// Scroll position of the content pane, so a re-render keeps it.
+    scroll: ScrollHandle,
 
     _subs: Vec<Subscription>,
     /// Observer on the active round — recomputes [`Self::conflicts`] on any
@@ -144,6 +148,7 @@ impl DetailView {
             meta_dialog,
             conflicts: PhaseConflicts::default(),
             toolbar_compact: Rc::new(Cell::new(false)),
+            scroll: ScrollHandle::new(),
             _subs: subs,
             _round_sub: Vec::new(),
             _doc_sub: None,
@@ -704,33 +709,44 @@ impl Render for DetailView {
             .child(self.detail_toolbar(window, cx))
             .child(
                 div()
-                    .id("detail-scroll")
+                    .relative()
                     .flex_1()
                     .min_h(px(0.))
-                    .flex()
-                    .flex_col()
-                    .overflow_y_scroll()
                     .child(
-                        div().flex().px(px(20.)).pt(px(14.)).child(
-                            Segmented::new("detail-phase", ["Qualifikation", "Finale"], selected)
-                                .on_select({
-                                    let weak = weak.clone();
-                                    move |index, window, cx| {
-                                        let phase = if index == 0 {
-                                            Phase::Qualification
-                                        } else {
-                                            Phase::Finale
-                                        };
-                                        weak.update(cx, |view, cx| {
-                                            view.set_phase(phase, window, cx)
-                                        })
-                                        .ok();
-                                    }
-                                }),
-                        ),
+                        div()
+                            .id("detail-scroll")
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(
+                                div().flex().px(px(20.)).pt(px(14.)).child(
+                                    Segmented::new(
+                                        "detail-phase",
+                                        ["Qualifikation", "Finale"],
+                                        selected,
+                                    )
+                                    .on_select({
+                                        let weak = weak.clone();
+                                        move |index, window, cx| {
+                                            let phase = if index == 0 {
+                                                Phase::Qualification
+                                            } else {
+                                                Phase::Finale
+                                            };
+                                            weak.update(cx, |view, cx| {
+                                                view.set_phase(phase, window, cx)
+                                            })
+                                            .ok();
+                                        }
+                                    }),
+                                ),
+                            )
+                            .child(self.phase_body(cx))
+                            .child(self.remarks.clone()),
                     )
-                    .child(self.phase_body(cx))
-                    .child(self.remarks.clone()),
+                    .child(Scrollbar::vertical(&self.scroll)),
             )
             .child(self.wizard.clone())
             .child(self.meta_dialog.clone())

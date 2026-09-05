@@ -21,6 +21,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
     WindowKind, WindowOptions, div, point, prelude::FluentBuilder, px,
 };
+use gpui_base::Scrollbar;
 
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
@@ -318,29 +319,35 @@ impl SettingsWindow {
         };
 
         div()
-            .id("settings-content")
+            .relative()
             .flex_1()
             .min_w(px(0.))
             .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
             .bg(c.background)
+            .child(Scrollbar::vertical(&self.scroll))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .max_w(px(620.))
-                    .px(px(32.))
-                    .py(px(26.))
-                    .gap(px(4.))
+                    .id("settings-content")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .child(
                         div()
-                            .text_size(px(19.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(self.tab.label()),
-                    )
-                    .child(body),
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .max_w(px(620.))
+                            .px(px(32.))
+                            .py(px(26.))
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(px(19.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(self.tab.label()),
+                            )
+                            .child(body),
+                    ),
             )
     }
 
