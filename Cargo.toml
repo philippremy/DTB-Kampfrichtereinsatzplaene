@@ -50,6 +50,8 @@ image = { version = "0.25", default-features = false }
 # llvm-mingw toolchain ships that wrapper). Override with `RC_<target>` / `RC`.
 embed-resource = { version = "3" }
 ooxmlsdk = { version = "0.13" }
+# Just for increasing build.rs performance
+rayon = { version = "1.12" }
 # SVG → PNG rasterisation for the DOCX header logos (re-exports usvg + tiny-skia;
 # version tracks the copy Typst/gpui already pull in)
 resvg = { version = "0.47" }

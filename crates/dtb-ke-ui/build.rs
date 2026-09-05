@@ -7,10 +7,12 @@
 //! because of missing metadata.
 #![allow(clippy::collapsible_if)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
+
+use rayon::prelude::*;
 
 fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
@@ -95,15 +97,30 @@ fn main() {
         deps.len()
     ));
 
-    let stores = license_stores();
+    // Resolving every dependency to its unpacked source dir, then reading its
+    // SPDX id and licence text, is almost the entire cost of this build script
+    // — a filesystem-heavy crawl of `~/.cargo`. Each dependency's lookup is
+    // independent, read-only work, so do them in parallel; the crate-source
+    // index is built once up front so a lookup is a hashmap hit rather than a
+    // fresh directory walk per dependency.
+    let index = SourceIndex::build(&deps);
+    let resolved: Vec<(Option<String>, Option<String>)> = deps
+        .par_iter()
+        .map(|p| {
+            let dir = index.locate(p);
+            let spdx = dir.as_deref().and_then(read_spdx);
+            let license = dir.as_deref().and_then(read_license_text);
+            (spdx, license)
+        })
+        .collect();
+
+    // Fold the results back together sequentially, in `deps` order, so the
+    // `LICENSE_TEXTS` indices — and the whole generated file — stay
+    // deterministic regardless of how the work was scheduled.
     let mut texts: Vec<String> = Vec::new();
     let mut text_index: BTreeMap<String, usize> = BTreeMap::new();
     let mut rows = String::new();
-
-    for p in &deps {
-        let dir = locate_crate(&stores, p);
-        let spdx = dir.as_deref().and_then(read_spdx);
-        let license = dir.as_deref().and_then(read_license_text);
+    for (p, (spdx, license)) in deps.iter().zip(resolved) {
         let license_ref = license.map(|t| {
             *text_index.entry(t.clone()).or_insert_with(|| {
                 texts.push(t);
@@ -672,63 +689,145 @@ fn parse_lock(lock: &str) -> Vec<Package> {
     out
 }
 
-/// Roots to search for crate sources: every `registry/src/<hash>` dir and every
-/// `git/checkouts/<repo>` dir under `CARGO_HOME`.
-fn license_stores() -> Vec<PathBuf> {
-    let cargo_home = env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
-        .unwrap_or_default();
-
-    let mut roots = Vec::new();
-    for sub in ["registry/src", "git/checkouts"] {
-        if let Ok(entries) = fs::read_dir(cargo_home.join(sub)) {
-            roots.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
-        }
-    }
-    roots
+/// A one-time index of every crate source unpacked under `CARGO_HOME`, so
+/// resolving a dependency to its directory is a hashmap lookup instead of a
+/// fresh filesystem crawl per dependency. The old per-dependency search was
+/// `O(deps × store roots × tree)` — and this project's ~28 git dependencies
+/// almost all live in the same very large `zed` checkout, so it re-walked that
+/// tree ~28 times (once per dep) plus, for any registry dep whose exact
+/// version wasn't unpacked, a full recursive walk of every registry root too.
+struct SourceIndex {
+    /// `registry/src/<hash>/<name>-<version>/`, keyed by `<name>-<version>`.
+    registry_exact: HashMap<String, PathBuf>,
+    /// The same, keyed by bare `<name>` — the fallback the old code reached via
+    /// a misapplied recursive search when the exact version wasn't unpacked
+    /// (common for platform-gated deps like `jni`). Some version of the crate's
+    /// licence text is better than none in the About window.
+    registry_by_name: HashMap<String, PathBuf>,
+    /// `git/checkouts/<repo>/<short-rev>/…/<crate>/`, keyed by the crate's own
+    /// `[package] name` (a git checkout can hold a whole workspace). Only the
+    /// `<short-rev>` directories the lockfile actually pins are indexed, so a
+    /// name resolves to exactly one directory even when several revs of the
+    /// same repo are cached side by side.
+    git: HashMap<String, PathBuf>,
 }
 
-fn locate_crate(stores: &[PathBuf], p: &Package) -> Option<PathBuf> {
-    let stem = format!("{}-{}", p.name, p.version);
-    for root in stores {
-        // registry: <root>/<name>-<version>/
-        let direct = root.join(&stem);
-        if direct.join("Cargo.toml").is_file() {
-            return Some(direct);
-        }
-        // git checkout: <root>/<rev>/... — the crate may be at the top or in a
-        // workspace member subdir. Match by the `name` field in Cargo.toml.
-        if p.git_rev.is_some() {
-            if let Some(found) = find_git_crate(root, &p.name, 3) {
-                return Some(found);
+impl SourceIndex {
+    fn build(deps: &[&Package]) -> Self {
+        let cargo_home = env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+            .unwrap_or_default();
+
+        // Registry: each entry is already named `<name>-<version>`, so one
+        // `read_dir` per index-hash directory is the whole job.
+        let mut registry_exact = HashMap::new();
+        let mut registry_by_name = HashMap::new();
+        if let Ok(hash_dirs) = fs::read_dir(cargo_home.join("registry/src")) {
+            for hash_dir in hash_dirs.flatten() {
+                if let Ok(entries) = fs::read_dir(hash_dir.path()) {
+                    for e in entries.flatten() {
+                        let full = e.file_name().to_string_lossy().into_owned();
+                        // "<name>-<version>": the version starts at the last
+                        // `-` followed by a digit.
+                        let name = full
+                            .rsplit_once('-')
+                            .filter(|(_, v)| v.starts_with(|c: char| c.is_ascii_digit()))
+                            .map(|(n, _)| n.to_owned());
+                        if let Some(name) = name {
+                            registry_by_name.entry(name).or_insert_with(|| e.path());
+                        }
+                        registry_exact.entry(full).or_insert_with(|| e.path());
+                    }
+                }
             }
         }
+
+        // Git: the `<repo>/<short-rev>/` directories the lockfile pins. Cargo
+        // names `<short-rev>` as a prefix of the full commit hash.
+        let repo_dirs: Vec<PathBuf> = fs::read_dir(cargo_home.join("git/checkouts"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        let mut rev_dirs: Vec<PathBuf> = deps
+            .iter()
+            .filter_map(|p| p.git_rev.as_deref())
+            .filter(|r| !r.is_empty())
+            .flat_map(|rev| {
+                repo_dirs.iter().filter_map(move |repo| {
+                    fs::read_dir(repo).ok()?.flatten().find_map(|e| {
+                        let name = e.file_name();
+                        let name = name.to_str()?;
+                        (name.len() >= 7 && rev.starts_with(name)).then(|| e.path())
+                    })
+                })
+            })
+            .collect();
+        rev_dirs.sort();
+        rev_dirs.dedup();
+
+        // Walk those trees once each, in parallel — this is the part that used
+        // to dominate the whole script's runtime.
+        let git = rev_dirs
+            .par_iter()
+            .map(|root| {
+                let mut local = HashMap::new();
+                index_git_dir(root, 3, &mut local);
+                local
+            })
+            .reduce(HashMap::new, |mut acc, m| {
+                for (k, v) in m {
+                    acc.entry(k).or_insert(v);
+                }
+                acc
+            });
+
+        Self {
+            registry_exact,
+            registry_by_name,
+            git,
+        }
     }
-    None
+
+    fn locate(&self, p: &Package) -> Option<PathBuf> {
+        match p.git_rev.as_deref() {
+            Some(rev) if !rev.is_empty() => self.git.get(&p.name).cloned(),
+            _ => self
+                .registry_exact
+                .get(&format!("{}-{}", p.name, p.version))
+                .or_else(|| self.registry_by_name.get(&p.name))
+                .cloned(),
+        }
+    }
 }
 
-fn find_git_crate(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+/// Add every `[package]`-bearing directory under `dir` (depth-limited) to
+/// `out`, keyed by its declared crate name. `target` subtrees are skipped;
+/// the first path seen for a given name wins.
+fn index_git_dir(dir: &Path, depth: usize, out: &mut HashMap<String, PathBuf>) {
     let manifest = dir.join("Cargo.toml");
     if manifest.is_file() {
         if let Ok(t) = fs::read_to_string(&manifest) {
-            if manifest_name(&t).as_deref() == Some(name) {
-                return Some(dir.to_path_buf());
+            if let Some(name) = manifest_name(&t) {
+                out.entry(name).or_insert_with(|| dir.to_path_buf());
             }
         }
     }
     if depth == 0 {
-        return None;
+        return;
     }
-    for entry in fs::read_dir(dir).ok()?.flatten() {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() && !p.ends_with("target") {
-            if let Some(found) = find_git_crate(&p, name, depth - 1) {
-                return Some(found);
-            }
+            index_git_dir(&p, depth - 1, out);
         }
     }
-    None
 }
 
 fn manifest_name(toml: &str) -> Option<String> {

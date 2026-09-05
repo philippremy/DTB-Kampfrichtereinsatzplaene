@@ -52,6 +52,7 @@ getrandom.workspace = true
 # Windows .exe icon + version resource (only does work when TARGET is Windows).
 embed-resource.workspace = true
 image = { workspace = true, features = ["png"] }
+rayon.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
