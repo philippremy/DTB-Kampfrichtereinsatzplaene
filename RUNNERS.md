@@ -655,7 +655,7 @@ book's summary table at face value:
 - **macOS / Linux**: `packed` is genuinely, stably supported (per the rustc
   book, confirmed for macOS by an actual local build — `target/release/
   <bin>.dSYM` appears exactly as documented). `cargo dtb-ke-bundle debug-info`
-  (new subcommand, `dtb-ke-bundle/src/debug_info.rs`) locates it (`.dSYM` on
+  (new subcommand, `crates/dtb-ke-bundle/src/debug_info.rs`) locates it (`.dSYM` on
   macOS, `.dwp` on Linux — unverified on Linux specifically, no linker for
   that target on the dev machine, but it's the platform the rustc book is
   most confident about) and `tar -czf`s it into its own archive, entirely

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/dtb-ke-bundle",
     "crates/dtb-ke-crash",
     "crates/dtb-ke-export",
     "crates/dtb-ke-log",
@@ -9,7 +10,6 @@ members = [
     "crates/dtb-ke-types",
     "crates/dtb-ke-ui",
     "crates/dtb-ke-util",
-    "dtb-ke-bundle",
 ]
 
 [workspace.package]

@@ -20,7 +20,7 @@ capture is disabled (the panic hook still installs).
 
 ## Icons
 
-The master lives at the workspace root, [`assets/icons/`](../assets/README.md),
+The master lives at the workspace root, [`assets/icons/`](../../assets/README.md),
 shared with `dtb-ke-ui` (which embeds `AppIcon.png` for its About window):
 
 - `AppIcon.svg` — preferred (square viewBox)
