@@ -52,6 +52,22 @@ pub fn selection_fill(theme: &Theme) -> (Hsla, Hsla) {
             Appearance::Light => (c.surface, c.foreground),
             Appearance::Dark => (c.selection, c.foreground),
         },
-        SelectionStyle::SolidSubtle => (c.selection, c.foreground),
+        // Linux / GNOME. The palette's `selection` token washed out badly
+        // against `chrome` (barely any contrast in light mode), so tint the
+        // accent directly instead — light stays legible under dark text, dark
+        // under light text.
+        SelectionStyle::SolidSubtle => {
+            let alpha = match theme.appearance {
+                Appearance::Light => 0.28,
+                Appearance::Dark => 0.38,
+            };
+            (
+                Hsla {
+                    a: alpha,
+                    ..c.primary
+                },
+                c.foreground,
+            )
+        }
     }
 }
