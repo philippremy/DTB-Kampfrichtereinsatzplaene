@@ -63,14 +63,13 @@ pub fn available() -> bool {
 /// Elsewhere the toast opens the download page instead.
 ///
 /// Tip builds are ad-hoc signed only (no per-commit notarization — see
-/// `UPDATER.md`), so a self-swapped `.app` hits Gatekeeper friction on
-/// relaunch; Tip therefore never self-installs on macOS. Windows has no
-/// equivalent re-check on an in-place swap by an already-running process, so
-/// it self-installs on both channels.
-pub fn can_self_install(channel: UpdateChannel) -> bool {
-    if cfg!(target_os = "macos") && channel == UpdateChannel::Tip {
-        return false;
-    }
+/// `UPDATER.md`), so a self-swapped `.app` does hit Gatekeeper friction on
+/// relaunch (a first-run "unidentified developer" prompt) — accepted
+/// deliberately: this is a small-user-base app where ad-hoc-everywhere beats
+/// making people leave the app to reinstall by hand every Tip build. Windows
+/// has no equivalent re-check on an in-place swap by an already-running
+/// process, so it always self-installs regardless of channel.
+pub fn can_self_install(_channel: UpdateChannel) -> bool {
     cfg!(any(target_os = "macos", target_os = "windows"))
 }
 
