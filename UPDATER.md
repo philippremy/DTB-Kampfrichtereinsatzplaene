@@ -57,6 +57,17 @@ correctly. `scripts/release.sh` bumps `main` to `x.y.z-dev.0` right after
 tagging a release, so the next Tip build's base version is already past the
 release just cut.
 
+This version is **baked into the binary**: `tip.yml` sets `DTB_KE_VERSION`
+(= `{base}-tip.{run_number}`) as a job env var on every build job, and
+`dtb-ke-ui`'s `build_info::APP_VERSION` prefers it over `CARGO_PKG_VERSION`.
+Without this, every Tip build self-reported the plain `{base}` (the
+workspace `Cargo.toml` version never changes between Tip runs), and the
+updater — comparing an installed `0.1.0` against a published `0.1.0-tip.35`
+— sees a *prerelease of a version it already has* (semver: `0.1.0-tip.35 <
+0.1.0`) and reports "no update". `build.rs` also emits
+`cargo:rerun-if-env-changed=DTB_KE_VERSION` so the persistent Tip target
+dir doesn't cache a stale version in.
+
 **`can_self_install(channel)`** (`updater/mod.rs`) is `true` for macOS and
 Windows on both channels — only Linux users, on every channel, get a
 "Herunterladen" link instead of an in-app install. Tip archives (and a
@@ -175,7 +186,9 @@ since every upload in a given workflow run targets the same `release_id`(s).
 - **Check:** `updater::check` resolves the channel's manifest URL
   (`Settings.update_channel` → `manifest_url()`), then `fetch_newest` GETs it
   (`ureq`), parses it, and picks the highest release whose version is
-  `> CARGO_PKG_VERSION` (and `>` any version the user chose to "Skip"), via
+  `> build_info::APP_VERSION` (see "Tip versioning" above — this is
+  `CARGO_PKG_VERSION` unless CI baked in a `DTB_KE_VERSION` override) and `>`
+  any version the user chose to "Skip", via
   `self_update::version::bump_is_greater`. Runs ~4 s after launch, then every
   6 h, and on demand from *DTB Kampfrichtereinsatzpläne → Nach Updates
   suchen*. Gated by the *Einstellungen → Aktualisierung* toggle (default on);

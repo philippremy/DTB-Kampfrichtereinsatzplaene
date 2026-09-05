@@ -16,7 +16,15 @@ include!(concat!(env!("OUT_DIR"), "/build_meta.rs"));
 
 // ── compile-time facts not visible to build.rs ────────────────────────────
 
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The running build's version. Normally `CARGO_PKG_VERSION` (the workspace
+/// `Cargo.toml`), but CI can override it via `DTB_KE_VERSION` — `tip.yml` sets
+/// it to `{base}-tip.{run_number}` so the updater can tell consecutive Tip
+/// builds apart (they all share the same unchanging base version otherwise, so
+/// `0.1.0-tip.35` would never be seen as newer than the installed `0.1.0`).
+pub const APP_VERSION: &str = match option_env!("DTB_KE_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 pub const SPDX_LICENSE: &str = env!("CARGO_PKG_LICENSE");
 pub const IDENTIFIER: &str = "de.philippremy.DTB-Kampfrichtereinsatzpläne";
 pub const DEBUG_ASSERTIONS: bool = cfg!(debug_assertions);

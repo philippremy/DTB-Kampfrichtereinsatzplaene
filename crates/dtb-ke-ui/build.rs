@@ -27,6 +27,10 @@ fn main() {
     // Re-run when the lockfile or the checked-out commit changes.
     rerun("Cargo.lock");
     rerun("build.rs");
+    // `build_info::APP_VERSION` reads this (CI Tip-build version override);
+    // cargo tracks `option_env!` on its own, but the Tip runners reuse a
+    // persistent target dir, so be explicit.
+    println!("cargo:rerun-if-env-changed=DTB_KE_VERSION");
     for p in [".git/HEAD", ".git/index"] {
         let g = workspace_root.join(p);
         if g.exists() {

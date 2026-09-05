@@ -107,6 +107,7 @@ jobs:
       # do nothing, since the relative ./target from the last run is gone.
       # Pre-created (and owned by the runner user) by runner-setup-linux.sh.
       CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/x86_64-unknown-linux-gnu
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}  # baked into the binary so the updater sees Tip builds as distinct
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -152,6 +153,7 @@ jobs:
       # Fixed absolute path so incremental caching survives the ephemeral
       # per-job checkout — see the linux-x86_64 job above / RUNNERS.md.
       CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/aarch64-unknown-linux-gnu
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}  # baked into the binary so the updater sees Tip builds as distinct
       PKG_CONFIG_ALLOW_CROSS: "1"
       PKG_CONFIG_SYSROOT_DIR: /opt/sysroots/aarch64-linux-gnu
       PKG_CONFIG_PATH: /opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/pkgconfig:/opt/sysroots/aarch64-linux-gnu/usr/share/pkgconfig
@@ -220,6 +222,7 @@ jobs:
       # backslashes literally (verified with PyYAML), so no escaping is
       # needed for this either way.
       CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\tip\x86_64-pc-windows-gnullvm
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}  # baked into the binary so the updater sees Tip builds as distinct
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -311,6 +314,7 @@ jobs:
       # See the windows-x86_64 job above for why this is backslashes, not
       # forward slashes.
       CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\tip\aarch64-pc-windows-gnullvm
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}  # baked into the binary so the updater sees Tip builds as distinct
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -368,6 +372,7 @@ jobs:
       # already segregates them into <dir>/<triple>/release/ itself) — one
       # path covers the whole job. Pre-created by runner-setup-macos.sh.
       CARGO_TARGET_DIR: /Users/Shared/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/universal-apple-darwin
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}  # baked into the binary so the updater sees Tip builds as distinct
     steps:
       - name: Checkout
         uses: actions/checkout@v6
