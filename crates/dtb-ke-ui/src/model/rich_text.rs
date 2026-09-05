@@ -18,6 +18,8 @@ pub struct Run {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    /// `#RRGGBB`, or `None` for the document's default text color.
+    pub color: Option<String>,
 }
 
 impl From<RichTextDTO> for RichText {
@@ -43,6 +45,7 @@ impl From<RichRunDTO> for Run {
             bold: dto.bold,
             italic: dto.italic,
             underline: dto.underline,
+            color: dto.color,
         }
     }
 }
@@ -74,6 +77,7 @@ impl From<&Run> for RichRunDTO {
             bold: model.bold,
             italic: model.italic,
             underline: model.underline,
+            color: model.color.clone(),
         }
     }
 }

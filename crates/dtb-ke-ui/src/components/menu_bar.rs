@@ -225,7 +225,9 @@ impl MenuBar {
         let overrides = Settings::global(cx).keybindings;
         let menus: Vec<OwnedMenu> = self.menus.clone();
 
-        let mut col = self.panel("menu-mega-panel", Some(px(420.)), &c, radius).left_0();
+        let mut col = self
+            .panel("menu-mega-panel", Some(px(420.)), &c, radius)
+            .left_0();
         for (mi, menu) in menus.iter().enumerate() {
             if mi > 0 {
                 col = col.child(Self::separator(&c));

@@ -93,6 +93,8 @@ pub(crate) struct Run {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    /// `#RRGGBB`, or `None` for the document's default text color.
+    pub color: Option<String>,
 }
 
 /// Build the template model from a competition.
@@ -206,6 +208,7 @@ fn remarks(rich: &RichTextDTO) -> Vec<Paragraph> {
                     bold: r.bold,
                     italic: r.italic,
                     underline: r.underline,
+                    color: r.color.clone(),
                 })
                 .collect(),
         })

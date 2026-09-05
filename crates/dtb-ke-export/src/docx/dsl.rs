@@ -34,8 +34,16 @@ pub fn text(s: impl Into<String>) -> w::Run {
     }
 }
 
-/// A run carrying direct bold / italic / underline character formatting.
-pub fn styled_text(s: impl Into<String>, bold: bool, italic: bool, underline: bool) -> w::Run {
+/// A run carrying direct bold / italic / underline / color character
+/// formatting. `color` is `#RRGGBB` (the leading `#` is stripped — the OOXML
+/// `w:color/@w:val` attribute is bare hex).
+pub fn styled_text(
+    s: impl Into<String>,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    color: Option<&str>,
+) -> w::Run {
     let mut props = Vec::new();
     if bold {
         props.push(w::RunPropertiesChoice::Bold(w::Bold::default()));
@@ -46,6 +54,12 @@ pub fn styled_text(s: impl Into<String>, bold: bool, italic: bool, underline: bo
     if underline {
         props.push(w::RunPropertiesChoice::Underline(Box::new(w::Underline {
             val: Some(w::UnderlineValues::Single),
+            ..Default::default()
+        })));
+    }
+    if let Some(color) = color {
+        props.push(w::RunPropertiesChoice::Color(Box::new(w::Color {
+            val: Some(color.trim_start_matches('#').to_owned()),
             ..Default::default()
         })));
     }

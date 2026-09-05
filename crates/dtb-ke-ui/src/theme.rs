@@ -247,6 +247,20 @@ impl Theme {
         base.tokens.radius.sm = self.skin.radius_control_px();
         base.tokens.radius.md = self.skin.radius_px();
         base.tokens.radius.lg = self.skin.radius_lg_px();
+
+        // Scrollbar thumbs default to square (`ScrollbarThumbStyle`'s own
+        // built-in fallback is `Pixels::ZERO`) unless a theme opts in. Every
+        // skin's control radius exceeds half the thumb's width, so this
+        // resolves to a full pill on all three (the library's own
+        // `clamp_thumb_radius` caps an oversized request to that) — the
+        // modern native look on macOS, Windows 11, and GNOME alike.
+        let thumb_radius = self.skin.radius_control_px();
+        base.scrollbar = gpui_base::ScrollbarTheme::new().with_styles(
+            gpui_base::ScrollbarStyles::default()
+                .thumb(|t| t.radius(thumb_radius))
+                .thumb_hover(|t| t.radius(thumb_radius))
+                .thumb_active(|t| t.radius(thumb_radius)),
+        );
     }
 }
 

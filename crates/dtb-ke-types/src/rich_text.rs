@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 /// Minimal rich text for the free-form block appended to the end of a document.
 ///
-/// Deliberately tiny: character runs carry only bold / italic / underline. No
-/// colors, alignment, lists or headings.
+/// Deliberately tiny: character runs carry only bold / italic / underline /
+/// text color. No alignment, lists or headings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RichTextDTO {
     pub paragraphs: Vec<RichParagraphDTO>,
@@ -22,4 +22,6 @@ pub struct RichRunDTO {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    /// `#RRGGBB`, or `None` for the document's default text color.
+    pub color: Option<String>,
 }

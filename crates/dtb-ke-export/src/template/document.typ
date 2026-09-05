@@ -64,6 +64,7 @@
   if run.bold { b = strong(b) }
   if run.italic { b = emph(b) }
   if run.underline { b = underline(b) }
+  if run.color != none { b = text(fill: rgb(run.color), b) }
   b
 }
 

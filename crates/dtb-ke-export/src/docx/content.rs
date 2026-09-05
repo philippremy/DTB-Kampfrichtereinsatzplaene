@@ -287,9 +287,10 @@ fn briefing_section(b: &Briefing, date: &str, out: &mut Vec<w::BodyChoice>) {
                 true,
                 false,
                 false,
+                None,
             ),
             line_break(),
-            styled_text("in Kampfrichterkleidung statt.", true, false, false),
+            styled_text("in Kampfrichterkleidung statt.", true, false, false, None),
         ],
     );
     opener
@@ -340,7 +341,7 @@ fn remark_paragraph(para: &MPara) -> w::Paragraph {
     let runs = para
         .runs
         .iter()
-        .map(|r| styled_text(&r.text, r.bold, r.italic, r.underline))
+        .map(|r| styled_text(&r.text, r.bold, r.italic, r.underline, r.color.as_deref()))
         .collect();
     paragraph(None, runs)
 }
