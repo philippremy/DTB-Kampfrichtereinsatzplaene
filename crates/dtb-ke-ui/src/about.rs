@@ -432,7 +432,7 @@ impl InfoWindow {
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .px(px(28.))
-            .py(px(26.))
+            .py(px(16.))
             .flex()
             .flex_col()
             .items_center()
@@ -615,6 +615,11 @@ fn dep_row(
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&license_scroll)
+                            // Keep the wheel here — without this the outer
+                            // virtual list scrolls too (gpui's scroll handler
+                            // doesn't stop propagation; `occlude` drops the
+                            // list's hitbox from the scroll hit-test).
+                            .occlude()
                             .px(px(20.))
                             .py(px(14.))
                             .text_size(px(10.5))
