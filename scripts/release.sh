@@ -118,13 +118,14 @@ NOTES_FILE="$(mktemp /tmp/dtb-ke-release-notes.XXXXXX.md)"
 trap 'rm -f "$NOTES_FILE"' EXIT
 
 cat > "$NOTES_FILE" <<EOF
-# Release notes for $tag. Lines starting with "# " (hash-space) are these
-# instructions and are stripped automatically — no need to delete them.
-# Markdown headings ("## …") are kept. Write the notes below as plain prose
-# and "- " bullets; what remains becomes the annotated tag message and, from
-# there, the Codeberg release body. The generated content is a starting point,
-# not the final wording. Save + exit to continue; leave the file empty (or
-# with only these "# " lines) to abort — nothing is tagged or pushed.
+// Release notes for $tag. Lines starting with "//" are these instructions
+// and are stripped automatically — no need to delete them. "//" is not
+// Markdown syntax, so "#" first-level headings in the notes below are safe.
+// Write the notes as prose and "- " bullets; what remains becomes the
+// annotated tag message and, from there, the Codeberg release body. The
+// generated content is a starting point, not the final wording. Save + exit
+// to continue; leave the file empty (or with only these "//" lines) to
+// abort — nothing is tagged or pushed.
 
 $prefill
 EOF
@@ -133,9 +134,9 @@ editor="${EDITOR:-${VISUAL:-nano}}"
 have "$editor" || die "\$EDITOR ('$editor') not found — set EDITOR to something on PATH"
 "$editor" "$NOTES_FILE"
 
-# Strip the "# " instruction lines (keep "## " headings), trim leading blanks,
-# then check there's real content left.
-notes="$(grep -v '^# ' "$NOTES_FILE" | sed '/./,$!d')"
+# Strip the "//" instruction lines (Markdown headings, "#" included, are kept),
+# trim leading blanks, then check there's real content left.
+notes="$(grep -vE '^//( |$)' "$NOTES_FILE" | sed '/./,$!d')"
 if [[ -z "$(echo "$notes" | tr -d '[:space:]')" ]]; then
   die "release notes are empty — aborted, nothing was tagged or pushed"
 fi
