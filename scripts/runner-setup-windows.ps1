@@ -170,8 +170,19 @@ if (-not (& $Have dotnet)) {
 $WixToolPath = "$ToolsDir\dotnet-tools"
 Set-MachinePath $WixToolPath
 if (-not (Test-Path "$WixToolPath\wix.exe")) {
-    if (Confirm "Install the WiX Toolset v4 CLI (dotnet tool, machine-wide)?") {
+    if (Confirm "Install the WiX Toolset CLI (dotnet tool, machine-wide)?") {
         dotnet tool install --tool-path $WixToolPath wix
+        # WiX v6+ blocks every subcommand (incl. `extension add` and `build`)
+        # until the Open Source Maintenance Fee EULA is accepted (error
+        # WIX7015). `wix eula accept wix<major>` records it permanently in the
+        # profile of whoever runs it — do it here as the same identity the
+        # service will run as. `dtb-ke-bundle`'s windows.rs *also* passes
+        # `-acceptEula` on its own `wix build` call as a belt-and-braces
+        # fallback, but the extension add below needs it accepted now.
+        $wixMajor = (& "$WixToolPath\wix.exe" --version).Split('.')[0]
+        if ([int]$wixMajor -ge 6) {
+            & "$WixToolPath\wix.exe" eula accept "wix$wixMajor"
+        }
         & "$WixToolPath\wix.exe" extension add -g WixToolset.UI.wixext
     }
 } else {

@@ -87,6 +87,20 @@ before building, as a defensive belt-and-suspenders against the registry
 policy ever being reset out of band (a Windows Update, a snapshot rollback,
 a VM rebuilt without re-running the full setup script).
 
+**WiX v6+ gates every subcommand behind the OSMF EULA.** `dotnet tool install
+wix` with no version pin now pulls WiX v7, which refuses to run *any*
+subcommand — `build`, `extension add`, `extension list` — with `error WIX7015:
+You must accept the Open Source Maintenance Fee (OSMF) EULA` until it's
+accepted. Two independent acceptances, because the CI `wix build` runs as
+LocalSystem (the runner service) while setup runs as the interactive user, and
+`wix eula accept` records acceptance *per profile*: (1) `runner-setup-windows.ps1`
+runs `wix eula accept wix<major>` right after install so the setup script's own
+`wix extension add -g` works; (2) `dtb-ke-bundle`'s `windows.rs` passes
+`-acceptEula wix<major>` inline on its `wix build` invocation (`wix_major()`
+reads `wix --version`, only adds the flag for v6+) — a one-off, profile-independent
+acceptance that covers the LocalSystem CI run. The `.wxs` we emit is still v4
+schema (`schemas/v4/wxs`), which v7 reads fine.
+
 ### Linux aarch64: cross-compiled, no QEMU
 
 QEMU-emulated aarch64 builds were tried on this hardware before and were,
@@ -167,6 +181,14 @@ assumed clean:
   binary-arm64/Packages.xz`, parsed in `awk` paragraph mode) rather than
   hardcoding version strings that go stale — verified in this project's setup
   session by actually fetching the index and downloading all 13 real `.deb`s.
+- **Packaging the arm64 leg.** `cargo dtb-ke-bundle bundle --target
+  aarch64-unknown-linux-gnu` threads that triple into `bundle::Context`;
+  `linux::arch_labels` maps its arch token to the Debian (`arm64`) and
+  RPM/AppImage/tar (`aarch64`) spellings so the `.deb`/`.rpm`/`.AppImage`/tarball
+  are all correctly labelled around the arm64 binary — an unmapped arch is a
+  hard error rather than a silent `amd64`-labelled arm64 package. `rpmbuild -bb`
+  with `BuildArch: aarch64` cross-produces the rpm fine on the x86_64 host (no
+  foreign code runs).
 
 ### macOS: universal binary via two sequential `lipo` slices
 
@@ -420,8 +442,9 @@ instead of an in-app install, same as the Linux path always does).
 3. **Windows VM guest** (`scripts/runner-setup-windows.ps1`, run *inside*
    the VM once Windows is installed and reachable): Rust +
    `*-pc-windows-gnullvm` targets, llvm-mingw (the gnullvm cross toolchain),
-   the Windows SDK (for `fxc.exe` — see below), the WiX Toolset v4 CLI (a
-   `dotnet tool`), Go + a from-source `forgejo-runner` build (**no Windows
+   the Windows SDK (for `fxc.exe` — see below), the WiX Toolset CLI (a
+   `dotnet tool` — currently v7; its OSMF EULA is auto-accepted, see the
+   WIX7015 note above), Go + a from-source `forgejo-runner` build (**no Windows
    binary is published upstream** — the v13.1.0 release only ships Linux
    images; building it needs only Go, per Forgejo's own docs), zipsign, and
    registration.
