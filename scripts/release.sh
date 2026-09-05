@@ -19,6 +19,17 @@ cd "$ROOT"
 have() { command -v "$1" >/dev/null 2>&1; }
 die() { echo "release.sh: $*" >&2; exit 1; }
 
+# Rewrite the first `version = "…"` line under [workspace.package] to $1.
+# awk, not `sed -i`, because BSD/macOS sed has neither the GNU `0,/re/`
+# address nor `{ … }` command grouping (`sed: bad flag … '}'`).
+set_workspace_version() {
+  awk -v v="$1" '
+    /^\[workspace\.package\]/ { in_pkg = 1 }
+    in_pkg && !done && /^version = "/ { sub(/"[^"]*"/, "\"" v "\""); done = 1 }
+    { print }
+  ' "$CARGO_TOML" > "${CARGO_TOML}.tmp" && mv "${CARGO_TOML}.tmp" "$CARGO_TOML"
+}
+
 have git || die "git is required"
 [[ -d .git ]] || die "not a git repository — run this from the project root after the repo migration is done"
 
@@ -67,11 +78,13 @@ NOTES_FILE="$(mktemp /tmp/dtb-ke-release-notes.XXXXXX.md)"
 trap 'rm -f "$NOTES_FILE"' EXIT
 
 cat > "$NOTES_FILE" <<EOF
-# Release notes for $tag — everything above the first line starting with '#'
-# becomes the tag message (and from there, the Codeberg release body).
-# Edit freely; the generated lists below are a starting point, not the final
-# wording. Save + exit to continue, or leave this file completely empty (or
-# unchanged from a blank template) to abort.
+# Release notes for $tag. Lines starting with "# " (hash-space) are these
+# instructions and are stripped automatically — no need to delete them.
+# Markdown headings ("## …") are kept. Write the notes below as plain prose
+# and "- " bullets; what remains becomes the annotated tag message and, from
+# there, the Codeberg release body. The generated lists are a starting point,
+# not the final wording. Save + exit to continue; leave the file empty (or
+# with only these "# " lines) to abort — nothing is tagged or pushed.
 
 ## Changes
 
@@ -86,8 +99,9 @@ editor="${EDITOR:-${VISUAL:-nano}}"
 have "$editor" || die "\$EDITOR ('$editor') not found — set EDITOR to something on PATH"
 "$editor" "$NOTES_FILE"
 
-# Strip comment lines, then check there's real content left.
-notes="$(grep -v '^#' "$NOTES_FILE" | sed '/./,$!d')"
+# Strip the "# " instruction lines (keep "## " headings), trim leading blanks,
+# then check there's real content left.
+notes="$(grep -v '^# ' "$NOTES_FILE" | sed '/./,$!d')"
 if [[ -z "$(echo "$notes" | tr -d '[:space:]')" ]]; then
   die "release notes are empty — aborted, nothing was tagged or pushed"
 fi
@@ -101,9 +115,8 @@ read -r -p "Tag $tag with these notes and push? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || die "aborted by user"
 
 # ── 4. bump Cargo.toml, commit, tag, push ────────────────────────────────
-sed -i.bak "0,/^version = /{s/^version = \"$current_version\"/version = \"$new_version\"/}" "$CARGO_TOML"
-rm -f "${CARGO_TOML}.bak"
-grep -q "version = \"$new_version\"" "$CARGO_TOML" || die "version bump failed — check $CARGO_TOML manually"
+set_workspace_version "$new_version"
+grep -qF "version = \"$new_version\"" "$CARGO_TOML" || die "version bump failed — check $CARGO_TOML manually"
 
 # The bump touches Cargo.lock too (workspace members inherit the version).
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
@@ -119,8 +132,7 @@ git push origin "$tag"
 # ── 5. bump straight past it, so Tip builds report a version that's ─────
 #      unambiguously newer than the release just cut, not equal to it.
 next_dev="${new_version}-dev.0"
-sed -i.bak "0,/^version = /{s/^version = \"$new_version\"/version = \"$next_dev\"/}" "$CARGO_TOML"
-rm -f "${CARGO_TOML}.bak"
+set_workspace_version "$next_dev"
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
 git add "$CARGO_TOML" Cargo.lock 2>/dev/null || git add "$CARGO_TOML"
 git commit -m "chore: bump to $next_dev"
