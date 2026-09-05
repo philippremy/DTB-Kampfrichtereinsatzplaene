@@ -83,11 +83,24 @@ Codeberg release:
 | (release builds only) `.dmg` / `.msi` / `.deb` / `.rpm` / `.AppImage` | first-install artifacts — **the updater never touches these** either |
 
 **Naming matters:** each updatable archive's file name must contain the Rust
-target triple — that is how `self_update` matches the asset to the running
-platform. The `.app` / folder name *inside* the archive must be exactly
+target triple — that is how the asset is matched to the running platform. The
+`.app` / folder name *inside* the archive must be exactly
 `DTB Kampfrichtereinsatzpläne` (spaced — `updater::BIN_NAME`, matching
 `dtb-ke-bundle::meta::DISPLAY_NAME`; **not** the kebab-case `RAW_BIN_NAME`
 cargo itself builds — see CLAUDE.md's Bundling section).
+
+**macOS asset matching** (`updater::asset_priority`, wired into both
+`fetch_newest` and `run_install`'s `self_update` `asset_matcher`): the CI
+macOS artifact is a single `universal-apple-darwin` fat archive, so
+`self_update`'s built-in matcher — which looks for the native triple
+(`aarch64-apple-darwin` / `x86_64-apple-darwin`) — finds nothing and the
+update fails. `asset_priority` ranks candidates: an exact native-triple match
+first (priority 0), then the arch+os tokens (1), then — macOS only — a
+`universal-apple-darwin` name (2). So a per-arch slice always wins if one is
+ever published, but a universal-only release still updates. The chosen asset
+keeps its manifest `digest`, so `verify_release_digest` is unaffected. No
+`self_update` fork — `manifest::UpdateBuilder::asset_matcher` is a public
+hook.
 
 ### Signing (release builds only — Tip ships unsigned-by-zipsign, always ad-hoc-signed archives; a release cut with no `MACOS_SIGN_IDENTITY` set stays ad-hoc-signed on macOS too, see `RUNNERS.md`)
 

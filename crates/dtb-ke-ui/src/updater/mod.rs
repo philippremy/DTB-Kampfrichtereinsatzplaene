@@ -396,6 +396,38 @@ impl EventEmitter<UpdaterEvent> for Updater {}
 
 // ── the blocking self_update / http work (background executor only) ───────
 
+/// Rank a release-asset file name for the platform this build runs on — lower
+/// is better, `None` means "not a candidate".
+///
+/// `0` / `1` mirror `self_update`'s own native matching (the full target
+/// triple, then the arch + os tokens). `2` — **macOS only** — accepts a
+/// `universal-apple-darwin` (fat) archive as a deliberate last resort: an
+/// arch-specific slice is always preferred, but the app can still update from
+/// the fat archive while the macOS CI artifacts are universal-only (and after
+/// they stop being, if an old universal release is all that is left).
+fn asset_priority(name: &str) -> Option<u32> {
+    let target = self_update::get_target();
+    if name.contains(target) {
+        return Some(0);
+    }
+    let arch = target.split('-').next().filter(|s| !s.is_empty());
+    let os = [
+        "linux", "darwin", "windows", "freebsd", "netbsd", "openbsd", "android", "ios", "wasm",
+    ]
+    .into_iter()
+    .find(|os| target.contains(os));
+    if let (Some(arch), Some(os)) = (arch, os)
+        && name.contains(arch)
+        && name.contains(os)
+    {
+        return Some(1);
+    }
+    if cfg!(target_os = "macos") && name.contains("universal-apple-darwin") {
+        return Some(2);
+    }
+    None
+}
+
 /// Fetch + parse the manifest at `url`, return the newest release strictly
 /// newer than the running build (and newer than `skipped`, if given).
 fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, String> {
@@ -416,7 +448,6 @@ fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, Str
     }
 
     let current = build_info::APP_VERSION;
-    let target = self_update::get_target();
 
     let mut best: Option<Release> = None;
     for entry in manifest.releases {
@@ -431,11 +462,15 @@ fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, Str
                 continue;
             }
         }
+        // Same native-first / universal-fallback selection `run_install`'s
+        // `asset_matcher` uses, so the size shown matches the archive that
+        // will actually be downloaded.
         let size = entry
             .assets
             .iter()
-            .find(|a| a.name.contains(target))
-            .and_then(|a| a.size);
+            .filter_map(|a| asset_priority(&a.name).map(|prio| (prio, a)))
+            .min_by_key(|&(prio, _)| prio)
+            .and_then(|(_, a)| a.size);
 
         // `bump_is_greater(a, b)` == "b is newer than a": keep `entry` only if
         // it's newer than the best seen so far.
@@ -469,7 +504,19 @@ fn run_install(manifest_url: &str) -> Result<(), String> {
         .show_output(false)
         .show_download_progress(false)
         .verify_release_digest(true)
-        .verifying_keys([key]);
+        .verifying_keys([key])
+        // Replace self_update's built-in target-substring match: prefer a
+        // native, arch-specific archive exactly as it would, but allow a
+        // `universal-apple-darwin` fat archive as a last resort on macOS
+        // (`asset_priority`). The chosen asset keeps its manifest digest, so
+        // `verify_release_digest` still applies. See UPDATER.md.
+        .asset_matcher(|assets| {
+            assets
+                .iter()
+                .filter_map(|a| asset_priority(a.name()).map(|prio| (prio, a)))
+                .min_by_key(|&(prio, _)| prio)
+                .map(|(_, a)| a.clone())
+        });
 
     #[cfg(target_os = "macos")]
     builder.bundle_path_in_archive(format!("{BIN_NAME}.app"));
@@ -592,5 +639,31 @@ mod tests {
             }
         }
         assert_eq!(best.as_deref(), Some("0.3.0"));
+    }
+
+    #[test]
+    fn asset_priority_prefers_native_then_universal() {
+        let t = self_update::get_target();
+        let native = format!("App-1.0.0-{t}.tar.gz");
+        let universal = "App-1.0.0-universal-apple-darwin.tar.gz";
+        let unrelated = "App-1.0.0-mips64-unknown-none.tar.gz";
+
+        assert_eq!(asset_priority(&native), Some(0));
+        assert_eq!(asset_priority(unrelated), None);
+
+        // Native wins even when the universal archive is listed first.
+        let names = [universal.to_string(), native.clone()];
+        let best = names
+            .iter()
+            .filter_map(|n| asset_priority(n).map(|p| (p, n.as_str())))
+            .min_by_key(|&(p, _)| p)
+            .map(|(_, n)| n);
+        assert_eq!(best, Some(native.as_str()));
+
+        // The universal archive is only a candidate on macOS.
+        #[cfg(target_os = "macos")]
+        assert_eq!(asset_priority(universal), Some(2));
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(asset_priority(universal), None);
     }
 }
