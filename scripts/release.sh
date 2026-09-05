@@ -39,7 +39,11 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 [[ -z "$(git status --porcelain)" ]] || die "working tree not clean — commit or stash first"
 
 echo "fetching origin to check we're up to date …"
-git fetch origin main --tags
+# `--force`: the repo has rolling tags (`tip`, `latest`) that CI keeps
+# moving, so a plain `--tags` fetch fails with "would clobber existing tag".
+# Version tags (`vX.Y.Z`) never move, so forcing local tags to match origin
+# is safe here.
+git fetch origin main --tags --force
 local_head="$(git rev-parse HEAD)"
 remote_head="$(git rev-parse origin/main)"
 [[ "$local_head" == "$remote_head" ]] || die "local main is not in sync with origin/main — pull first"
