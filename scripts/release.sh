@@ -156,7 +156,11 @@ grep -qF "version = \"$new_version\"" "$CARGO_TOML" || die "version bump failed 
 have cargo && cargo update --workspace --offline >/dev/null 2>&1 || true
 git add "$CARGO_TOML" Cargo.lock 2>/dev/null || git add "$CARGO_TOML"
 git commit -m "chore: release $tag"
-tag_flags=(-a -F "$NOTES_FILE")
+# --cleanup=whitespace, NOT the `git tag` default of `strip` — `strip`
+# removes every line starting with git's comment char ("#"), which would
+# silently eat all the Markdown "#"/"##" headings in the notes. (We already
+# stripped our own "//" instruction lines above.)
+tag_flags=(-a --cleanup=whitespace -F "$NOTES_FILE")
 [[ "$retag" == 1 ]] && tag_flags=(-f "${tag_flags[@]}")
 git tag "${tag_flags[@]}" "$tag"
 
