@@ -257,10 +257,11 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          # The portable folder is the only dir here besides `wix/` (its name
-          # carries the arch — x64 / arm64 — so don't filter on that).
+          # The portable folder is the only dir here besides wix/ (its name
+          # carries the arch: x64 or arm64), so match by "not wix" instead.
+          # ASCII only in PowerShell here: PS 5.1 mis-decodes non-ASCII.
           $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
-          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
+          if (-not $srcDir) { throw 'portable folder not found under target/bundle/release' }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
@@ -279,8 +280,8 @@ jobs:
           Remove-Item -Force $keyPath
           if ($zipsignExit -ne 0) { exit $zipsignExit }
           # @(...) forces an array even for 0 or 1 matches, so the splat below
-          # never injects a stray empty/`\` arg when there's no .msi (which is
-          # what `(Get-ChildItem …).FullName` — a scalar or $null — used to do).
+          # never injects a stray empty / backslash arg when there is no .msi
+          # (which is what a bare (Get-ChildItem ...).FullName scalar/$null did).
           $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
           cargo dtb-ke-bundle codeberg upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
@@ -342,10 +343,11 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          # The portable folder is the only dir here besides `wix/` (its name
-          # carries the arch — x64 / arm64 — so don't filter on that).
+          # The portable folder is the only dir here besides wix/ (its name
+          # carries the arch: x64 or arm64), so match by "not wix" instead.
+          # ASCII only in PowerShell here: PS 5.1 mis-decodes non-ASCII.
           $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
-          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
+          if (-not $srcDir) { throw 'portable folder not found under target/bundle/release' }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
@@ -356,7 +358,7 @@ jobs:
           $zipsignExit = $LASTEXITCODE
           Remove-Item -Force $keyPath
           if ($zipsignExit -ne 0) { exit $zipsignExit }
-          # @(...) — see the windows-x86_64 job above.
+          # @(...) forces an array; see the windows-x86_64 job above.
           $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
           cargo dtb-ke-bundle codeberg upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
