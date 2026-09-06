@@ -273,11 +273,14 @@ jobs:
           $zipsignExit = $LASTEXITCODE
           Remove-Item -Force $keyPath
           if ($zipsignExit -ne 0) { exit $zipsignExit }
-          $msiFiles = (Get-ChildItem "target\bundle\release\*.msi").FullName
+          # @(...) forces an array even for 0 or 1 matches, so the splat below
+          # never injects a stray empty/`\` arg when there's no .msi (which is
+          # what `(Get-ChildItem …).FullName` — a scalar or $null — used to do).
+          $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
           cargo dtb-ke-bundle codeberg upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
             --release-id ${{ needs.prepare.outputs.latest_release_id }} `
-            "$name" @msiFiles
+            @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload debug info
         # dtb-ke-ui-x86_64.pdb: a real PDB, emitted straight into the
@@ -343,11 +346,12 @@ jobs:
           $zipsignExit = $LASTEXITCODE
           Remove-Item -Force $keyPath
           if ($zipsignExit -ne 0) { exit $zipsignExit }
-          $msiFiles = (Get-ChildItem "target\bundle\release\*.msi").FullName
+          # @(...) — see the windows-x86_64 job above.
+          $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
           cargo dtb-ke-bundle codeberg upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
             --release-id ${{ needs.prepare.outputs.latest_release_id }} `
-            "$name" @msiFiles
+            @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload debug info
         # See the windows-x86_64 job above for the full story.

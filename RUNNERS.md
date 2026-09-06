@@ -621,6 +621,18 @@ multipart upload here without a way to actually test it against Codeberg
 first — a third silent regression on a real release is worse than the
 `curl` dependency.
 
+**PowerShell string-splat trap.** The Windows jobs build the upload arg list
+in PowerShell. `$x = (Get-ChildItem …).FullName` is a *scalar string* when the
+glob matches one file (and `$null` when it matches none); splatting either
+with `@x` in Windows PowerShell 5.1 does *not* pass one path argument — it
+enumerates the string's characters, so `codeberg upload` received `C`, `:`,
+`\`, … and died on `\` (`bad asset path: \` — a lone backslash is the current
+drive root, so it survives the `is_file()` check but has no file name). Fix:
+`@("$name") + @(Get-ChildItem … -File | ForEach-Object FullName)` — `@(…)`
+forces a real array (empty or not), and splatting an *array* passes one arg
+per element. `run_codeberg`'s arg filter also now skips any positional that
+isn't `is_file()` (with a warning), so a stray arg can't crash the upload.
+
 ## Vendored dependency patches
 
 `/vendor/` (see `vendor/README.md`) holds local, minimally-patched copies of

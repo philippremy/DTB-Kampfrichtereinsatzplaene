@@ -183,7 +183,11 @@ fn run_codeberg(rest: &[String]) {
                 exit(2);
             }
             // Everything that isn't `--release-id` or a value right after it,
-            // and exists on disk, is a file to upload.
+            // and is a real file on disk, is an asset to upload. Args that
+            // don't resolve to a file (an unexpanded `*.deb` glob, a stray `\`
+            // from an empty PowerShell splat, a directory) are skipped with a
+            // warning rather than crashing later in `codeberg::upload` — but
+            // an empty arg is dropped silently (it's just noise).
             let value_indices: std::collections::HashSet<usize> = rest
                 .iter()
                 .enumerate()
@@ -194,8 +198,18 @@ fn run_codeberg(rest: &[String]) {
                 .iter()
                 .enumerate()
                 .filter(|(i, a)| !value_indices.contains(i) && !a.starts_with("--"))
-                .map(|(_, a)| std::path::PathBuf::from(a))
-                .filter(|p| p.exists())
+                .map(|(_, a)| (a, std::path::PathBuf::from(a)))
+                .filter(|(raw, p)| {
+                    if p.is_file() {
+                        true
+                    } else {
+                        if !raw.is_empty() {
+                            eprintln!("dtb-ke-bundle: skipping upload arg {raw:?} — not a file");
+                        }
+                        false
+                    }
+                })
+                .map(|(_, p)| p)
                 .collect();
             if has("--plain") {
                 client.upload_plain(&release_ids, &files)
