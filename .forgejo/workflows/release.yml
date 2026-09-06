@@ -255,7 +255,9 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          # The portable folder is the only dir here besides `wix/` (its name
+          # carries the arch — x64 / arm64 — so don't filter on that).
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
@@ -335,7 +337,9 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          # The portable folder is the only dir here besides `wix/` (its name
+          # carries the arch — x64 / arm64 — so don't filter on that).
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"

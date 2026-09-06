@@ -18,11 +18,34 @@ use crate::bundle::Context;
 use crate::util::{copy, fresh_dir, have, report, try_run, workspace_root};
 use crate::{icon, meta};
 
+/// The arch token for the target being packaged (`None` = the host) — used
+/// both as the WiX `-arch` value and as the `-<arch>` suffix on the portable
+/// folder / `.msi` file name. Errors on an arch WiX doesn't know rather than
+/// silently mislabelling.
+fn win_arch(cx: &Context) -> Result<&'static str, String> {
+    let arch = match cx.target.as_deref() {
+        Some(triple) => triple.split('-').next().unwrap_or(""),
+        None => std::env::consts::ARCH,
+    };
+    match arch {
+        "x86_64" => Ok("x64"),
+        "aarch64" => Ok("arm64"),
+        "x86" => Ok("x86"),
+        other => Err(format!(
+            "Windows packaging has no WiX arch for `{other}` (target {:?}) — \
+             add it to windows::win_arch",
+            cx.target
+        )),
+    }
+}
+
 pub fn bundle(cx: &Context) -> Result<(), String> {
+    let arch = win_arch(cx)?;
+
     // ── portable folder ────────────────────────────────────────────────────
     let portable = cx
         .out_dir
-        .join(format!("{}-{}-x64", meta::SLUG, meta::numeric_version()));
+        .join(format!("{}-{}-{arch}", meta::SLUG, meta::numeric_version()));
     fresh_dir(&portable).map_err(io)?;
     // The shipped/branded name (meta::DISPLAY_NAME), not the raw cargo build
     // artifact's kebab-case name.
@@ -93,7 +116,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     }
 
     let msi = cx.out_dir.join(format!(
-        "{}-{}-x64.msi",
+        "{}-{}-{arch}.msi",
         meta::SLUG,
         meta::numeric_version()
     ));
@@ -101,7 +124,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         "build".to_string(),
         wxs.to_string_lossy().into_owned(),
         "-arch".into(),
-        "x64".into(),
+        arch.to_string(),
         "-ext".into(),
         "WixToolset.UI.wixext".into(),
         "-o".into(),
@@ -295,6 +318,30 @@ fn io(e: std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn ctx(target: Option<&str>) -> crate::bundle::Context {
+        crate::bundle::Context {
+            binary: std::path::PathBuf::new(),
+            out_dir: std::path::PathBuf::new(),
+            formats: None,
+            sign: None,
+            target: target.map(String::from),
+            have_icon: false,
+        }
+    }
+
+    #[test]
+    fn win_arch_maps_the_target_triple() {
+        assert_eq!(
+            super::win_arch(&ctx(Some("x86_64-pc-windows-gnullvm"))).unwrap(),
+            "x64"
+        );
+        assert_eq!(
+            super::win_arch(&ctx(Some("aarch64-pc-windows-gnullvm"))).unwrap(),
+            "arm64"
+        );
+        assert!(super::win_arch(&ctx(Some("mips64-pc-windows-gnu"))).is_err());
+    }
+
     #[test]
     fn wxs_wires_the_install_wizard() {
         let wxs = super::wxs_source("App.exe", true);
