@@ -186,9 +186,15 @@ assumed clean:
   `linux::arch_labels` maps its arch token to the Debian (`arm64`) and
   RPM/AppImage/tar (`aarch64`) spellings so the `.deb`/`.rpm`/`.AppImage`/tarball
   are all correctly labelled around the arm64 binary — an unmapped arch is a
-  hard error rather than a silent `amd64`-labelled arm64 package. `rpmbuild -bb`
-  with `BuildArch: aarch64` cross-produces the rpm fine on the x86_64 host (no
-  foreign code runs).
+  hard error rather than a silent `amd64`-labelled arm64 package. `rpmbuild` is
+  invoked with **`--target <arch>`** (bare CPU — `rpm-common(8)` says PLATFORM
+  is `arch[-os]`, os optional) — without it rpm fails the aarch64 leg with `No
+  compatible architectures found for build` because the build host is x86_64;
+  `--target` makes rpm use that arch's config instead of autodetecting, and is
+  the *only* thing setting the package arch (the generated spec has **no
+  `BuildArch`** — `rpmbuild(1)` BUGS: mixing `--target` with a spec `BuildArch`
+  is undefined behavior). No foreign code runs — it's just an archive +
+  scriptlets.
 
 ### macOS: universal binary via two sequential `lipo` slices
 

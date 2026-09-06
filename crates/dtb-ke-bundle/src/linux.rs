@@ -389,7 +389,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     crate::util::remove(&cx.out_dir.join("rpm-src")).ok();
 
     let spec = top.join("SPECS").join(format!("{}.spec", meta::SLUG));
-    write(&spec, rpm_spec(&src_stem, arch.rpm))?;
+    write(&spec, rpm_spec(&src_stem))?;
 
     // Arch/CachyOS (the CI host) has no populated system rpm database, so
     // `rpmbuild` prints "cannot open Packages database in /var/lib/rpm".
@@ -405,6 +405,14 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
         rpm_args.push("--define".into());
         rpm_args.push(format!("_dbpath {dbpath}"));
     }
+    // `--target <arch>` (rpm-common(8): PLATFORM is `arch[-os]`, os optional)
+    // makes rpm use that arch's config instead of autodetecting the host, so
+    // the aarch64 leg cross-builds on the x86_64 CI host without the "No
+    // compatible architectures found for build" refusal. It's also the *only*
+    // thing setting the package arch — the spec has no `BuildArch` (mixing the
+    // two is documented undefined behavior). No-op when arch == host.
+    rpm_args.push("--target".into());
+    rpm_args.push(arch.rpm.to_string());
     rpm_args.push("-bb".into());
     rpm_args.push(spec.to_string_lossy().into_owned());
 
@@ -429,13 +437,18 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn rpm_spec(src_stem: &str, arch: &str) -> String {
+fn rpm_spec(src_stem: &str) -> String {
     format!(
         // The binary ships pre-stripped ([profile.release] strip = "symbols";
         // debug info goes to a separate .dwp, never into the payload), so
         // rpm's automatic `-debuginfo` subpackage has nothing to collect and
         // `rpmbuild` dies with "Empty %files file … debugfiles.list". Turn it
         // off.
+        //
+        // No `BuildArch:` — the package arch comes solely from `rpmbuild
+        // --target <cpu>` (see `rpm()`). rpmbuild(1) BUGS: a `--target` that
+        // disagrees with a spec `BuildArch` is *undefined behavior*, so we
+        // use exactly one mechanism.
         "%global debug_package %{{nil}}\n\
          \n\
          Name:           {pkg}\n\
@@ -445,7 +458,6 @@ fn rpm_spec(src_stem: &str, arch: &str) -> String {
          License:        {license}\n\
          URL:            {homepage}\n\
          Source0:        {src_stem}.tar.gz\n\
-         BuildArch:      {arch}\n\
          Requires:       hicolor-icon-theme\n\
          \n\
          %description\n\
@@ -488,7 +500,6 @@ fn rpm_spec(src_stem: &str, arch: &str) -> String {
         license = meta::LICENSE,
         homepage = meta::HOMEPAGE,
         src_stem = src_stem,
-        arch = arch,
         description = meta::DESCRIPTION,
         id = meta::RDNS_ID,
     )
