@@ -7,6 +7,12 @@
 //! that has it. WiX v6+ gates use behind the Open Source Maintenance Fee EULA
 //! (error `WIX7015`); [`wix_major`] reads the installed major version so
 //! [`bundle`] can pass `-acceptEula wix<major>` for a non-interactive CI build.
+//!
+//! The `.msi` uses `WixUI_InstallDir` (from `WixToolset.UI.wixext`): a real
+//! wizard with a licence-agreement page (`License.rtf`, generated from the
+//! AGPL text — see [`rtf_document`]), an install-directory chooser, a progress
+//! page, and a finish page whose optional checkbox launches the app. Without
+//! the UI extension the `.msi` step is skipped (the `.wxs` is still written).
 
 use crate::bundle::Context;
 use crate::util::{copy, fresh_dir, have, report, try_run, workspace_root};
@@ -37,11 +43,20 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     fresh_dir(&staging).map_err(io)?;
     let exe_name = format!("{}.exe", meta::DISPLAY_NAME);
     copy(&cx.binary, &staging.join(&exe_name)).map_err(io)?;
-    copy(
-        &workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt"),
-        &staging.join("LICENSE.rtf.txt"),
-    )
-    .ok();
+
+    // Licence: a plain copy shipped into the install dir (AGPL §), plus an
+    // RTF the installer's licence-agreement page renders.
+    let license_src = workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt");
+    copy(&license_src, &staging.join("LICENSE.txt")).ok();
+    let license_rtf = std::fs::read_to_string(&license_src)
+        .map(|t| rtf_document(&t))
+        .unwrap_or_else(|_| {
+            rtf_document(
+                "GNU Affero General Public License v3.\n\
+                 See https://www.gnu.org/licenses/agpl-3.0.txt",
+            )
+        });
+    std::fs::write(staging.join("License.rtf"), license_rtf).map_err(io)?;
 
     let has_icon = cx.have_icon && icon::ico_path().exists();
     if has_icon {
@@ -67,6 +82,15 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         );
         return Ok(());
     }
+    // The `.wxs` references `WixUI_InstallDir` — no UI extension, no build.
+    if !wix_has_ext("WixToolset.UI.wixext") {
+        eprintln!(
+            "dtb-ke-bundle: WixToolset.UI.wixext not installed — wrote {} but did not build the .msi.\n\
+             Install it with `wix extension add -g WixToolset.UI.wixext` and re-run.",
+            wxs.display()
+        );
+        return Ok(());
+    }
 
     let msi = cx.out_dir.join(format!(
         "{}-{}-x64.msi",
@@ -78,24 +102,12 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         wxs.to_string_lossy().into_owned(),
         "-arch".into(),
         "x64".into(),
+        "-ext".into(),
+        "WixToolset.UI.wixext".into(),
         "-o".into(),
         msi.to_string_lossy().into_owned(),
     ];
-    // WiX v6+ refuses to run without the OSMF EULA accepted (WIX7015). The
-    // EULA id tracks the major version (`wix7` for v7, …); accept it inline so
-    // CI never blocks on the prompt. Harmless to omit on v4/v5, and the flag
-    // doesn't exist there, so only pass it when we see v6+.
-    if let Some(major) = wix_major()
-        && major >= 6
-    {
-        args.push("-acceptEula".into());
-        args.push(format!("wix{major}"));
-    }
-    // WiX UI extension for a basic install dialog set, when available.
-    if wix_has_ext("WixToolset.UI.wixext") {
-        args.push("-ext".into());
-        args.push("WixToolset.UI.wixext".into());
-    }
+    args.extend(wix_eula_args());
     try_run(
         "wix",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -117,14 +129,54 @@ fn wix_major() -> Option<u32> {
     text.trim().split(['.', '+', '-']).next()?.parse().ok()
 }
 
-/// Whether a WiX extension is installed (`wix extension list`).
+/// `-acceptEula wix<major>` for WiX v6+ (which blocks every subcommand behind
+/// the OSMF EULA — `WIX7015`), empty otherwise. Passed to every `wix` call
+/// that touches project state. A one-off acceptance, profile-independent —
+/// matters because CI runs `wix` as the LocalSystem service account.
+fn wix_eula_args() -> Vec<String> {
+    match wix_major() {
+        Some(major) if major >= 6 => vec!["-acceptEula".into(), format!("wix{major}")],
+        _ => vec![],
+    }
+}
+
+/// Whether a WiX extension is installed (`wix extension list --global`).
 fn wix_has_ext(name: &str) -> bool {
+    let mut args = vec!["extension".to_string(), "list".into(), "--global".into()];
+    args.extend(wix_eula_args());
     std::process::Command::new("wix")
-        .args(["extension", "list", "--global"])
+        .args(&args)
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(name))
         .unwrap_or(false)
+}
+
+/// Wrap plain text as a minimal RichEdit-compatible RTF document — the dialect
+/// the Windows Installer licence-agreement page can actually load (generic /
+/// LibreOffice RTF often won't; the `\*\generator Riched20` tag is the tell).
+fn rtf_document(text: &str) -> String {
+    let mut body = String::with_capacity(text.len() + text.len() / 8);
+    for line in text.replace('\r', "").split('\n') {
+        for ch in line.chars() {
+            match ch {
+                '\\' => body.push_str("\\\\"),
+                '{' => body.push_str("\\{"),
+                '}' => body.push_str("\\}"),
+                '\t' => body.push_str("\\tab "),
+                c if c.is_ascii_graphic() || c == ' ' => body.push(c),
+                c if (c as u32) < 0x80 => {} // other control chars — drop
+                c => body.push_str(&format!("\\u{}?", c as u32)),
+            }
+        }
+        body.push_str("\\par\n");
+    }
+    format!(
+        "{{\\rtf1\\ansi\\ansicpg1252\\deff0\\nouicompat\
+         {{\\fonttbl{{\\f0\\fnil\\fcharset0 Segoe UI;}}}}\
+         {{\\*\\generator Riched20 10.0.19041}}\\viewkind4\\uc1\n\
+         \\pard\\f0\\fs18\n{body}}}"
+    )
 }
 
 fn wxs_source(exe_name: &str, has_icon: bool) -> String {
@@ -142,7 +194,8 @@ fn wxs_source(exe_name: &str, has_icon: bool) -> String {
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
       Name="{name}"
       Manufacturer="{publisher}"
@@ -160,6 +213,28 @@ fn wxs_source(exe_name: &str, has_icon: bool) -> String {
 
     <Property Id="ARPHELPLINK" Value="{homepage}" />
     <Property Id="ARPURLINFOABOUT" Value="{homepage}" />{icon_block}
+
+    <!-- A real install wizard: welcome, licence agreement, folder chooser,
+         progress, finish (with a "launch now" checkbox). -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="{name} jetzt starten" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="LaunchApplication"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="[#AppExe]"
+                  Execute="immediate"
+                  Return="asyncNoWait"
+                  Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="{name}" />
@@ -181,7 +256,7 @@ fn wxs_source(exe_name: &str, has_icon: bool) -> String {
         </File>
       </Component>
       <Component Id="LicenseFile">
-        <File Id="License" Source="LICENSE.rtf.txt" KeyPath="yes" />
+        <File Id="License" Source="LICENSE.txt" KeyPath="yes" />
       </Component>
       <Component Id="RegistryEntries">
         <RegistryValue Root="HKMU"
@@ -216,4 +291,44 @@ fn xml_escape(s: &str) -> String {
 
 fn io(e: std::io::Error) -> String {
     format!("{e}")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wxs_wires_the_install_wizard() {
+        let wxs = super::wxs_source("App.exe", true);
+        for needle in [
+            r#"xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui""#,
+            r#"<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />"#,
+            r#"<WixVariable Id="WixUILicenseRtf" Value="License.rtf" />"#,
+            "WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT",
+            r#"Id="LaunchApplication""#,
+            r#"ExeCommand="[#AppExe]""#,
+            r#"Event="DoAction""#,
+        ] {
+            assert!(wxs.contains(needle), "wxs missing {needle:?}");
+        }
+        // Tags balance (crude well-formedness guard).
+        assert_eq!(
+            wxs.matches('<').count(),
+            wxs.matches('>').count(),
+            "unbalanced angle brackets"
+        );
+    }
+
+    #[test]
+    fn rtf_document_is_balanced_and_escaped() {
+        let rtf = super::rtf_document("line one\n{braces} and a \\ backslash\n\ttabbed");
+        assert!(rtf.starts_with("{\\rtf1"));
+        assert_eq!(
+            rtf.matches('{').count(),
+            rtf.matches('}').count(),
+            "unbalanced RTF groups"
+        );
+        assert!(rtf.contains("\\{braces\\}"));
+        assert!(rtf.contains("a \\\\ backslash"));
+        assert!(rtf.contains("\\tab tabbed"));
+        assert!(rtf.contains("\\par\n"));
+    }
 }
