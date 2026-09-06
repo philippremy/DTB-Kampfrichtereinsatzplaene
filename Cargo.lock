@@ -2040,7 +2040,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dtb-ke-bundle"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "image",
@@ -2053,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-crash"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "crash-context",
  "dtb-ke-log",
@@ -2067,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-export"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "comemo",
@@ -2090,7 +2090,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-log"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "colored",
  "log",
@@ -2098,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-persist"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "dtb-ke-types",
@@ -2114,14 +2114,14 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-resource"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "rust-embed",
 ]
 
 [[package]]
 name = "dtb-ke-types"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2130,7 +2130,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-ui"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "block2 0.6.2",
  "chacha20",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "dtb-ke-util"
-version = "0.1.0"
+version = "2.0.0"
 
 [[package]]
 name = "dunce"
