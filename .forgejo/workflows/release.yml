@@ -229,7 +229,9 @@ jobs:
         # RUNNERS.md's Windows-VM section for why this is needed at all.
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
       - name: Build
-        run: cargo dtb-ke-bundle bundle --release --target x86_64-pc-windows-gnullvm
+        run: |
+          cargo dtb-ke-bundle bundle --release --target x86_64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign + package + upload
         # Not shell: bash — no bash on this VM (see the Clean target/ step).
         env:
@@ -258,6 +260,7 @@ jobs:
           # The portable folder is the only dir here besides `wix/` (its name
           # carries the arch — x64 / arm64 — so don't filter on that).
           $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
@@ -321,7 +324,9 @@ jobs:
       - name: Disable CET shadow-stack enforcement for wix.exe
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
       - name: Cross-build for aarch64
-        run: cargo dtb-ke-bundle bundle --release --target aarch64-pc-windows-gnullvm
+        run: |
+          cargo dtb-ke-bundle bundle --release --target aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign + package + upload
         # Not shell: bash — no bash on this VM (see the Clean target/ step).
         env:
@@ -340,6 +345,7 @@ jobs:
           # The portable folder is the only dir here besides `wix/` (its name
           # carries the arch — x64 / arm64 — so don't filter on that).
           $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"

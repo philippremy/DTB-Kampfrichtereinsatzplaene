@@ -243,7 +243,9 @@ jobs:
         # RUNNERS.md's Windows-VM section for why this is needed at all.
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
       - name: Build
-        run: cargo dtb-ke-bundle bundle --release --formats none --target x86_64-pc-windows-gnullvm
+        run: |
+          cargo dtb-ke-bundle bundle --release --formats none --target x86_64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload
         # Not shell: bash — a bare Windows Server install has no bash at all
         # (Git for Windows, which bundles one, is never installed anywhere
@@ -273,9 +275,10 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          # dtb-ke-bundle names the portable folder "...-x64" regardless of
-          # the actual target (cosmetic only) — the wildcard still finds it.
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          # The portable folder is the only dir here besides `wix/` (its name
+          # carries the arch — x64 / arm64 — so don't filter on that).
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
@@ -331,7 +334,9 @@ jobs:
       - name: Disable CET shadow-stack enforcement for wix.exe
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
       - name: Cross-build for aarch64
-        run: cargo dtb-ke-bundle bundle --release --formats none --target aarch64-pc-windows-gnullvm
+        run: |
+          cargo dtb-ke-bundle bundle --release --formats none --target aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package + upload
         # See the windows-x86_64 job above for why this is PowerShell, not
         # shell: bash (there is no bash on this VM at all).
@@ -348,7 +353,9 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory -Filter "*-x64" | Select-Object -First 1).FullName
+          # See the windows-x86_64 job — portable folder = the dir that isn't wix/.
+          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "no portable folder under target\bundle\release — did the build step fail silently?" }
           Copy-Item "$srcDir\*.exe" "$folder"
           Copy-Item "$srcDir\LICENSE.txt" "$folder"
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
