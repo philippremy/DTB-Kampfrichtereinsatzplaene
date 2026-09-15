@@ -66,6 +66,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some("Exportieren".into()),
+            appears_transparent: true,
             ..Default::default()
         }),
         is_resizable: false,
@@ -188,159 +189,182 @@ impl SaveOptions {
 }
 
 impl Render for SaveOptions {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let kind = self.format.kind();
         let selected = FormatKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
         let error = self.standards_error();
+        let lead = crate::skin::titlebar::content_leading_inset(window);
 
         div()
             .track_focus(&self.focus)
-            .flex()
-            .flex_col()
-            .size_full()
-            .gap(px(12.))
-            .p(px(20.))
             .bg(c.background)
             .text_color(c.foreground)
+            .flex()
+            .flex_col()
             .child(
+                // Title strip — mirrors the preview window's; leaves room for
+                // the traffic lights on macOS.
                 div()
-                    .text_size(px(15.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(format!("„{}“ exportieren", self.name.trim())),
-            )
-            .child(field_label("Format", c.muted_foreground))
-            .child(
-                Segmented::new(
-                    "export-format",
-                    FormatKind::ALL.map(|k| match k {
-                        FormatKind::Pdf => "PDF",
-                        FormatKind::Docx => "DOCX",
-                        FormatKind::Blob => "Rohdaten",
-                    }),
-                    selected,
-                )
-                .on_select({
-                    let this = cx.entity().downgrade();
-                    move |idx, _window, cx| {
-                        this.update(cx, |this, cx| this.set_kind(FormatKind::ALL[idx], cx))
-                            .ok();
-                    }
-                }),
+                    .flex_none()
+                    .h(px(34.))
+                    .pl(lead)
+                    .pr(px(16.))
+                    .flex()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(c.border)
+                    .bg(c.chrome)
+                    .text_size(px(12.))
+                    .text_color(c.muted_foreground)
+                    .child("Exportieren"),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .min_h(px(0.))
-                    .gap(px(2.))
-                    .when(kind == FormatKind::Pdf, |el| {
-                        let conflicts = pdf_standard_conflicts(self.format.pdf_standards());
-                        el.child(field_label("Standards", c.muted_foreground))
-                            .children(PdfStandard::ALL.map(|s| {
-                                let checked = self.format.pdf_standards().contains(&s);
-                                let blocked = conflicts
-                                    .iter()
-                                    .find(|(c, _)| *c == s)
-                                    .map(|(_, r)| r.clone());
-                                let row = div()
-                                    .id(("std", s as usize))
-                                    .child(checkbox_row(
-                                        s.label(),
-                                        checked,
-                                        c.line_strong,
-                                        if blocked.is_some() {
-                                            c.line_strong
-                                        } else {
-                                            c.primary
-                                        },
-                                    ))
-                                    .children(blocked.clone().map(|r| {
-                                        div()
-                                            .ml(px(24.))
-                                            .text_size(px(11.))
-                                            .text_color(c.muted_foreground)
-                                            .child(r)
-                                    }));
-                                if blocked.is_some() {
-                                    row.opacity(0.55)
-                                } else {
-                                    row.cursor_pointer().on_click(cx.listener(
-                                        move |this, _, _w, cx| this.toggle_standard(s, cx),
-                                    ))
-                                }
-                            }))
-                            .children(error.clone().map(|e| {
-                                div()
-                                    .mt(px(6.))
-                                    .text_size(px(11.5))
-                                    .text_color(c.critical)
-                                    .child(e)
-                            }))
-                    })
-                    .when(kind == FormatKind::Docx, |el| {
-                        el.child(
-                            div()
-                                .id("embed-fonts")
-                                .cursor_pointer()
-                                .on_click(
-                                    cx.listener(|this, _, _w, cx| this.toggle_embed_fonts(cx)),
-                                )
-                                .child(checkbox_row(
-                                    "Schriften einbetten",
-                                    self.format.docx_embed_fonts(),
-                                    c.line_strong,
-                                    c.primary,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .mt(px(6.))
-                                .text_size(px(11.5))
-                                .text_color(c.muted_foreground)
-                                .child(
-                                    "Schriften einbetten macht die Datei eigenständig \
-                                     (~600 KB größer).",
-                                ),
-                        )
-                    })
-                    .when(kind == FormatKind::Blob, |el| {
-                        el.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(c.muted_foreground)
-                                .child(
-                                    "Kopie der Rohdaten zum Sichern oder Weitergeben. \
-                                     Kann über „Wettkampf importieren“ wieder eingelesen werden.",
-                                ),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(8.))
-                    .rounded(radius)
+                    .gap(px(12.))
+                    .p(px(20.))
                     .child(
-                        Button::new("cancel", "Abbrechen")
-                            .tone(ButtonTone::Ghost)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.cancel(cx);
-                                window.remove_window();
-                            })),
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(format!("„{}“ exportieren", self.name.trim())),
+                    )
+                    .child(field_label("Format", c.muted_foreground))
+                    .child(
+                        Segmented::new(
+                            "export-format",
+                            FormatKind::ALL.map(|k| match k {
+                                FormatKind::Pdf => "PDF",
+                                FormatKind::Docx => "DOCX",
+                                FormatKind::Blob => "Rohdaten",
+                            }),
+                            selected,
+                        )
+                        .on_select({
+                            let this = cx.entity().downgrade();
+                            move |idx, _window, cx| {
+                                this.update(cx, |this, cx| this.set_kind(FormatKind::ALL[idx], cx))
+                                    .ok();
+                            }
+                        }),
                     )
                     .child(
-                        Button::new("save", "Speichern unter …")
-                            .tone(ButtonTone::Primary)
-                            .disabled(self.picking || error.is_some())
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.choose_path(window, cx)),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .gap(px(2.))
+                            .when(kind == FormatKind::Pdf, |el| {
+                                let conflicts = pdf_standard_conflicts(self.format.pdf_standards());
+                                el.child(field_label("Standards", c.muted_foreground))
+                                    .children(PdfStandard::ALL.map(|s| {
+                                        let checked = self.format.pdf_standards().contains(&s);
+                                        let blocked = conflicts
+                                            .iter()
+                                            .find(|(c, _)| *c == s)
+                                            .map(|(_, r)| r.clone());
+                                        let row = div()
+                                            .id(("std", s as usize))
+                                            .child(checkbox_row(
+                                                s.label(),
+                                                checked,
+                                                c.line_strong,
+                                                if blocked.is_some() {
+                                                    c.line_strong
+                                                } else {
+                                                    c.primary
+                                                },
+                                            ))
+                                            .children(blocked.clone().map(|r| {
+                                                div()
+                                                    .ml(px(24.))
+                                                    .text_size(px(11.))
+                                                    .text_color(c.muted_foreground)
+                                                    .child(r)
+                                            }));
+                                        if blocked.is_some() {
+                                            row.opacity(0.55)
+                                        } else {
+                                            row.cursor_pointer().on_click(cx.listener(
+                                                move |this, _, _w, cx| this.toggle_standard(s, cx),
+                                            ))
+                                        }
+                                    }))
+                                    .children(error.clone().map(|e| {
+                                        div()
+                                            .mt(px(6.))
+                                            .text_size(px(11.5))
+                                            .text_color(c.critical)
+                                            .child(e)
+                                    }))
+                            })
+                            .when(kind == FormatKind::Docx, |el| {
+                                el.child(
+                                    div()
+                                        .id("embed-fonts")
+                                        .cursor_pointer()
+                                        .on_click(
+                                            cx.listener(|this, _, _w, cx| this.toggle_embed_fonts(cx)),
+                                        )
+                                        .child(checkbox_row(
+                                            "Schriften einbetten",
+                                            self.format.docx_embed_fonts(),
+                                            c.line_strong,
+                                            c.primary,
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .mt(px(6.))
+                                        .text_size(px(11.5))
+                                        .text_color(c.muted_foreground)
+                                        .child(
+                                            "Schriften einbetten macht die Datei eigenständig \
+                                            (~600 KB größer).",
+                                        ),
+                                )
+                            })
+                            .when(kind == FormatKind::Blob, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(c.muted_foreground)
+                                        .child(
+                                            "Kopie der Rohdaten zum Sichern oder Weitergeben. \
+                                            Kann über „Wettkampf importieren“ wieder eingelesen werden.",
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(8.))
+                            .rounded(radius)
+                            .child(
+                                Button::new("cancel", "Abbrechen")
+                                    .tone(ButtonTone::Ghost)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.cancel(cx);
+                                        window.remove_window();
+                                    })),
+                            )
+                            .child(
+                                Button::new("save", "Speichern unter …")
+                                    .tone(ButtonTone::Primary)
+                                    .disabled(self.picking || error.is_some())
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.choose_path(window, cx)),
+                                    ),
                             ),
-                    ),
+                    )
             )
     }
 }
