@@ -134,7 +134,11 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
                 .setActive(true);
             options
                 .leadingAnchor()
-                .constraintGreaterThanOrEqualToAnchor(&accessory.leadingAnchor())
+                .constraintGreaterThanOrEqualToAnchor_constant(&accessory.leadingAnchor(), 24.)
+                .setActive(true);
+            options
+                .trailingAnchor()
+                .constraintGreaterThanOrEqualToAnchor_constant(&accessory.trailingAnchor(), 24.)
                 .setActive(true);
             options
                 .widthAnchor()
