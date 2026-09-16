@@ -62,7 +62,8 @@ icons! {
     Download => "download.svg",
     ExternalLink => "external-link.svg",
     RotateCw => "rotate-cw.svg",
-    Document => "document.svg"
+    Document => "document.svg",
+    Calendar => "calendar.svg"
 }
 
 impl Icon {
