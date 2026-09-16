@@ -8,7 +8,8 @@
 //!     Info.plist
 //!     PkgInfo
 //!     MacOS/DTB Kampfrichtereinsatzpläne
-//!     Resources/AppIcon.icns
+//!     Resources/AppIcon.icns   — pre-Tahoe fallback (CFBundleIconFile)
+//!     Resources/Assets.car     — Liquid Glass icon (CFBundleIconName)
 //! ```
 //!
 //! The binary is self-contained (assets via RustEmbed, fonts embedded, the
@@ -50,16 +51,22 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     // already ≥ the floor. See `meta::MACOS_SDK_FLOOR` / RUNNERS.md.
     ensure_min_sdk(&exe)?;
 
-    // Icon.
-    let icon_file = if cx.have_icon && icon::icns_path().exists() {
+    // Icon. `AppIcon.icns` is the pre-Tahoe fallback (`CFBundleIconFile`);
+    // `Assets.car` carries the actual Liquid Glass icon that Tahoe+ Finder
+    // renders, looked up by name (`CFBundleIconName`) — both come from
+    // `cargo dtb-ke-bundle icons` (macOS-only, committed to
+    // `assets/icons/generated/`; see icon.rs's module doc).
+    let icon_name = if cx.have_icon && icon::icns_path().exists() && icon::assets_car_path().exists()
+    {
         copy(&icon::icns_path(), &contents.join("Resources/AppIcon.icns")).map_err(io)?;
-        Some("AppIcon")
+        copy(&icon::assets_car_path(), &contents.join("Resources/Assets.car")).map_err(io)?;
+        Some(icon::APP_ICON_NAME)
     } else {
         None
     };
 
     // Info.plist + PkgInfo.
-    std::fs::write(contents.join("Info.plist"), info_plist(icon_file)).map_err(io)?;
+    std::fs::write(contents.join("Info.plist"), info_plist(icon_name)).map_err(io)?;
     std::fs::write(contents.join("PkgInfo"), b"APPL????").map_err(io)?;
 
     // License, for good measure.
@@ -92,9 +99,20 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     Ok(())
 }
 
-fn info_plist(icon_file: Option<&str>) -> String {
-    let icon_entry = icon_file
-        .map(|f| format!("\t<key>CFBundleIconFile</key>\n\t<string>{f}</string>\n"))
+fn info_plist(icon_name: Option<&str>) -> String {
+    // `CFBundleIconFile` — the legacy `.icns`, used pre-Tahoe (and by any
+    // tooling that still only understands flat icon files). `CFBundleIconName`
+    // — the Liquid Glass asset inside `Assets.car`, used by Tahoe+ Finder.
+    // Both name the same on-disk basename here (`AppIcon`); Apple doesn't
+    // require them to match (e.g. Blender ships `..._legacy.icns` /
+    // `..._liquid_glass` as two different names) — see icon.rs's module doc.
+    let icon_entry = icon_name
+        .map(|f| {
+            format!(
+                "\t<key>CFBundleIconFile</key>\n\t<string>{f}</string>\n\
+                 \t<key>CFBundleIconName</key>\n\t<string>{f}</string>\n"
+            )
+        })
         .unwrap_or_default();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>

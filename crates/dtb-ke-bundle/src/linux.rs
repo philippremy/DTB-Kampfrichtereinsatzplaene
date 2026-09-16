@@ -553,10 +553,6 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
             copy(&png, &appdir.join(format!("{}.png", meta::RDNS_ID))).map_err(io)?;
             copy(&png, &appdir.join(".DirIcon")).map_err(io)?;
         }
-        let svg = icon::scalable_svg_path();
-        if svg.exists() {
-            copy(&svg, &appdir.join(format!("{}.svg", meta::RDNS_ID))).map_err(io)?;
-        }
     }
 
     if !have("appimagetool") {

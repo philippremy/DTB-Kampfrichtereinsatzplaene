@@ -77,8 +77,17 @@ pub fn run(opts: Options) -> Result<(), String> {
         binary
     };
 
-    // 2. Icons (best-effort — a missing master just means no icon).
-    let have_icon = icon::generate()?;
+    // 2. Icons — already generated and committed to `assets/icons/generated/`
+    // (see icon.rs's module doc): regeneration needs macOS/Xcode 26, so it
+    // only ever happens via the standalone `icons` command, never here.
+    let have_icon = icon::available();
+    if !have_icon {
+        eprintln!(
+            "dtb-ke-bundle: no generated icons at {} — bundling without an icon \
+             (run `cargo dtb-ke-bundle icons` on macOS and commit the result)",
+            icon::generated_dir().display()
+        );
+    }
 
     // 3. Package for the host OS.
     let out_dir = bundle_dir(opts.release);

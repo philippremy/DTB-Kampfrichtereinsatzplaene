@@ -11,7 +11,9 @@
 //!
 //!   cargo dtb-ke-bundle build   [--release] [-- <extra cargo args>]
 //!   cargo dtb-ke-bundle helper  [--release]        just (re)stage the helper
-//!   cargo dtb-ke-bundle icons                      regenerate icon variants
+//!   cargo dtb-ke-bundle icons                      regenerate icon variants (macOS only,
+//!                                                   see icon.rs; writes + commits to
+//!                                                   assets/icons/generated/)
 //!   cargo dtb-ke-bundle bundle  [--debug] [--formats a,b,c] [--sign <id>]
 //!   cargo dtb-ke-bundle debug-info [--universal | --target <t>] <out.tar.gz>
 //!     package `[profile.release] split-debuginfo = "packed"`'s sidecar —
@@ -57,7 +59,10 @@ fn main() {
             run("cargo", &args);
         }
         "icons" => match icon::generate() {
-            Ok(true) => eprintln!("dtb-ke-bundle: icons written to target/bundle/icon/"),
+            Ok(true) => eprintln!(
+                "dtb-ke-bundle: icons written to {} — commit the result",
+                icon::generated_dir().display()
+            ),
             Ok(false) => exit(1),
             Err(e) => {
                 eprintln!("dtb-ke-bundle: {e}");

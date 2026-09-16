@@ -609,10 +609,11 @@ real CI failures rather than review:
 **The standing rule going forward**: a shelled external command in
 `dtb-ke-bundle` is only acceptable when it is a genuinely platform-native
 tool with no practical portable alternative (`codesign`, `wix`, `iconutil`,
-`lipo`, `rpmbuild`, `appimagetool`) **and** the call site only ever executes
-on that tool's own platform (gated by a `cfg!(target_os = …)` check, the
-same way `icon.rs::build_icns` skips `iconutil` outright on non-macOS
-hosts). Anything invoked from code that can run on *any* of the three CI
+`actool`, `lipo`, `rpmbuild`, `appimagetool`) **and** the call site only ever
+executes on that tool's own platform (gated by a `cfg!(target_os = …)` check,
+the same way `icon.rs::generate` refuses to run `actool`/`iconutil` outright
+on non-macOS hosts — the `icons` command is macOS-only full stop; see its
+module doc). Anything invoked from code that can run on *any* of the three CI
 hosts — which includes all of `codeberg.rs` and `manifest.rs`, since every
 job in every workflow calls into them — gets a real Rust dependency
 instead, even when the shelled-out tool would probably have been present.

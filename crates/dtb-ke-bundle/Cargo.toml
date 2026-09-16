@@ -13,9 +13,10 @@ path = "src/main.rs"
 # `<release date>` in the AppStream metainfo (linux.rs) — appstreamcli
 # rejects a release with no date and appimagetool treats that as fatal.
 chrono = { workspace = true }
-# Icon pipeline: rasterise the SVG master, resize to every target size.
+# Icon pipeline: resize the flat AppIcon.png (extracted from the Icon
+# Composer master's compiled fallback .icns — see icon.rs) to every target
+# size for the Windows .ico and Linux hicolor PNGs.
 image = { workspace = true, features = ["png"] }
-resvg.workspace = true
 # Codeberg/Forgejo release management (`codeberg` subcommand — release
 # create/replace, JSON asset listing, and file upload — all via ureq
 # directly, no shelling out to curl/sha256sum/shasum. This crate's whole

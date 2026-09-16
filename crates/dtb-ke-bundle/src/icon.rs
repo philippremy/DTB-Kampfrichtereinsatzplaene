@@ -1,139 +1,213 @@
-//! Icon pipeline: one master image → `.icns` (macOS), `.ico` (Windows) and a
-//! freedesktop hicolor PNG set (Linux).
+//! Icon pipeline: the master is an Xcode 26 **Icon Composer** package —
+//! `assets/icons/AppIcon.icon`, a `.icon` bundle of `icon.json` (layers,
+//! materials, the Liquid Glass "glass"/shadow/translucency settings) plus its
+//! source images — compiled by Apple's own `actool`/`iconutil` (no portable
+//! equivalent; Icon Composer's rendering isn't something `resvg`/`image` can
+//! reproduce) into every shipped platform icon:
 //!
-//! The master lives at the workspace root — `assets/icons/AppIcon.svg`
-//! (preferred) or a square `assets/icons/AppIcon.png` of at least 1024×1024 —
-//! shared with `dtb-ke-ui` (which embeds the PNG for its About window).
-//! Everything else is derived and cached under `target/bundle/icon/`.
+//! - `AppIcon.icns` — a fully rasterised, multi-size **standalone** icon,
+//!   flattened out of the Liquid Glass layers. This is the pre-Tahoe
+//!   `CFBundleIconFile` fallback (see `macos.rs`).
+//! - `Assets.car` — the compiled asset catalog carrying the *actual* Liquid
+//!   Glass icon (materials, glass layers, translucency) that Tahoe+ Finder
+//!   renders. Embedded at `Contents/Resources/Assets.car`; looked up via
+//!   `CFBundleIconName` (must equal [`APP_ICON_NAME`], the `--app-icon` value
+//!   below — same two-key split as e.g. Blender's `.app`:
+//!   `CFBundleIconFile` → `..._legacy.icns`, `CFBundleIconName` → the
+//!   Liquid Glass asset name).
+//! - `AppIcon.png` — a flat 1024×1024 raster, extracted from the fallback
+//!   `.icns`'s largest rendition. The one bridge back to plain pixels: every
+//!   other derivation (Windows `.ico`, Linux hicolor PNGs, `dtb-ke-ui`'s
+//!   About window) is pure Rust (`image`) working from this file, so only
+//!   *this* step needs macOS tooling.
+//!
+//! Because Icon Composer icons can only be compiled on a Mac with Xcode 26+
+//! (`actool`'s `--standalone-icon-behavior`/Liquid Glass support), unlike the
+//! old flat SVG/PNG master this can't be regenerated on every host at build
+//! time. So the outputs are **committed to `assets/icons/generated/`** as
+//! regular, git-tracked files rather than a `target/`-cached artifact:
+//! `cargo dtb-ke-bundle bundle` on Windows/Linux just consumes what's already
+//! checked in ([`available`]); only `cargo dtb-ke-bundle icons`, macOS-only,
+//! regenerates them — run it and commit the result whenever
+//! `assets/icons/AppIcon.icon` changes.
 
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::process::Command;
 
 use image::{DynamicImage, ImageFormat, RgbaImage, imageops::FilterType};
 
 use crate::meta;
-use crate::util::workspace_root;
+use crate::util::{self, workspace_root};
 
-/// The cache directory for derived icons.
-pub fn cache_dir() -> PathBuf {
-    workspace_root().join("target/bundle/icon")
+/// The Icon Composer master package.
+fn master_dir() -> PathBuf {
+    workspace_root().join("assets/icons/AppIcon.icon")
 }
+
+/// Where every derived, git-tracked icon output lives.
+pub fn generated_dir() -> PathBuf {
+    workspace_root().join("assets/icons/generated")
+}
+
+/// A scratch directory for `actool`/`iconutil`'s own intermediate output —
+/// deliberately *outside* [`generated_dir`] so a crash mid-generation can
+/// never leave stray files for `git add` to pick up.
+fn scratch_dir() -> PathBuf {
+    workspace_root().join("target/bundle/icon-scratch")
+}
+
+/// The name passed to `actool --app-icon`, and thus the compiled asset's
+/// name inside `Assets.car` — must equal `CFBundleIconName` in `macos.rs`.
+pub const APP_ICON_NAME: &str = "AppIcon";
 
 pub fn icns_path() -> PathBuf {
-    cache_dir().join("AppIcon.icns")
+    generated_dir().join("AppIcon.icns")
+}
+pub fn assets_car_path() -> PathBuf {
+    generated_dir().join("Assets.car")
+}
+/// The flat 1024×1024 raster master (see the module doc).
+pub fn flat_png_path() -> PathBuf {
+    generated_dir().join("AppIcon.png")
 }
 pub fn ico_path() -> PathBuf {
-    cache_dir().join("AppIcon.ico")
+    generated_dir().join("AppIcon.ico")
 }
 pub fn hicolor_dir() -> PathBuf {
-    cache_dir().join("hicolor")
+    generated_dir().join("hicolor")
 }
 /// A plain 512×512 PNG (AppImage `.DirIcon`, generic use).
 pub fn png_512_path() -> PathBuf {
-    cache_dir().join("icon-512.png")
-}
-/// The master SVG, copied verbatim (only when the master is SVG).
-pub fn scalable_svg_path() -> PathBuf {
-    cache_dir().join("icon.svg")
+    generated_dir().join("icon-512.png")
 }
 
-/// The freedesktop icon sizes we ship (px). `scalable/` carries the SVG too.
+/// The freedesktop icon sizes we ship (px).
 const HICOLOR_SIZES: &[u32] = &[16, 22, 24, 32, 48, 64, 96, 128, 192, 256, 512];
 /// Sizes packed into the multi-resolution `.ico`.
 const ICO_SIZES: &[u32] = &[16, 24, 32, 48, 64, 128, 256];
 
-/// Generate every icon output from the master. Returns `Ok(false)` if no master
-/// is present (callers may proceed without an icon).
-pub fn generate() -> Result<bool, String> {
-    let Some(master) = Master::find()? else {
-        return Ok(false);
-    };
-    std::fs::create_dir_all(cache_dir()).map_err(io("icon cache dir"))?;
+/// Whether the committed generated icons are present. Checked by `bundle` on
+/// every host — Windows/Linux never regenerate, they only consume what
+/// [`generate`] (macOS-only) already wrote and a human committed.
+pub fn available() -> bool {
+    flat_png_path().exists()
+}
 
-    if let Master::Svg(bytes) = &master {
-        std::fs::write(scalable_svg_path(), bytes).map_err(io("scalable icon"))?;
+/// Regenerate every icon output from the Icon Composer master. **macOS
+/// only** — see the module doc for why there is no fallback path on
+/// Windows/Linux. Writes into [`generated_dir`], which is git-tracked;
+/// callers are expected to `git add` + commit the result.
+pub fn generate() -> Result<bool, String> {
+    if !cfg!(target_os = "macos") {
+        return Err(
+            "icon generation needs Xcode 26's `actool`/`iconutil` (Icon Composer support) — \
+             macOS only. Run `cargo dtb-ke-bundle icons` on a Mac with Xcode 26+ and commit \
+             assets/icons/generated/."
+                .into(),
+        );
     }
-    write_png(&master.rasterise(512)?, &png_512_path())?;
-    build_icns(&master)?;
-    build_ico(&master)?;
-    build_hicolor(&master)?;
+
+    let master = master_dir();
+    if !master.exists() {
+        eprintln!(
+            "dtb-ke-bundle: no icon master at {} — bundling without an icon",
+            master.display()
+        );
+        return Ok(false);
+    }
+
+    let scratch = scratch_dir();
+    util::fresh_dir(&scratch).map_err(io("icon scratch dir"))?;
+
+    run_actool(&master, &scratch)?;
+
+    let out_dir = generated_dir();
+    util::fresh_dir(&out_dir).map_err(io("icon output dir"))?;
+    std::fs::rename(scratch.join("AppIcon.icns"), icns_path()).map_err(io("AppIcon.icns"))?;
+    std::fs::rename(scratch.join("Assets.car"), assets_car_path()).map_err(io("Assets.car"))?;
+
+    let flat = extract_flat_png(&scratch)?;
+    util::remove(&scratch).ok();
+
+    write_png(&flat.resize_exact(512, 512, FilterType::Lanczos3).to_rgba8(), &png_512_path())?;
+    build_ico(&flat)?;
+    build_hicolor(&flat)?;
+
     Ok(true)
 }
 
-/// The master art, in whichever form it was provided.
-enum Master {
-    Svg(Vec<u8>),
-    Raster(DynamicImage),
+/// Compile the `.icon` master into `scratch/{AppIcon.icns,Assets.car}`.
+///
+/// `actool` can report success (exit 0) while writing nothing at all — e.g.
+/// omitting `--output-partial-info-plist` degrades app-icon compilation to a
+/// silent no-op "notice" rather than an error — so the real check is that the
+/// two expected output files actually landed, not just the exit status.
+/// `--standalone-icon-behavior all` is required for a *complete* fallback
+/// `.icns`: the default only emits a couple of representative sizes (16/128),
+/// not something fit to ship as the pre-Tahoe icon.
+fn run_actool(master: &std::path::Path, scratch: &std::path::Path) -> Result<(), String> {
+    let partial_plist = scratch.join("partial.plist");
+    let output = Command::new("actool")
+        .args([
+            "--compile",
+            &scratch.to_string_lossy(),
+            "--platform",
+            "macosx",
+            "--minimum-deployment-target",
+            meta::MACOS_MIN_VERSION,
+            "--app-icon",
+            APP_ICON_NAME,
+            "--standalone-icon-behavior",
+            "all",
+            "--errors",
+            "--warnings",
+            "--notices",
+            "--output-partial-info-plist",
+        ])
+        .arg(&partial_plist)
+        .arg(master)
+        .current_dir(workspace_root())
+        .output()
+        .map_err(|e| format!("failed to spawn actool: {e}"))?;
+
+    if !output.status.success() || !scratch.join("AppIcon.icns").exists() {
+        return Err(format!(
+            "actool did not produce AppIcon.icns/Assets.car (exit {}):\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    Ok(())
 }
 
-impl Master {
-    /// Look for `assets/icons/AppIcon.{svg,png}` at the workspace root (svg wins).
-    fn find() -> Result<Option<Self>, String> {
-        let dir = workspace_root().join("assets/icons");
-        let svg = dir.join("AppIcon.svg");
-        let png = dir.join("AppIcon.png");
-        if svg.exists() {
-            let bytes = std::fs::read(&svg).map_err(io("AppIcon.svg"))?;
-            return Ok(Some(Master::Svg(bytes)));
-        }
-        if png.exists() {
-            let img = image::open(&png).map_err(|e| format!("AppIcon.png: {e}"))?;
-            let (w, h) = (img.width(), img.height());
-            if w != h {
-                eprintln!(
-                    "dtb-ke-bundle: warning — AppIcon.png is {w}×{h}, not square; it will be stretched"
-                );
-            }
-            if w < 1024 {
-                eprintln!(
-                    "dtb-ke-bundle: warning — AppIcon.png is only {w}px; 1024px or an SVG is recommended"
-                );
-            }
-            return Ok(Some(Master::Raster(img)));
-        }
-        eprintln!(
-            "dtb-ke-bundle: no icon master — drop `AppIcon.svg` or `AppIcon.png` into \
-             assets/icons/ (see assets/README.md); bundling without an icon"
-        );
-        Ok(None)
-    }
+/// Convert the fallback `.icns` to an `.iconset` and pull out its largest
+/// (1024×1024, `icon_512x512@2x.png`) rendition as a flat `DynamicImage`.
+fn extract_flat_png(scratch: &std::path::Path) -> Result<DynamicImage, String> {
+    let iconset = scratch.join("AppIcon.iconset");
+    util::try_run(
+        "iconutil",
+        &[
+            "--convert",
+            "iconset",
+            "--output",
+            &iconset.to_string_lossy(),
+            &icns_path().to_string_lossy(),
+        ],
+        &workspace_root(),
+    )
+    .map_err(|e| format!("iconutil: {e}"))?;
 
-    /// A square RGBA bitmap `size`×`size`.
-    fn rasterise(&self, size: u32) -> Result<RgbaImage, String> {
-        match self {
-            Master::Raster(img) => Ok(img
-                .resize_exact(size, size, FilterType::Lanczos3)
-                .to_rgba8()),
-            Master::Svg(bytes) => render_svg(bytes, size),
-        }
-    }
+    let largest = iconset.join("icon_512x512@2x.png");
+    std::fs::copy(&largest, flat_png_path()).map_err(io("flat AppIcon.png"))?;
+    image::open(&largest).map_err(|e| format!("re-reading extracted AppIcon.png: {e}"))
 }
 
-/// Rasterise an SVG into a `size`×`size` RGBA bitmap, fitting the artwork
-/// centred with its aspect preserved.
-fn render_svg(svg: &[u8], size: u32) -> Result<RgbaImage, String> {
-    let options = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_data(svg, &options).map_err(|e| format!("icon SVG: {e}"))?;
-    let svg_size = tree.size();
-    let (sw, sh) = (svg_size.width(), svg_size.height());
-    if sw <= 0.0 || sh <= 0.0 {
-        return Err("icon SVG has zero size".into());
-    }
-
-    let scale = (size as f32 / sw).min(size as f32 / sh);
-    let (dw, dh) = (sw * scale, sh * scale);
-    let (tx, ty) = ((size as f32 - dw) / 2.0, (size as f32 - dh) / 2.0);
-
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
-        .ok_or_else(|| "icon: pixmap allocation failed".to_string())?;
-    resvg::render(
-        &tree,
-        resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty),
-        &mut pixmap.as_mut(),
-    );
-
-    RgbaImage::from_raw(size, size, pixmap.take())
-        .ok_or_else(|| "icon: pixmap → image conversion failed".to_string())
+/// A square RGBA bitmap `size`×`size`, resized from the flat master.
+fn rasterise(master: &DynamicImage, size: u32) -> RgbaImage {
+    master
+        .resize_exact(size, size, FilterType::Lanczos3)
+        .to_rgba8()
 }
 
 /// PNG-encode an RGBA bitmap.
@@ -145,60 +219,11 @@ fn png_bytes(img: &RgbaImage) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn write_png(img: &RgbaImage, path: &Path) -> Result<(), String> {
+fn write_png(img: &RgbaImage, path: &std::path::Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io("icon dir"))?;
     }
     std::fs::write(path, png_bytes(img)?).map_err(io("icon PNG"))
-}
-
-// ── macOS .icns ─────────────────────────────────────────────────────────────
-
-/// Build `AppIcon.icns` via `iconutil` from a generated `.iconset` directory.
-/// (`iconutil` is a macOS built-in; the `.app` is only ever bundled on macOS.)
-fn build_icns(master: &Master) -> Result<(), String> {
-    if !cfg!(target_os = "macos") {
-        eprintln!("dtb-ke-bundle: skipping .icns (iconutil is macOS-only)");
-        return Ok(());
-    }
-    let set = cache_dir().join("AppIcon.iconset");
-    crate::util::fresh_dir(&set).map_err(io("iconset dir"))?;
-
-    // (base size, retina?) → file name `icon_<b>x<b>[@2x].png`
-    for &(base, retina) in &[
-        (16u32, false),
-        (16, true),
-        (32, false),
-        (32, true),
-        (128, false),
-        (128, true),
-        (256, false),
-        (256, true),
-        (512, false),
-        (512, true),
-    ] {
-        let px = if retina { base * 2 } else { base };
-        let name = if retina {
-            format!("icon_{base}x{base}@2x.png")
-        } else {
-            format!("icon_{base}x{base}.png")
-        };
-        write_png(&master.rasterise(px)?, &set.join(name))?;
-    }
-
-    crate::util::try_run(
-        "iconutil",
-        &[
-            "-c",
-            "icns",
-            &set.to_string_lossy(),
-            "-o",
-            &icns_path().to_string_lossy(),
-        ],
-        &workspace_root(),
-    )?;
-    crate::util::remove(&set).ok();
-    Ok(())
 }
 
 // ── Windows .ico ────────────────────────────────────────────────────────────
@@ -206,10 +231,10 @@ fn build_icns(master: &Master) -> Result<(), String> {
 /// Build a multi-resolution `.ico`. Each entry is a PNG (the ICO format has
 /// allowed PNG-compressed images since Windows Vista, and WiX / modern Windows
 /// read them fine).
-fn build_ico(master: &Master) -> Result<(), String> {
+fn build_ico(master: &DynamicImage) -> Result<(), String> {
     let images: Vec<(u32, Vec<u8>)> = ICO_SIZES
         .iter()
-        .map(|&s| Ok((s, png_bytes(&master.rasterise(s)?)?)))
+        .map(|&s| Ok((s, png_bytes(&rasterise(master, s))?)))
         .collect::<Result<_, String>>()?;
 
     let count = images.len() as u16;
@@ -242,23 +267,17 @@ fn build_ico(master: &Master) -> Result<(), String> {
 
 // ── Linux hicolor ──────────────────────────────────────────────────────────
 
-fn build_hicolor(master: &Master) -> Result<(), String> {
+fn build_hicolor(master: &DynamicImage) -> Result<(), String> {
     let root = hicolor_dir();
-    crate::util::remove(&root).ok();
+    util::remove(&root).ok();
     for &size in HICOLOR_SIZES {
         let dir = root.join(format!("{size}x{size}")).join("apps");
         std::fs::create_dir_all(&dir).map_err(io("hicolor dir"))?;
-        write_png(
-            &master.rasterise(size)?,
-            &dir.join(format!("{}.png", meta::RDNS_ID)),
-        )?;
+        write_png(&rasterise(master, size), &dir.join(format!("{}.png", meta::RDNS_ID)))?;
     }
-    if let Master::Svg(bytes) = master {
-        let dir = root.join("scalable").join("apps");
-        std::fs::create_dir_all(&dir).map_err(io("hicolor scalable dir"))?;
-        std::fs::write(dir.join(format!("{}.svg", meta::RDNS_ID)), bytes)
-            .map_err(io("scalable icon"))?;
-    }
+    // No `scalable/apps/<id>.svg`: unlike the old flat SVG master, a Liquid
+    // Glass Icon Composer icon is composited from multiple layers/materials —
+    // there's no single self-contained vector to hand freedesktop.
     Ok(())
 }
 
