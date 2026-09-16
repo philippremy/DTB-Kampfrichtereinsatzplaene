@@ -309,8 +309,6 @@ pub enum ExportError {
     Serialize(#[from] serde_json::Error),
     #[error("incompatible PDF standards: {0}")]
     PdfStandards(String),
-    #[error("{0} ist noch nicht verfügbar")]
-    NotImplemented(&'static str),
 }
 
 /// Check whether a combination of [`PdfStandard`]s is mutually compatible.
