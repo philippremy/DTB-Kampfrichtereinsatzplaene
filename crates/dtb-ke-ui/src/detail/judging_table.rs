@@ -11,10 +11,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, EntityId, Focusable as _, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, anchored, canvas, deferred, div,
-    point, prelude::FluentBuilder, px,
+    App, AppContext, Bounds, Context, CursorStyle, Entity, EntityId, Focusable as _,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, anchored,
+    canvas, deferred, div, point, prelude::FluentBuilder, px,
 };
 use gpui_base::input::{InputEvent, InputState};
 
@@ -474,7 +474,24 @@ impl Render for JudgingTableCard {
                         div()
                             .id("drag-handle")
                             .flex_none()
-                            .cursor_move()
+                            // Open hand while just hovering/about to grab;
+                            // `.cursor_move()` is `ClosedHand` despite the
+                            // name (a gpui naming trap) — that showed the
+                            // "grabbing" cursor before any drag had actually
+                            // started. The drag's own cursor is a *separate*
+                            // mechanism: it's captured once, from this same
+                            // style, the instant the drag begins (`AnyDrag::
+                            // cursor_style`, read off this div's style at
+                            // that moment) and then overrides every other
+                            // cursor for the rest of the gesture — so it
+                            // would otherwise stay `OpenHand` for the whole
+                            // drag too. `on_drag_move` flips it to
+                            // `ClosedHand` on the first move after the drag
+                            // starts (`cx.active_drag` only exists by then;
+                            // doing this from `on_drag`'s own constructor
+                            // below is too early — it runs before gpui sets
+                            // `cx.active_drag`, so the setter would no-op).
+                            .cursor_grab()
                             .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
                             .on_drag(
                                 DragTable {
@@ -484,7 +501,12 @@ impl Render for JudgingTableCard {
                                 |dragged: &DragTable, _pos, _window, cx| {
                                     cx.new(|_| dragged.clone())
                                 },
-                            ),
+                            )
+                            .on_drag_move::<DragTable>(|_, window, cx| {
+                                if cx.active_drag_cursor_style() != Some(CursorStyle::ClosedHand) {
+                                    cx.set_active_drag_cursor_style(CursorStyle::ClosedHand, window);
+                                }
+                            }),
                     )
                     .child(
                         div()
