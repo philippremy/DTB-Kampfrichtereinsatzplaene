@@ -12,9 +12,14 @@
 //! `self_update`) so the toast can show version / date / size and honour
 //! "skipped" versions. The **install** hands off to `self_update`'s
 //! `manifest::Update`, which re-fetches, downloads the target-matched archive,
-//! verifies the signature + digest, and swaps the macOS `.app` bundle / Windows
-//! folder as one unit. Linux (`.deb` / `.rpm` / AppImage) can't be swapped
-//! safely from in-process, so there the toast just opens the release page.
+//! verifies the signature + digest, and installs it: on macOS, bundle mode
+//! swaps the whole `.app` directory as one unit (`fs::rename`); on Windows,
+//! single-binary mode replaces just the running `.exe` via the `self-replace`
+//! crate — *not* bundle mode, which used to swap the whole install directory
+//! the same way macOS does, but reliably failed with `ERROR_SHARING_VIOLATION`
+//! on a real report (see `run_install`'s comment for the full story). Linux
+//! (`.deb` / `.rpm` / AppImage) can't be swapped safely from in-process, so
+//! there the toast just opens the release page.
 //!
 //! Everything network / filesystem runs on `cx.background_executor()`.
 
@@ -648,26 +653,68 @@ fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(
     #[cfg(target_os = "macos")]
     builder.bundle_path_in_archive(format!("{BIN_NAME}.app"));
 
+    // Windows: single-binary mode, *not* bundle mode — this used to swap the
+    // whole install directory the same way macOS does, but a real report
+    // showed that swap reliably fails with `ERROR_SHARING_VIOLATION` ("the
+    // process cannot access the file because it is being used by another
+    // process", os error 32), consistently, not just as an occasional
+    // transient lock (confirmed with a one-shot diagnostic: the running exe
+    // and every other file already in the install directory were freely
+    // lockable/renameable right before the install step ran — so the file
+    // that ends up locked has to be the *freshly extracted* one). The
+    // likely reason: bundle mode's `install_bundle` stages the newly
+    // extracted files *inside the install directory's own parent*
+    // (`C:\Program Files\`, via `tempfile::TempDir::new_in`), where
+    // antivirus/indexer real-time scanning of a brand-new executable is far
+    // more aggressive than in `%TEMP%` — and the swap itself is a bare,
+    // un-hardened `fs::rename`. Single-binary mode instead stages the
+    // extracted exe in `%TEMP%` and replaces the running one via the
+    // `self-replace` crate's copy + `FILE_FLAG_DELETE_ON_CLOSE` +
+    // helper-process technique, purpose-built for exactly this Windows
+    // problem (see `self-replace`'s own crate docs). This app doesn't need
+    // a whole-directory swap anyway: `LICENSE.txt`, the only other file the
+    // portable archive carries, is static AGPL licence text, identical in
+    // every release — only the `.exe` is actually versioned. The archive
+    // still wraps it in a `BIN_NAME/` folder (unchanged from bundle mode,
+    // see `dtb-ke-bundle::windows`), so `bin_path_in_archive` is set
+    // explicitly to that nested path rather than the bare name `bin_name`
+    // would otherwise auto-derive.
     #[cfg(target_os = "windows")]
-    {
-        builder.bundle_path_in_archive(BIN_NAME);
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                builder.bundle_install_path(dir);
-            }
-        }
-    }
+    builder.bin_path_in_archive(format!(
+        "{BIN_NAME}/{BIN_NAME}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
 
     let update = builder
         .build()
         .map_err(|e| UpdateError::Build(e.to_string()))?;
-    match update.update() {
-        Ok(status) => {
-            log::info!("self_update: {status}");
-            Ok(())
+
+    // A small retry as a safety net for a genuinely transient IO failure —
+    // self_update has none of its own. Not expected to be load-bearing on
+    // Windows any more now that the install goes through `self-replace`
+    // rather than bundle mode's bare `fs::rename`, but cheap to keep.
+    #[cfg(target_os = "windows")]
+    const ATTEMPTS: u32 = 2;
+    #[cfg(not(target_os = "windows"))]
+    const ATTEMPTS: u32 = 1;
+
+    for attempt in 1..=ATTEMPTS {
+        match update.update() {
+            Ok(status) => {
+                log::info!("self_update: {status}");
+                return Ok(());
+            }
+            Err(self_update::Error::Io(err)) if attempt < ATTEMPTS => {
+                log::warn!(
+                    "update install attempt {attempt}/{ATTEMPTS} hit a filesystem error, \
+                     retrying shortly: {err}"
+                );
+                std::thread::sleep(Duration::from_millis(300 * u64::from(attempt)));
+            }
+            Err(err) => return Err(friendly_install_error(err)),
         }
-        Err(err) => Err(friendly_install_error(err)),
     }
+    unreachable!("the loop above always returns on its final iteration")
 }
 
 /// Turn a `self_update::Error` into an [`UpdateError`] for the toast.

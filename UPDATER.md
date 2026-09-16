@@ -235,11 +235,26 @@ since every upload in a given workflow run targets the same `release_id`(s).
   backends::manifest::Update` re-fetches, downloads the archive
   (`asset_priority` chooses it — native triple first, then a
   `universal-apple-darwin` fat archive on macOS), verifies its zipsign
-  signature and manifest digest (both, on both channels), and swaps the
-  `.app` bundle / Windows folder as one unit. Download progress is reported
-  through `self_update`'s `progress_callback` into `State::Installing { progress }`
-  and drawn as a bar in the toast card. The app then flushes every open
-  competition and re-execs the new binary.
+  signature and manifest digest (both, on both channels), and installs it —
+  **macOS**: bundle mode swaps the whole `.app` directory as one unit
+  (`fs::rename`). **Windows**: single-binary mode replaces just the running
+  `.exe` via the `self-replace` crate (copy + `FILE_FLAG_DELETE_ON_CLOSE` +
+  a relaunched helper process) — *not* bundle mode, which used to swap the
+  whole install directory the same way macOS does, but a real report showed
+  that swap reliably fails with `ERROR_SHARING_VIOLATION` ("the process
+  cannot access the file... os error 32"): bundle mode's `install_bundle`
+  stages the newly extracted files *inside the install directory's own
+  parent* (`C:\Program Files\`), where antivirus/indexer real-time scanning
+  of a brand-new executable is far more aggressive than in `%TEMP%` (where
+  single-binary mode stages instead), and the swap itself is a bare,
+  un-hardened `fs::rename` rather than `self-replace`'s Windows-specific
+  workaround. `LICENSE.txt` (the only other file the portable archive
+  carries, alongside the `.exe`) is static AGPL licence text, identical in
+  every release, so not swapping it in-place on update is a non-issue — see
+  `updater/mod.rs::run_install`'s comment for the full story. Download
+  progress is reported through `self_update`'s `progress_callback` into
+  `State::Installing { progress }` and drawn as a bar in the toast card. The
+  app then flushes every open competition and re-execs the new binary.
 - **macOS:** when the downloaded `.app` is **Developer-ID signed and
   notarized** (a Release build with `MACOS_SIGN_IDENTITY` set), Gatekeeper
   trusts it on relaunch without a fresh quarantine prompt. An ad-hoc-signed
