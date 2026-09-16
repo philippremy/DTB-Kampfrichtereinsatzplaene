@@ -585,16 +585,12 @@ impl RemarksSection {
                     .size(px(26.))
                     .rounded(radius)
                     .border_1()
-                    .border_color(if current_color.is_some() {
-                        c.primary
-                    } else {
-                        c.border
-                    })
-                    .bg(if current_color.is_some() {
-                        c.accent_soft
-                    } else {
-                        c.surface
-                    })
+                    // Not a toggle like bold/italic/underline — text colour
+                    // is never "absent" (it always renders in *some* colour,
+                    // the swatch below always shows it), so there's no
+                    // on/off state to highlight here, just a plain button.
+                    .border_color(c.border)
+                    .bg(c.surface)
                     .when(!enabled, |el| el.opacity(0.45))
                     .when(enabled, |el| {
                         el.cursor_pointer()
