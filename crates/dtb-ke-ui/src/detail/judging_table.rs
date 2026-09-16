@@ -11,10 +11,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    App, AppContext, Bounds, Context, CursorStyle, Entity, EntityId, Focusable as _,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, anchored,
-    canvas, deferred, div, point, prelude::FluentBuilder, px,
+    App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity, EntityId,
+    Focusable as _, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
+    Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
+    anchored, canvas, deferred, div, point, prelude::FluentBuilder, px,
 };
 use gpui_base::input::{InputEvent, InputState};
 
@@ -36,27 +36,101 @@ pub type DuplicateHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 /// `(dragged editor id, drop-target editor id)` — move the first before/at the second.
 pub type ReorderHandler = Rc<dyn Fn(EntityId, EntityId, &mut Window, &mut App)>;
 
-/// Drag payload for reordering a judging table — also renders its own drag ghost.
+/// Drag payload for reordering a judging table — also renders its own drag
+/// ghost: a read-only snapshot of the card's actual content (not the live,
+/// editable card itself — a drag ghost shouldn't be interactive), at reduced
+/// opacity to read as "mid-drag".
 #[derive(Clone)]
 pub struct DragTable {
     editor_id: EntityId,
     label: SharedString,
+    kind: dtb_ke_types::JudgingTableKindDTO,
+    /// The real card's own last-measured width (captured via a canvas probe —
+    /// see `JudgingTableCard`'s `width_bounds`), so the ghost matches its
+    /// actual on-screen size instead of some guessed constant.
+    width: Pixels,
 }
 
 impl Render for DragTable {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = cx.theme().color;
+        let theme = cx.theme();
+        let c = theme.color;
+        let radius = theme.skin.radius_lg_px();
+        let field_radius = theme.skin.radius_control_px();
+        let discipline = Discipline::of(&self.kind);
+
         div()
-            .px(px(10.))
-            .py(px(5.))
-            .rounded(cx.theme().skin.radius_control_px())
+            .opacity(0.85)
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .p(px(12.))
+            .w(self.width)
+            .rounded(radius)
             .border_1()
             .border_color(c.primary)
             .bg(c.surface)
             .text_color(c.foreground)
-            .text_size(px(12.5))
             .shadow_lg()
-            .child(self.label.clone())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(13.))
+                            .child(self.label.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .h(px(24.))
+                            .px(px(8.))
+                            .rounded(field_radius)
+                            .bg(c.accent_soft)
+                            .text_color(c.primary)
+                            .text_size(px(11.))
+                            .child(cx.t(discipline.label_key())),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .children(roles::slots(&self.kind).into_iter().map(|slot| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .w(px(148.))
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .text_color(c.muted_foreground)
+                                    .child(slot.label),
+                            )
+                            .child(
+                                div()
+                                    .h(px(30.))
+                                    .px(px(8.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(field_radius)
+                                    .border_1()
+                                    .border_color(c.border)
+                                    .bg(c.surface)
+                                    .text_color(c.foreground)
+                                    .text_size(px(13.))
+                                    .child(SharedString::from(slot.value)),
+                            )
+                    })),
+            )
     }
 }
 
@@ -72,9 +146,18 @@ pub struct JudgingTableCard {
     /// Absolute bounds of the discipline trigger, captured during prepaint so
     /// the popover can float above the scroll container that would clip it.
     discipline_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The card's own last-painted bounds, captured the same way as
+    /// `discipline_bounds` — read at drag-start so the drag ghost (see
+    /// `DragTable`) can be sized to match the real card's current width.
+    card_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The card's right-click context menu, anchored at this window-absolute
     /// point — `None` unless it is currently open.
     context_menu: Option<Point<Pixels>>,
+    /// Whether *this* card is the source of the currently active reordering
+    /// drag (tracked via `on_drag_move`, see `render`) — gated by
+    /// `cx.has_active_drag()` at render time since nothing ever clears it
+    /// back to `false` directly.
+    dragging: bool,
     on_select: SelectHandler,
     on_delete: DeleteHandler,
     on_duplicate: DuplicateHandler,
@@ -111,7 +194,9 @@ impl JudgingTableCard {
             conflict_roles: Vec::new(),
             discipline_open: false,
             discipline_bounds: Rc::new(Cell::new(None)),
+            card_bounds: Rc::new(Cell::new(None)),
             context_menu: None,
+            dragging: false,
             on_select,
             on_delete,
             on_duplicate,
@@ -413,6 +498,20 @@ impl Render for JudgingTableCard {
         };
         let selected = self.selected;
         let conflicted = !self.conflict_roles.is_empty();
+        // `self.dragging` is only ever *set*, never explicitly cleared (there's
+        // no "drag ended" hook to clear it from — see `on_drag_move` below), so
+        // it can go stale after a drag finishes. `cx.has_active_drag()` is the
+        // real, always-accurate gate; combining both means the card only ever
+        // reads as "the one being dragged" while a drag is genuinely ongoing.
+        let is_dragging = self.dragging && cx.has_active_drag();
+        // Fallback only matters for a drag started before the card's ever
+        // painted once (not reachable in practice — you can't grab a handle
+        // that hasn't rendered), so it's not worth chasing precision on.
+        let ghost_width = self
+            .card_bounds
+            .get()
+            .map(|b| b.size.width)
+            .unwrap_or(px(420.));
 
         let on_select = self.on_select.clone();
         let on_reorder = self.on_reorder.clone();
@@ -421,21 +520,25 @@ impl Render for JudgingTableCard {
 
         div()
             .id(("table-card", editor_id))
+            .relative()
             .flex()
             .flex_col()
             .gap(px(10.))
             .p(px(12.))
             .rounded(theme.skin.radius_lg_px())
             .border_1()
-            .border_color(if conflicted {
+            .when(is_dragging, |el| el.border_dashed())
+            .border_color(if is_dragging {
+                c.line_strong
+            } else if conflicted {
                 c.warn
             } else if selected {
                 c.primary
             } else {
                 c.border
             })
-            .bg(c.surface)
-            .when(selected, |el| el.bg(c.accent_soft))
+            .bg(if is_dragging { c.background } else { c.surface })
+            .when(selected && !is_dragging, |el| el.bg(c.accent_soft))
             // Select on a click on the card itself — not one that landed in (and
             // focused) one of its text fields. A plain closure, *not*
             // `cx.listener`: `on_select` calls back into `DetailView::select_table`
@@ -461,85 +564,146 @@ impl Render for JudgingTableCard {
                 on_reorder(dragged.editor_id, editor_id, window, cx);
             })
             .drag_over::<DragTable>(|style, _dragged, _window, cx| {
+                // All four sides, not just the top (`border_t` alone left the
+                // top edge 1px thicker than the others, since the base
+                // `.border_1()` was still in effect on the rest) — a uniform
+                // emphasis border reads as "drop here" without the mismatch.
                 style
-                    .border_t(px(2.))
+                    .border_2()
                     .border_color(cx.theme().color.primary)
             })
+            // Tracks whether *this* card is the one currently being dragged —
+            // fires for every move of any active `DragTable` drag, regardless
+            // of where the pointer is (see `judging_table.rs`'s cursor-style
+            // fix for the same mechanism), so each card can tell itself apart
+            // from the one under the cursor purely from the payload it carries.
+            .on_drag_move::<DragTable>(cx.listener(
+                |this, event: &DragMoveEvent<DragTable>, _window, cx| {
+                    let dragging = event.drag(cx).editor_id == this.editor.entity_id();
+                    if this.dragging != dragging {
+                        this.dragging = dragging;
+                        cx.notify();
+                    }
+                },
+            ))
+            // Captures this card's own rendered bounds — read at drag-start
+            // (see `on_drag` below) so the drag ghost can be sized to match,
+            // rather than some guessed constant.
+            .child({
+                let capture = self.card_bounds.clone();
+                canvas(
+                    move |bounds, window, _cx| {
+                        if capture.get() != Some(bounds) {
+                            capture.set(Some(bounds));
+                            window.request_animation_frame();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full()
+            })
             .child(
+                // The header + slot fields, together — hidden (not removed:
+                // `.invisible()` keeps its layout box, which is exactly the
+                // "empty rectangle, same footprint, as if already dragged
+                // away" the card needs to read as) while this card is the
+                // drag source, so its real judging table only ever appears
+                // once on screen: as the drag ghost following the cursor.
                 div()
                     .flex()
-                    .items_center()
-                    .gap(px(8.))
+                    .flex_col()
+                    .gap(px(10.))
+                    .when(is_dragging, |el| el.invisible())
                     .child(
-                        div()
-                            .id("drag-handle")
-                            .flex_none()
-                            // Open hand while just hovering/about to grab;
-                            // `.cursor_move()` is `ClosedHand` despite the
-                            // name (a gpui naming trap) — that showed the
-                            // "grabbing" cursor before any drag had actually
-                            // started. The drag's own cursor is a *separate*
-                            // mechanism: it's captured once, from this same
-                            // style, the instant the drag begins (`AnyDrag::
-                            // cursor_style`, read off this div's style at
-                            // that moment) and then overrides every other
-                            // cursor for the rest of the gesture — so it
-                            // would otherwise stay `OpenHand` for the whole
-                            // drag too. `on_drag_move` flips it to
-                            // `ClosedHand` on the first move after the drag
-                            // starts (`cx.active_drag` only exists by then;
-                            // doing this from `on_drag`'s own constructor
-                            // below is too early — it runs before gpui sets
-                            // `cx.active_drag`, so the setter would no-op).
-                            .cursor_grab()
-                            .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
-                            .on_drag(
-                                DragTable {
-                                    editor_id,
-                                    label: drag_label,
-                                },
-                                |dragged: &DragTable, _pos, _window, cx| {
-                                    cx.new(|_| dragged.clone())
-                                },
-                            )
-                            .on_drag_move::<DragTable>(|_, window, cx| {
-                                if cx.active_drag_cursor_style() != Some(CursorStyle::ClosedHand) {
-                                    cx.set_active_drag_cursor_style(CursorStyle::ClosedHand, window);
-                                }
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Field::new("table-label", &self.label_input)),
-                    )
-                    .child(discipline_selector)
-                    .child(Button::icon("del-table", Icon::Trash).small().on_click(
-                        cx.listener(|this, _, window, cx| (this.on_delete.clone())(window, cx)),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .children(self.slots.iter().map(|(label, input)| {
                         div()
                             .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .w(px(148.))
+                            .items_center()
+                            .gap(px(8.))
                             .child(
                                 div()
-                                    .text_size(px(9.))
-                                    .text_color(c.muted_foreground)
-                                    .child(*label),
+                                    .id("drag-handle")
+                                    .flex_none()
+                                    // Open hand while just hovering/about to
+                                    // grab; `.cursor_move()` is `ClosedHand`
+                                    // despite the name (a gpui naming trap) —
+                                    // that showed the "grabbing" cursor before
+                                    // any drag had actually started. The
+                                    // drag's own cursor is a *separate*
+                                    // mechanism: it's captured once, from this
+                                    // same style, the instant the drag begins
+                                    // (`AnyDrag::cursor_style`, read off this
+                                    // div's style at that moment) and then
+                                    // overrides every other cursor for the
+                                    // rest of the gesture — so it would
+                                    // otherwise stay `OpenHand` for the whole
+                                    // drag too. `on_drag_move` flips it to
+                                    // `ClosedHand` on the first move after the
+                                    // drag starts (`cx.active_drag` only
+                                    // exists by then; doing this from
+                                    // `on_drag`'s own constructor below is
+                                    // too early — it runs before gpui sets
+                                    // `cx.active_drag`, so the setter would
+                                    // no-op).
+                                    .cursor_grab()
+                                    .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
+                                    .on_drag(
+                                        DragTable {
+                                            editor_id,
+                                            label: drag_label,
+                                            kind: table.kind.clone(),
+                                            width: ghost_width,
+                                        },
+                                        |dragged: &DragTable, _pos, _window, cx| {
+                                            cx.new(|_| dragged.clone())
+                                        },
+                                    )
+                                    .on_drag_move::<DragTable>(|_, window, cx| {
+                                        if cx.active_drag_cursor_style()
+                                            != Some(CursorStyle::ClosedHand)
+                                        {
+                                            cx.set_active_drag_cursor_style(
+                                                CursorStyle::ClosedHand,
+                                                window,
+                                            );
+                                        }
+                                    }),
                             )
                             .child(
-                                Field::new(*label, input)
-                                    .invalid(self.conflict_roles.contains(label)),
+                                div()
+                                    .flex_1()
+                                    .child(Field::new("table-label", &self.label_input)),
                             )
-                    })),
+                            .child(discipline_selector)
+                            .child(Button::icon("del-table", Icon::Trash).small().on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    (this.on_delete.clone())(window, cx)
+                                }),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(8.))
+                            .children(self.slots.iter().map(|(label, input)| {
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.))
+                                    .w(px(148.))
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .text_color(c.muted_foreground)
+                                            .child(*label),
+                                    )
+                                    .child(
+                                        Field::new(*label, input)
+                                            .invalid(self.conflict_roles.contains(label)),
+                                    )
+                            })),
+                    ),
             )
             .children(context_menu_layer)
     }
