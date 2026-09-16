@@ -1,5 +1,8 @@
 use chrono::{NaiveDate, NaiveTime};
-use dtb_ke_persist::{Db, delete_competition, list_summaries, load_competition, save_competition};
+use dtb_ke_persist::{
+    Db, delete_competition, delete_competitions, list_summaries, load_competition,
+    save_competition,
+};
 use dtb_ke_types::{
     CompetitionDTO, CyrWheelArtisticTableDTO, CyrWheelTableDTO, GymWheelSTLTableDTO,
     GymWheelTableDTO, JudgingTableDTO, JudgingTableKindDTO, JudgingTablesDTO, MeetingTimeDTO,
@@ -94,6 +97,48 @@ fn save_list_load_delete_roundtrip() {
         // Delete.
         delete_competition(&conn, a.id).await.unwrap();
         assert!(load_competition(&conn, a.id).await.unwrap().is_none());
+        assert_eq!(list_summaries(&conn).await.unwrap().len(), 1);
+    });
+}
+
+/// A single `DELETE … WHERE id IN (…)` for several ids at once — the fix for
+/// the bulk-select "delete" path, which used to spawn one `delete_competition`
+/// per id and hit turso's "concurrent use forbidden" guard once enough of
+/// those concurrent single-row deletes were in flight against clones of the
+/// same `Connection`.
+#[test]
+fn delete_competitions_removes_every_given_id_in_one_statement() {
+    pollster::block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("PersistedSessions.bin"))
+            .await
+            .unwrap();
+        let conn = db.connection();
+
+        let a = sample(Uuid::new_v4(), "Alpha Cup", 2024);
+        let b = sample(Uuid::new_v4(), "Beta Cup", 2025);
+        let c = sample(Uuid::new_v4(), "Gamma Cup", 2026);
+        for dto in [&a, &b, &c] {
+            save_competition(&conn, dto).await.unwrap();
+        }
+        assert_eq!(list_summaries(&conn).await.unwrap().len(), 3);
+
+        // A no-op unknown id rides along — it's just silently skipped, same
+        // as the singular `delete_competition`.
+        let unknown = Uuid::new_v4();
+        delete_competitions(&conn, &[a.id, c.id, unknown])
+            .await
+            .unwrap();
+
+        let remaining = list_summaries(&conn).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, b.id);
+        assert!(load_competition(&conn, a.id).await.unwrap().is_none());
+        assert!(load_competition(&conn, c.id).await.unwrap().is_none());
+        assert!(load_competition(&conn, b.id).await.unwrap().is_some());
+
+        // An empty slice is a no-op, not a malformed `IN ()`.
+        delete_competitions(&conn, &[]).await.unwrap();
         assert_eq!(list_summaries(&conn).await.unwrap().len(), 1);
     });
 }

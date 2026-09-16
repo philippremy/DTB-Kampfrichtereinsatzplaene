@@ -211,6 +211,27 @@ pub async fn delete_competition(conn: &Connection, id: Uuid) -> PersistResult<()
     Ok(())
 }
 
+/// Permanently removes every competition in `ids`, in a single statement.
+/// Unknown ids are silently skipped; a no-op for an empty slice. One
+/// `DELETE … WHERE id IN (…)` rather than one `DELETE` per id — issuing many
+/// concurrent single-row deletes against clones of the same `Connection` (as
+/// a naive bulk-delete loop would) hits turso's "concurrent use forbidden"
+/// guard once enough are in flight at once.
+pub async fn delete_competitions(conn: &Connection, ids: &[Uuid]) -> PersistResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("DELETE FROM competitions WHERE id IN ({placeholders})");
+    let params: Vec<Vec<u8>> = ids.iter().map(|id| id.as_bytes().to_vec()).collect();
+    let n = conn.execute(sql, turso::params_from_iter(params)).await?;
+    trace!("delete_competitions({} ids) — {n} row(s) removed", ids.len());
+    Ok(())
+}
+
 fn blob_uuid(value: Value, column: &str) -> PersistResult<Uuid> {
     match value {
         Value::Blob(bytes) => Ok(Uuid::from_slice(&bytes)?),

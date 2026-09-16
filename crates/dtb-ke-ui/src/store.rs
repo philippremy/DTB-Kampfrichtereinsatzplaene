@@ -523,6 +523,59 @@ impl AppStore {
         .detach();
     }
 
+    /// Delete several competitions at once (the sidebar's multi-select bulk
+    /// delete). Updates the sidebar optimistically for every id, then issues
+    /// a single `DELETE … WHERE id IN (…)` in the background — spawning one
+    /// [`Self::delete_competition`] per id instead raced N concurrent
+    /// statements against the same `turso::Connection`, which turso rejects
+    /// outright ("concurrent use forbidden") once enough are in flight at
+    /// once.
+    pub fn delete_competitions(&mut self, ids: Vec<Uuid>, cx: &mut Context<Self>) {
+        if ids.is_empty() {
+            return;
+        }
+        let Some(db) = self.db.as_ref() else {
+            warn!("delete_competitions({} ids) ignored — database not ready", ids.len());
+            return;
+        };
+        let connection = db.connection();
+        info!("deleting {} competition(s)", ids.len());
+
+        for &id in &ids {
+            self.open.remove(&id);
+            self.doc_subs.remove(&id);
+            if self.selected == Some(id) {
+                self.selected = None;
+            }
+        }
+        let id_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+        self.summaries.retain(|s| !id_set.contains(&s.id));
+        self.recompute_dirty(cx);
+        self.recompute_undo_state(cx);
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let background = cx.background_executor().clone();
+            let count = ids.len();
+            let deleted = background
+                .spawn(async move { persist::delete_competitions(&connection, &ids).await })
+                .await;
+
+            match deleted {
+                Ok(()) => trace!("{count} competition row(s) removed"),
+                Err(err) => {
+                    error!("deleting {count} competition(s) from the database failed: {err}");
+                    this.update(cx, |this, cx| {
+                        this.status = Status::Failed(err.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Write the selected competition's postcard blob to `dest` (a `.dtbke`
     /// file). Flushes the open document first so the export is current.
     pub fn export_competition(&mut self, id: Uuid, dest: PathBuf, cx: &mut Context<Self>) {

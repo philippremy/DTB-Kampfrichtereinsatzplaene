@@ -164,11 +164,7 @@ impl Sidebar {
             }
             log::info!("deleting {} competition(s)", ids.len());
             cx.update(|_, cx| {
-                store.update(cx, |store, cx| {
-                    for id in ids {
-                        store.delete_competition(id, cx);
-                    }
-                });
+                store.update(cx, |store, cx| store.delete_competitions(ids, cx));
             })
             .ok();
             this.update(cx, |this, cx| this.exit_multi_select(cx)).ok();
