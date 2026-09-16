@@ -107,12 +107,18 @@ impl RemarksSection {
                 }
             }),
             // Generic entity-level notify, not just `InputEvent::Change`: the
-            // toolbar buttons need to re-render on a *selection*-only change
-            // too (clicking/dragging/arrow-keying to a new selection with no
-            // text edit), which `EditorState` still `cx.notify()`s on for its
-            // own cursor/selection-highlight repaint but never turns into an
+            // toolbar buttons (and, while it's open, the color popover) need
+            // to re-sync on a *selection*-only change too (clicking/dragging/
+            // arrow-keying to a new selection with no text edit), which
+            // `EditorState` still `cx.notify()`s on for its own cursor/
+            // selection-highlight repaint but never turns into an
             // `InputEvent`.
-            cx.observe(&input, |_, _, cx| cx.notify()),
+            cx.observe_in(&input, window, |this, _, window, cx| {
+                if this.color_open {
+                    this.sync_color_picker(window, cx);
+                }
+                cx.notify();
+            }),
         ];
         subs.push(cx.subscribe_in(
             &color_picker,
@@ -350,28 +356,42 @@ impl RemarksSection {
         self.input.update(cx, |s, cx| s.focus(window, cx));
     }
 
-    /// Opens the color popover: with a selection, targets it directly and
-    /// primes the picker with its current color; with none, targets
-    /// `pending_style` (future typing) and primes the picker from the
-    /// caret's style instead. Closing happens only via the popover panel's
+    /// Opens the color popover: with a selection, targets it directly; with
+    /// none, targets `pending_style` (future typing) instead. Priming the
+    /// picker itself is [`Self::sync_color_picker`]'s job — also called live
+    /// while the popover stays open (see the `input` observer in `new`), so
+    /// it isn't repeated here. Closing happens only via the popover panel's
     /// own `on_mouse_down_out` (see `color_panel`) — not here — since a
     /// click on the trigger while open would otherwise race the panel's
     /// close against this reopening it in the same event.
     fn open_color_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.color_open = true;
+        self.sync_color_picker(window, cx);
+        cx.notify();
+    }
+
+    /// Prime the color picker (hex field + sliders, and thus the swatch
+    /// preview) from the current selection's — or, with none, the caret's
+    /// pending — color, resolved the same way the trigger's own swatch is:
+    /// falling back to the theme foreground when there's no explicit
+    /// override, so the hex field never just sits blank. Called both when
+    /// the popover first opens and, while it stays open, whenever the
+    /// selection changes (the `input` observer in `new`) — a plain
+    /// `set_value` never emits `ColorPickerEvent::Change`, so re-priming
+    /// like this can't itself apply a color as a side effect.
+    fn sync_color_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selected_char_range(cx);
         let current = match &selection {
             Some(range) => self.styles.get(range.start).and_then(|s| s.color.clone()),
             None => self.caret_style(cx).color,
         };
         self.color_target = selection;
-        self.color_open = true;
-        self.color_picker.update(cx, |picker, cx| {
-            match current.as_deref().and_then(parse_hex) {
-                Some(color) => picker.set_value(color, window, cx),
-                None => picker.clear_value(window, cx),
-            }
-        });
-        cx.notify();
+        let resolved = current
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(cx.theme().color.foreground);
+        self.color_picker
+            .update(cx, |picker, cx| picker.set_value(resolved, window, cx));
     }
 }
 
