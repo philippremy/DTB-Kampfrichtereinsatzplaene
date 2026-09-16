@@ -61,9 +61,13 @@ use windows::Win32::UI::Shell::{
     IFileDialogControlEvents, IFileDialogControlEvents_Impl, IFileDialogCustomize,
     IFileDialogEvents, IFileDialogEvents_Impl, IFileSaveDialog, IShellItem, SIGDN_FILESYSPATH,
 };
-use windows::core::{BOOL, HSTRING, Interface, Ref, implement, w};
+use windows::core::{BOOL, HSTRING, Interface, PCWSTR, Ref, implement, w};
 
-use crate::save::{ExportFormat, FormatKind, SaveChoice, with_extension};
+use crate::i18n::{ActiveLocale, Locale};
+use crate::save::{
+    ExportFormat, FormatKind, SaveChoice, pdf_standard_conflict_message, pdf_standard_label,
+    with_extension,
+};
 
 /// Control ids for the customised dialog controls.
 const GROUP_PDF: u32 = 100;
@@ -76,12 +80,13 @@ const CHECK_DOCX_EMBED: u32 = 200;
 
 pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Option<SaveChoice>> {
     let (tx, rx) = oneshot::channel();
+    let locale = cx.global::<Locale>().clone();
 
     // gpui initialises COM on the main thread; the modal dialog pumps messages.
     cx.foreground_executor()
         .spawn(async move {
-            let choice = show_dialog(&default_name).unwrap_or_else(|err| {
-                log::error!("Export-Dialog fehlgeschlagen: {err}");
+            let choice = show_dialog(&default_name, &locale).unwrap_or_else(|err| {
+                log::error!("export dialog failed: {err}");
                 None
             });
             let _ = tx.send(choice);
@@ -91,23 +96,32 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
     rx
 }
 
-fn show_dialog(default_name: &str) -> windows::core::Result<Option<SaveChoice>> {
+fn show_dialog(default_name: &str, locale: &Locale) -> windows::core::Result<Option<SaveChoice>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
 
+    // Owned wide-string buffers for the file-type names — kept as named
+    // bindings (not temporaries inline in the `COMDLG_FILTERSPEC` array) so
+    // they unambiguously outlive the `SetFileTypes` call below; `PCWSTR` is a
+    // raw, non-owning pointer wrapper and doesn't keep them alive itself.
+    let filetype_pdf = HSTRING::from(locale.t("save.filetype-pdf").as_ref());
+    let filetype_docx = HSTRING::from(locale.t("save.filetype-docx").as_ref());
+    let filetype_blob = HSTRING::from(locale.t("save.filetype-blob").as_ref());
+    let title = HSTRING::from(locale.t("save.window-title-windows").as_ref());
+
     unsafe {
-        dialog.SetTitle(w!("Wettkampf exportieren"))?;
+        dialog.SetTitle(&title)?;
         dialog.SetFileName(&HSTRING::from(default_name.trim()))?;
         dialog.SetFileTypes(&[
             COMDLG_FILTERSPEC {
-                pszName: w!("PDF-Dokument"),
+                pszName: PCWSTR(filetype_pdf.as_ptr()),
                 pszSpec: w!("*.pdf"),
             },
             COMDLG_FILTERSPEC {
-                pszName: w!("Word-Dokument"),
+                pszName: PCWSTR(filetype_docx.as_ptr()),
                 pszSpec: w!("*.docx"),
             },
             COMDLG_FILTERSPEC {
-                pszName: w!("DTB-KE-Datei (Sicherungskopie)"),
+                pszName: PCWSTR(filetype_blob.as_ptr()),
                 pszSpec: w!("*.dtbke"),
             },
         ])?;
@@ -118,11 +132,14 @@ fn show_dialog(default_name: &str) -> windows::core::Result<Option<SaveChoice>> 
     // ── customised option controls ──────────────────────────────────────────
     let customize: IFileDialogCustomize = dialog.cast()?;
     unsafe {
-        customize.StartVisualGroup(GROUP_PDF, w!("PDF-Standards"))?;
+        customize.StartVisualGroup(
+            GROUP_PDF,
+            &HSTRING::from(locale.t("save.standards-label").as_ref()),
+        )?;
         for (i, standard) in PdfStandard::ALL.iter().enumerate() {
             customize.AddCheckButton(
                 CHECK_PDF_BASE + i as u32,
-                &HSTRING::from(standard.label()),
+                &HSTRING::from(pdf_standard_label(*standard, locale).as_ref()),
                 false,
             )?;
         }
@@ -132,8 +149,15 @@ fn show_dialog(default_name: &str) -> windows::core::Result<Option<SaveChoice>> 
         customize.SetControlState(CONFLICT_INFO, CDCS_INACTIVE)?;
         customize.EndVisualGroup()?;
 
-        customize.StartVisualGroup(GROUP_DOCX, w!("DOCX-Optionen"))?;
-        customize.AddCheckButton(CHECK_DOCX_EMBED, w!("Schriften einbetten"), false)?;
+        customize.StartVisualGroup(
+            GROUP_DOCX,
+            &HSTRING::from(locale.t("save.docx-options-label").as_ref()),
+        )?;
+        customize.AddCheckButton(
+            CHECK_DOCX_EMBED,
+            &HSTRING::from(locale.t("save.embed-fonts-label").as_ref()),
+            true,
+        )?;
         customize.EndVisualGroup()?;
 
         // Start on the PDF format → hide the DOCX group.
@@ -147,6 +171,7 @@ fn show_dialog(default_name: &str) -> windows::core::Result<Option<SaveChoice>> 
             .enumerate()
             .map(|(i, s)| (CHECK_PDF_BASE + i as u32, *s))
             .collect(),
+        locale: locale.clone(),
     }
     .into();
     let cookie = unsafe { dialog.Advise(&events)? };
@@ -206,6 +231,7 @@ fn show_dialog(default_name: &str) -> windows::core::Result<Option<SaveChoice>> 
 struct DialogEvents {
     /// `(control id, standard)` per PDF-standard checkbox.
     pdf_checks: Vec<(u32, PdfStandard)>,
+    locale: Locale,
 }
 
 impl DialogEvents {
@@ -240,7 +266,9 @@ impl DialogEvents {
             } else {
                 let message = conflicts
                     .iter()
-                    .map(|(_, reason)| reason.as_str())
+                    .map(|(candidate, conflict)| {
+                        pdf_standard_conflict_message(*candidate, *conflict, &self.locale)
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 customize.SetControlLabel(CONFLICT_INFO, &HSTRING::from(message))?;

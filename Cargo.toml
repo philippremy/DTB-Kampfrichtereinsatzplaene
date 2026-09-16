@@ -64,9 +64,20 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSControl", "NSButton", "NSButtonCell", "NSCell", "NSPopUpButton",
     "NSMenu", "NSMenuItem", "NSStackView", "NSTextField", "NSText",
     "NSSavePanel", "NSLayoutConstraint", "NSLayoutAnchor", "NSUserInterfaceLayout",
+    # `skin/accent.rs`'s system-accent-colour read + `NSAppearance`-scoped
+    # resolution.
+    "NSColor", "NSColorSpace", "NSAppearance", "objc2-core-foundation", "block2",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSString", "NSURL", "NSArray", "NSObject", "NSGeometry",
+    # `skin/accent.rs`'s `NSSystemColorsDidChangeNotification` observer.
+    "NSNotification", "NSOperation", "block2",
+] }
+# `CGFloat` for `NSColor`'s `getRed:green:blue:alpha:` (skin/accent.rs) —
+# objc2-app-kit's own "NSColor"/"objc2-core-foundation" feature only enables
+# *generating* the method; naming the type needs a direct dependency.
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "CFCGTypes", "objc2",
 ] }
 
 # Windows IFileSaveDialog FFI (windows-core is named directly so the
@@ -95,6 +106,10 @@ self_update = { version = "1.3", default-features = false, features = [
     "manifest", "signatures", "checksums", "ureq", "rustls",
     "compression-tar-gz", "archive-zip", "compression-zip-deflate",
 ] }
+# OS locale detection (`src/i18n.rs`). Already in the tree transitively (pulled
+# by cosmic-text, which gpui uses) — promoting it to a direct dependency costs
+# ~nothing extra. Normalizes every platform to BCP-47 tags itself, no FFI here.
+sys-locale = { version = "0.3" }
 thiserror = { version = "2" }
 toml = { version = "0.8" }
 # `default-features = false` drops turso's `fts` (a full-text search engine —

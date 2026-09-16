@@ -80,13 +80,15 @@ impl ThemeMode {
         }
     }
 
-    /// A German label for the toggle.
-    pub fn label(self) -> &'static str {
-        match self {
-            ThemeMode::System => "Automatisch",
-            ThemeMode::Light => "Hell",
-            ThemeMode::Dark => "Dunkel",
-        }
+    /// A translated label for the toggle.
+    pub fn label(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+        use crate::i18n::ActiveLocale;
+        let key = match self {
+            ThemeMode::System => "settings.general.theme-system",
+            ThemeMode::Light => "settings.general.theme-light",
+            ThemeMode::Dark => "settings.general.theme-dark",
+        };
+        locale.t(key)
     }
 }
 
@@ -168,12 +170,13 @@ impl Theme {
     }
 
     fn apply(mode: ThemeMode, os_appearance: Appearance, cx: &mut App) {
-        let theme =
-            Self::resolve_from(mode, os_appearance, Source::Preferred).unwrap_or_else(|err| {
+        let use_system_accent = crate::settings::Settings::global(cx).use_system_accent_color;
+        let theme = Self::resolve_from(mode, os_appearance, Source::Preferred, use_system_accent)
+            .unwrap_or_else(|err| {
                 // Disk overrides (debug) can be broken by an edit; the embedded
                 // assets are covered by tests and must not fail.
                 log::warn!("theme: {err}; falling back to the embedded assets");
-                Self::resolve_from(mode, os_appearance, Source::Embedded)
+                Self::resolve_from(mode, os_appearance, Source::Embedded, use_system_accent)
                     .expect("embedded theme assets must be valid")
             });
         log::debug!(
@@ -191,12 +194,16 @@ impl Theme {
         mode: ThemeMode,
         os_appearance: Appearance,
         source: Source,
+        use_system_accent: bool,
     ) -> Result<Self, ThemeError> {
         let appearance = mode.resolve(os_appearance);
         let skin_id = Skin::detect();
         let skin = SkinMetrics::parse(&source.skin_toml(skin_id))?;
         let palette = Palette::parse(&source.palette_toml())?;
-        let color = palette.colors(appearance)?;
+        let mut color = palette.colors(appearance)?;
+        if use_system_accent && let Some(accent) = crate::skin::accent::system_accent(appearance) {
+            color.apply_system_accent(accent);
+        }
         Ok(Self {
             mode,
             os_appearance,

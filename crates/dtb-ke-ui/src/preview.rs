@@ -22,6 +22,7 @@ use image::{Frame, RgbaImage};
 use log::{debug, trace, warn};
 use uuid::Uuid;
 
+use crate::i18n::ActiveLocale;
 use crate::store::AppStore;
 use crate::theme::ActiveTheme;
 
@@ -181,16 +182,13 @@ impl PreviewWindow {
         }));
     }
 
-    fn status_line(&self) -> String {
+    fn status_line(&self, cx: &App) -> String {
         match &self.status {
-            Status::Idle => "Kein Wettkampf ausgewählt".to_owned(),
-            Status::Rendering => "Wird gerendert …".to_owned(),
-            Status::Refreshing => "Aktualisiere …".to_owned(),
-            Status::Ready => match self.pages.len() {
-                1 => "1 Seite".to_owned(),
-                n => format!("{n} Seiten"),
-            },
-            Status::Failed(err) => format!("Fehler: {err}"),
+            Status::Idle => cx.t("preview.status-idle").to_string(),
+            Status::Rendering => cx.t("preview.status-rendering").to_string(),
+            Status::Refreshing => cx.t("preview.status-refreshing").to_string(),
+            Status::Ready => cx.t_plural("preview.pages", self.pages.len() as i64, &[]),
+            Status::Failed(err) => cx.t_fmt("preview.status-failed", &[("error", err)]),
         }
     }
 }
@@ -238,7 +236,7 @@ impl gpui::Render for PreviewWindow {
                     } else {
                         c.muted_foreground
                     })
-                    .child(self.status_line()),
+                    .child(self.status_line(cx)),
             )
             .child(
                 div()
@@ -254,13 +252,11 @@ impl gpui::Render for PreviewWindow {
                                     .text_size(px(13.))
                                     .text_color(c.muted_foreground)
                                     .child(if failed {
-                                        "Vorschau fehlgeschlagen — siehe Statuszeile."
+                                        cx.t("preview.failed-hint")
                                     } else {
                                         match self.status {
-                                            Status::Idle => {
-                                                "Wähle einen Wettkampf, um die Vorschau zu sehen."
-                                            }
-                                            _ => "Wird gerendert …",
+                                            Status::Idle => cx.t("preview.empty-hint"),
+                                            _ => cx.t("preview.status-rendering"),
                                         }
                                     }),
                             ),
@@ -321,7 +317,7 @@ pub fn window_options(cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("DTB Kampfrichtereinsatzpläne · Vorschau".into()),
+            title: Some(cx.t("preview.window-title")),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),

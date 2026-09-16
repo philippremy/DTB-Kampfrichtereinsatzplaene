@@ -32,13 +32,18 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSEdgeInsets, NSString, NSURL};
 
-use crate::save::{ExportFormat, FormatKind, SaveChoice, with_extension};
+use crate::i18n::{ActiveLocale, Locale};
+use crate::save::{
+    ExportFormat, FormatKind, SaveChoice, pdf_standard_conflict_message, pdf_standard_label,
+    with_extension,
+};
 
 /// The lowest width we let the accessory view shrink to.
 const MIN_ACCESSORY_WIDTH: f64 = 360.0;
 
 pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Option<SaveChoice>> {
     let (tx, rx) = oneshot::channel();
+    let locale = cx.global::<Locale>().clone();
 
     cx.foreground_executor()
         .spawn(async move {
@@ -50,17 +55,17 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
             let base_name = default_name.trim().to_owned();
 
             let panel = NSSavePanel::savePanel(mtm);
-            panel.setPrompt(Some(&ns("Exportieren")));
+            panel.setPrompt(Some(&ns(&locale.t("save.window-title"))));
             panel.setCanCreateDirectories(true);
 
             let popup = NSPopUpButton::new(mtm);
             for kind in FormatKind::ALL {
-                popup.addItemWithTitle(&ns(kind.label()));
+                popup.addItemWithTitle(&ns(&kind.label(&locale)));
             }
             popup.selectItemAtIndex(0);
 
             // ── PDF section ──────────────────────────────────────────────────
-            let pdf_section = section(mtm, "PDF-Standards");
+            let pdf_section = section(mtm, &locale.t("save.standards-label"));
             let pdf_rows = column(mtm, NSLayoutAttribute::Leading, 4.0);
             let pdf_checks: Vec<Retained<NSButton>> = PdfStandard::ALL
                 .iter()
@@ -68,7 +73,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
                     // SAFETY: target / action are wired below once the controller exists.
                     let cb = unsafe {
                         NSButton::checkboxWithTitle_target_action(
-                            &ns(standard.label()),
+                            &ns(&pdf_standard_label(*standard, &locale)),
                             None,
                             None,
                             mtm,
@@ -81,24 +86,22 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
             pdf_section.addArrangedSubview(&pdf_rows);
 
             // ── DOCX section ────────────────────────────────────────────────
-            let docx_section = section(mtm, "DOCX-Optionen");
+            let docx_section = section(mtm, &locale.t("save.docx-options-label"));
             // SAFETY: no target / action — the checkbox only carries state.
             let docx_check = unsafe {
                 NSButton::checkboxWithTitle_target_action(
-                    &ns("Schriften einbetten"),
+                    &ns(&locale.t("save.embed-fonts-label")),
                     None,
                     None,
                     mtm,
                 )
             };
+            docx_check.setState(NSControlStateValueOn);
             docx_section.addArrangedSubview(&docx_check);
 
             // ── blob section ────────────────────────────────────────────────
-            let blob_section = section(mtm, "DTB-KE-Sicherungskopie");
-            blob_section.addArrangedSubview(&label(
-                mtm,
-                "Speichert die Rohdaten des Wettkampfs (Backup / Transfer).",
-            ));
+            let blob_section = section(mtm, &locale.t("save.blob-section-label"));
+            blob_section.addArrangedSubview(&label(mtm, &locale.t("save.blob-description")));
 
             // ── accessory: a full-width container with a centred option stack ──
             let options = column(mtm, NSLayoutAttribute::CenterX, 8.0);
@@ -108,7 +111,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
                 bottom: 16.0,
                 right: 24.0,
             });
-            options.addArrangedSubview(&label(mtm, "Format"));
+            options.addArrangedSubview(&label(mtm, &locale.t("save.format-label")));
             options.addArrangedSubview(&popup);
             options.addArrangedSubview(&pdf_section);
             options.addArrangedSubview(&docx_section);
@@ -149,6 +152,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
 
             let ui = Rc::new(Ui {
                 base_name,
+                locale: locale.clone(),
                 panel: panel.clone(),
                 accessory: accessory.clone(),
                 popup: popup.clone(),
@@ -202,6 +206,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
 /// by the completion block.
 struct Ui {
     base_name: String,
+    locale: Locale,
     panel: Retained<NSSavePanel>,
     /// The full-width container view handed to the panel.
     accessory: Retained<NSView>,
@@ -261,9 +266,10 @@ impl Ui {
 
         for (standard, cb) in PdfStandard::ALL.iter().zip(&self.pdf_checks) {
             match conflicts.iter().find(|(s, _)| s == standard) {
-                Some((_, reason)) => {
+                Some((_, conflict)) => {
+                    let reason = pdf_standard_conflict_message(*standard, *conflict, &self.locale);
                     cb.setEnabled(false);
-                    cb.setToolTip(Some(&ns(reason)));
+                    cb.setToolTip(Some(&ns(&reason)));
                 }
                 None => {
                     cb.setEnabled(true);

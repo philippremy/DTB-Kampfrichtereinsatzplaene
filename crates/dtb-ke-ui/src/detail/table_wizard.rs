@@ -11,6 +11,7 @@ use gpui_base::input::{Input, InputState};
 
 use crate::components::button::{Button, ButtonTone};
 use crate::detail::dialog_frame::{dialog_panel, dismiss_handler, scrim};
+use crate::i18n::ActiveLocale;
 use crate::model::JudgingTable;
 use crate::model::roles::Discipline;
 use crate::store::RoundEditor;
@@ -29,7 +30,8 @@ pub struct TableWizard {
 
 impl TableWizard {
     pub fn new(on_created: Created, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Bezeichnung"));
+        let placeholder = cx.t("detail.wizard.name-placeholder");
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         Self {
             round: None,
             name_input,
@@ -46,7 +48,10 @@ impl TableWizard {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let default_name = format!("Kampfgericht {}", round.read(cx).tables().len() + 1);
+        let default_name = cx.t_fmt(
+            "detail.wizard.default-name",
+            &[("n", &(round.read(cx).tables().len() + 1).to_string())],
+        );
         self.round = Some(round);
         self.discipline = Discipline::CyrArtistic;
         self.name_input
@@ -70,7 +75,7 @@ impl TableWizard {
             let value = self.name_input.read(cx).value();
             let trimmed = value.trim();
             if trimmed.is_empty() {
-                "Kampfgericht".to_owned()
+                cx.t("detail.wizard.fallback-name").to_string()
             } else {
                 trimmed.to_owned()
             }
@@ -117,7 +122,7 @@ impl Render for TableWizard {
                             this.discipline = discipline;
                             cx.notify();
                         }))
-                        .child(discipline.label())
+                        .child(cx.t(discipline.label_key()))
                 }));
 
         div().child(
@@ -131,10 +136,13 @@ impl Render for TableWizard {
                 .backdrop(scrim(&theme))
                 .popup(
                     dialog_panel(&theme, px(380.))
-                        .child(div().text_size(px(15.)).child("Neues Kampfgericht"))
-                        .child(super::field_label("Disziplin", &c))
+                        .child(div().text_size(px(15.)).child(cx.t("detail.wizard.title")))
+                        .child(super::field_label(
+                            cx.t("detail.wizard.discipline-label"),
+                            &c,
+                        ))
                         .child(disciplines)
-                        .child(super::field_label("Bezeichnung", &c))
+                        .child(super::field_label(cx.t("detail.wizard.name-label"), &c))
                         .child(
                             div()
                                 .rounded(radius)
@@ -155,16 +163,22 @@ impl Render for TableWizard {
                                 .gap(px(8.))
                                 .pt(px(4.))
                                 .child(
-                                    Button::new("wizard-cancel", "Abbrechen")
-                                        .tone(ButtonTone::Ghost)
-                                        .on_click(cx.listener(|this, _, _w, cx| this.close(cx))),
+                                    Button::new(
+                                        "wizard-cancel",
+                                        cx.t("detail.wizard.cancel-button"),
+                                    )
+                                    .tone(ButtonTone::Ghost)
+                                    .on_click(cx.listener(|this, _, _w, cx| this.close(cx))),
                                 )
                                 .child(
-                                    Button::new("wizard-create", "Erstellen")
-                                        .tone(ButtonTone::Primary)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.confirm(window, cx)
-                                        })),
+                                    Button::new(
+                                        "wizard-create",
+                                        cx.t("detail.wizard.create-button"),
+                                    )
+                                    .tone(ButtonTone::Primary)
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.confirm(window, cx)),
+                                    ),
                                 ),
                         ),
                 ),

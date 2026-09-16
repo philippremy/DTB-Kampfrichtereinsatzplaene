@@ -13,19 +13,19 @@ use std::sync::{Arc, OnceLock};
 use gpui::{
     AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
     ImageFormat, InteractiveElement, IntoElement, ParentElement, Pixels, Render, ScrollHandle,
-    Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowKind,
-    WindowOptions, div, img, prelude::FluentBuilder, px, size,
+    SharedString, Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds,
+    WindowKind, WindowOptions, div, img, prelude::FluentBuilder, px, size,
 };
 use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 
 use crate::build_info::{self, D};
 use crate::components::{Button, ButtonTone};
+use crate::i18n::{ActiveLocale, Locale};
 use crate::theme::ActiveTheme;
 
 const APP_NAME: &str = "DTB Kampfrichtereinsatzpläne";
-const COPYRIGHT: &str = "© 2026 Philipp Remy. Freie Software, lizenziert unter der GNU Affero General Public License v3.";
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Kind {
     About,
     Acknowledgements,
@@ -34,13 +34,14 @@ enum Kind {
 }
 
 impl Kind {
-    fn title(self) -> &'static str {
-        match self {
-            Kind::About => "Über DTB Kampfrichtereinsatzpläne",
-            Kind::Acknowledgements => "Danksagungen",
-            Kind::BuildInfo => "Build-Informationen",
-            Kind::License => "Lizenzvereinbarung",
-        }
+    fn title(self, locale: &Locale) -> SharedString {
+        let key = match self {
+            Kind::About => "about.title",
+            Kind::Acknowledgements => "about.acknowledgements-title",
+            Kind::BuildInfo => "about.build-info-title",
+            Kind::License => "about.license-title",
+        };
+        locale.t(key)
     }
 
     fn size(self) -> Size<gpui::Pixels> {
@@ -108,10 +109,7 @@ fn open_kind(cx: &mut App, kind: Kind) {
                 m.borrow_mut().insert(kind, handle);
             });
         }
-        Err(err) => log::error!(
-            "{}-Fenster konnte nicht geöffnet werden: {err}",
-            kind.title()
-        ),
+        Err(err) => log::error!("failed to open the {:?} window: {err}", kind),
     }
 }
 
@@ -123,7 +121,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(kind.title().into()),
+            title: Some(kind.title(cx.global::<Locale>())),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -155,13 +153,16 @@ impl Drop for AboutWindow {
 impl Render for AboutWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
-        let version = format!(
-            "Version {}{}",
-            build_info::APP_VERSION,
-            match (build_info::COMMIT, build_info::PROFILE) {
-                ("", _) => String::new(),
-                (commit, profile) => format!(" ({commit} · {profile})"),
-            }
+        let version_suffix = match (build_info::COMMIT, build_info::PROFILE) {
+            ("", _) => String::new(),
+            (commit, profile) => format!(" ({commit} · {profile})"),
+        };
+        let version = cx.t_fmt(
+            "about.version",
+            &[
+                ("version", build_info::APP_VERSION),
+                ("suffix", &version_suffix),
+            ],
         );
 
         div()
@@ -203,7 +204,7 @@ impl Render for AboutWindow {
                             .mt(px(18.))
                             .text_size(px(11.))
                             .text_color(c.muted_foreground)
-                            .child(COPYRIGHT),
+                            .child(cx.t("about.copyright")),
                     )
                     .child(div().flex_1())
                     .child(
@@ -213,17 +214,17 @@ impl Render for AboutWindow {
                             .justify_end()
                             .gap(px(8.))
                             .child(
-                                Button::new("ack", "Danksagungen")
+                                Button::new("ack", cx.t("about.acknowledgements-button"))
                                     .tone(ButtonTone::Secondary)
                                     .on_click(|_, _, cx| open_kind(cx, Kind::Acknowledgements)),
                             )
                             .child(
-                                Button::new("meta", "Build-Infos")
+                                Button::new("meta", cx.t("about.build-info-button"))
                                     .tone(ButtonTone::Secondary)
                                     .on_click(|_, _, cx| open_kind(cx, Kind::BuildInfo)),
                             )
                             .child(
-                                Button::new("lic", "Lizenz")
+                                Button::new("lic", cx.t("about.license-button"))
                                     .tone(ButtonTone::Secondary)
                                     .on_click(|_, _, cx| open_kind(cx, Kind::License)),
                             ),
@@ -329,7 +330,7 @@ impl Render for InfoWindow {
 
         let body = match self.kind {
             Kind::Acknowledgements => self.acknowledgements(cx),
-            Kind::BuildInfo => self.build_info(&c).into_any_element(),
+            Kind::BuildInfo => self.build_info(&c, cx).into_any_element(),
             Kind::License => self.license(&c).into_any_element(),
             Kind::About => div().into_any_element(),
         };
@@ -355,7 +356,7 @@ impl Render for InfoWindow {
                     .bg(c.chrome)
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(self.kind.title()),
+                    .child(self.kind.title(cx.global::<Locale>())),
             )
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
@@ -367,6 +368,8 @@ impl InfoWindow {
         let entity = cx.entity();
         let c = cx.theme().color;
         let sizes = self.ack_sizes.clone();
+        let license_unknown = cx.t("about.license-unknown");
+        let no_license_text = cx.t("about.no-license-text");
 
         // Virtualised: only the visible rows are laid out. Row heights are known
         // up front (`ack_row_sizes`) because both the header strip and the
@@ -390,7 +393,15 @@ impl InfoWindow {
                                     .or_insert_with(ScrollHandle::new)
                                     .clone();
                                 let is_open = expanded.borrow().contains(&ix);
-                                dep_row(ix, c, is_open, entity.clone(), lic_scroll)
+                                dep_row(
+                                    ix,
+                                    c,
+                                    is_open,
+                                    entity.clone(),
+                                    lic_scroll,
+                                    license_unknown.clone(),
+                                    no_license_text.clone(),
+                                )
                             })
                             .collect()
                     },
@@ -402,7 +413,7 @@ impl InfoWindow {
             .into_any_element()
     }
 
-    fn build_info(&self, c: &crate::theme::PaletteColors) -> impl IntoElement {
+    fn build_info(&self, c: &crate::theme::PaletteColors, cx: &Context<Self>) -> impl IntoElement {
         div()
             .id("meta-scroll")
             .size_full()
@@ -412,22 +423,26 @@ impl InfoWindow {
             .py(px(14.))
             .flex()
             .flex_col()
-            .children(build_info::rows().into_iter().map(|(label, value)| {
-                div()
-                    .flex()
-                    .py(px(6.))
-                    .border_b_1()
-                    .border_color(c.border)
-                    .text_size(px(12.5))
-                    .child(
+            .children(
+                build_info::rows(cx.global::<Locale>())
+                    .into_iter()
+                    .map(|(label, value)| {
                         div()
-                            .w(px(180.))
-                            .flex_none()
-                            .text_color(c.muted_foreground)
-                            .child(label),
-                    )
-                    .child(div().flex_1().child(value))
-            }))
+                            .flex()
+                            .py(px(6.))
+                            .border_b_1()
+                            .border_color(c.border)
+                            .text_size(px(12.5))
+                            .child(
+                                div()
+                                    .w(px(180.))
+                                    .flex_none()
+                                    .text_color(c.muted_foreground)
+                                    .child(label),
+                            )
+                            .child(div().flex_1().child(value))
+                    }),
+            )
     }
 
     fn license(&self, c: &crate::theme::PaletteColors) -> impl IntoElement {
@@ -555,6 +570,8 @@ fn dep_row(
     is_open: bool,
     entity: Entity<InfoWindow>,
     license_scroll: ScrollHandle,
+    license_unknown: SharedString,
+    no_license_text: SharedString,
 ) -> impl IntoElement {
     let dep: &D = &build_info::DEPENDENCIES[ix];
     let license = build_info::dep_license(dep);
@@ -602,7 +619,7 @@ fn dep_row(
                         .flex_none()
                         .text_size(px(11.))
                         .text_color(c.muted_foreground)
-                        .child(dep.spdx.unwrap_or("Lizenz unbekannt").to_string()),
+                        .child(dep.spdx.map(SharedString::from).unwrap_or(license_unknown)),
                 ),
         )
         .when(is_open, |el| {
@@ -629,11 +646,7 @@ fn dep_row(
                             .py(px(14.))
                             .text_size(px(10.5))
                             .text_color(c.muted_foreground)
-                            .child(
-                                license
-                                    .map(str::to_string)
-                                    .unwrap_or_else(|| "Kein Lizenztext eingebettet.".to_string()),
-                            ),
+                            .child(license.map(SharedString::from).unwrap_or(no_license_text)),
                     )
                     .child(Scrollbar::vertical(&license_scroll)),
             )

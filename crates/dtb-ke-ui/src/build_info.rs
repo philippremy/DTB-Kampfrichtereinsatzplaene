@@ -42,42 +42,73 @@ pub fn dep_license(d: &D) -> Option<&'static str> {
     d.license.map(|i| LICENSE_TEXTS[i])
 }
 
-fn na(s: &str) -> String {
+fn na(s: &str, locale: &crate::i18n::Locale) -> String {
+    use crate::i18n::ActiveLocale;
     if s.is_empty() {
-        "nicht verfügbar".to_string()
+        locale.t("about.not-available").to_string()
     } else {
         s.to_string()
     }
 }
 
-fn yes_no(b: bool) -> String {
-    if b { "ja" } else { "nein" }.to_string()
+fn yes_no(b: bool, locale: &crate::i18n::Locale) -> String {
+    use crate::i18n::ActiveLocale;
+    let key = if b { "about.yes" } else { "about.no" };
+    locale.t(key).to_string()
 }
 
 /// The metadata rows for the Build-Info window, label + value, in a fixed order.
-pub fn rows() -> Vec<(&'static str, String)> {
+pub fn rows(locale: &crate::i18n::Locale) -> Vec<(gpui::SharedString, String)> {
+    use crate::i18n::ActiveLocale;
     vec![
-        ("App-Version", APP_VERSION.to_string()),
-        ("Commit", na(COMMIT)),
-        ("Branch", na(BRANCH)),
-        ("Commit-Datum", na(COMMIT_DATE)),
-        ("Arbeitsverzeichnis", na(WORKING_TREE)),
-        ("Kennung", IDENTIFIER.to_string()),
-        ("SPDX-Lizenz", na(SPDX_LICENSE)),
-        ("Build-Profil", na(PROFILE)),
-        ("Optimierungsstufe", na(OPT_LEVEL)),
-        ("Debug-Assertions", yes_no(DEBUG_ASSERTIONS)),
-        ("Debug-Informationen", na(DEBUG_INFO)),
-        ("LTO", na(LTO)),
-        ("Codegen-Units", na(CODEGEN_UNITS)),
-        ("Panic-Strategie", PANIC_STRATEGY.to_string()),
-        ("Stripping", na(STRIP)),
-        ("Inkrementell", na(INCREMENTAL)),
-        ("Rust-Toolchain", na(RUST_VERSION)),
-        ("LLVM-Version", na(LLVM_VERSION)),
-        ("Linker", na(LINKER)),
-        ("Ziel-Triple", na(TARGET_TRIPLE)),
-        ("Host-Triple", na(HOST_TRIPLE)),
-        ("Abhängigkeiten", DEPENDENCY_COUNT.to_string()),
+        (locale.t("about.info-app-version"), APP_VERSION.to_string()),
+        (locale.t("about.info-commit"), na(COMMIT, locale)),
+        (locale.t("about.info-branch"), na(BRANCH, locale)),
+        (locale.t("about.info-commit-date"), na(COMMIT_DATE, locale)),
+        (
+            locale.t("about.info-working-tree"),
+            na(WORKING_TREE, locale),
+        ),
+        (locale.t("about.info-identifier"), IDENTIFIER.to_string()),
+        (
+            locale.t("about.info-spdx-license"),
+            na(SPDX_LICENSE, locale),
+        ),
+        (locale.t("about.info-build-profile"), na(PROFILE, locale)),
+        (locale.t("about.info-opt-level"), na(OPT_LEVEL, locale)),
+        (
+            locale.t("about.info-debug-assertions"),
+            yes_no(DEBUG_ASSERTIONS, locale),
+        ),
+        (locale.t("about.info-debug-info"), na(DEBUG_INFO, locale)),
+        (locale.t("about.info-lto"), na(LTO, locale)),
+        (
+            locale.t("about.info-codegen-units"),
+            na(CODEGEN_UNITS, locale),
+        ),
+        (
+            locale.t("about.info-panic-strategy"),
+            PANIC_STRATEGY.to_string(),
+        ),
+        (locale.t("about.info-strip"), na(STRIP, locale)),
+        (locale.t("about.info-incremental"), na(INCREMENTAL, locale)),
+        (
+            locale.t("about.info-rust-toolchain"),
+            na(RUST_VERSION, locale),
+        ),
+        (
+            locale.t("about.info-llvm-version"),
+            na(LLVM_VERSION, locale),
+        ),
+        (locale.t("about.info-linker"), na(LINKER, locale)),
+        (
+            locale.t("about.info-target-triple"),
+            na(TARGET_TRIPLE, locale),
+        ),
+        (locale.t("about.info-host-triple"), na(HOST_TRIPLE, locale)),
+        (
+            locale.t("about.info-dependencies"),
+            DEPENDENCY_COUNT.to_string(),
+        ),
     ]
 }

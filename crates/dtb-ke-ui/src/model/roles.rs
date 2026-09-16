@@ -80,9 +80,12 @@ pub fn apply(kind: &JudgingTableKindDTO, values: &[String]) -> JudgingTableKindD
     }
 }
 
-/// A one-line label for the discipline of a table, for the card's chip.
-pub fn discipline_label(kind: &JudgingTableKindDTO) -> &'static str {
-    Discipline::of(kind).label()
+/// The translation key for a one-line label for the discipline of a table,
+/// for the card's chip. Resolve with `cx.t(..)` (see [`crate::i18n`]) — kept
+/// as a key, not the text itself, so this gpui-free model layer never needs
+/// a `Locale`.
+pub fn discipline_label_key(kind: &JudgingTableKindDTO) -> &'static str {
+    Discipline::of(kind).label_key()
 }
 
 /// Re-cast a populated table to a different discipline, carrying over every
@@ -139,14 +142,17 @@ impl Discipline {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    /// The translation key for this discipline's display name — kept as a
+    /// key, not the text itself, so this gpui-free model layer never needs a
+    /// `Locale`; resolve with `cx.t(..)` (see [`crate::i18n`]).
+    pub fn label_key(self) -> &'static str {
         match self {
-            Discipline::CyrArtistic => "Cyr · Artistik",
-            Discipline::CyrTechnical => "Cyr · Technik",
-            Discipline::GymStl => "Rhönrad · Gerade",
-            Discipline::GymStlm => "Rhönrad · Gerade m. Musik",
-            Discipline::GymSpi => "Rhönrad · Spirale",
-            Discipline::GymVlt => "Rhönrad · Sprung",
+            Discipline::CyrArtistic => "model.discipline.cyr-artistic",
+            Discipline::CyrTechnical => "model.discipline.cyr-technical",
+            Discipline::GymStl => "model.discipline.gym-stl",
+            Discipline::GymStlm => "model.discipline.gym-stlm",
+            Discipline::GymSpi => "model.discipline.gym-spi",
+            Discipline::GymVlt => "model.discipline.gym-vlt",
         }
     }
 
@@ -220,8 +226,8 @@ mod tests {
                 slots(&updated).into_iter().map(|slot| slot.value).collect();
             assert_eq!(read_back, values, "{discipline:?} round-trip");
             assert_eq!(
-                discipline_label(&updated),
-                discipline.label(),
+                discipline_label_key(&updated),
+                discipline.label_key(),
                 "{discipline:?} discipline preserved"
             );
         }

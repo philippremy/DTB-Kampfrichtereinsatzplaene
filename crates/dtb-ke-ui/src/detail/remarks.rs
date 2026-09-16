@@ -39,6 +39,7 @@ use gpui_base::{
 };
 
 use crate::components::field::Field;
+use crate::i18n::ActiveLocale;
 use crate::model::{Paragraph, RichText, Run};
 use crate::store::RemarksEditor;
 use crate::theme::ActiveTheme;
@@ -79,9 +80,10 @@ pub struct RemarksSection {
 
 impl RemarksSection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let placeholder = cx.t("detail.remarks.placeholder");
         let input = cx.new(|cx| {
             EditorState::new(window, cx)
-                .placeholder("Anmerkungen für das Dokumentende …")
+                .placeholder(placeholder)
                 .line_number(false)
                 .folding(false)
                 // Code-editor mode reserves scroll space below the last line
@@ -386,7 +388,7 @@ impl Render for RemarksSection {
         // Must accomodate for row padding beteween lines, therefore + px(3.) per row
         let editor_height = line_height * rows as f32 + px(16.);
 
-        let style_button = |glyph: &'static str,
+        let style_button = |glyph: gpui::SharedString,
                             id: &'static str,
                             on_click: fn(&mut Self, &mut Window, &mut Context<Self>),
                             map: fn(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
@@ -423,28 +425,28 @@ impl Render for RemarksSection {
             .p(px(20.))
             .border_t_1()
             .border_color(c.border)
-            .child(super::field_label("Anmerkungen", &c))
+            .child(super::field_label(cx.t("detail.remarks.label"), &c))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(4.))
                     .child(style_button(
-                        "F",
+                        cx.t("detail.remarks.bold-glyph"),
                         "fmt-bold",
                         Self::toggle_bold,
                         |el| el.font_weight(FontWeight::BOLD),
                         cx,
                     ))
                     .child(style_button(
-                        "K",
+                        cx.t("detail.remarks.italic-glyph"),
                         "fmt-italic",
                         Self::toggle_italic,
                         |el| el.italic(),
                         cx,
                     ))
                     .child(style_button(
-                        "U",
+                        cx.t("detail.remarks.underline-glyph"),
                         "fmt-underline",
                         Self::toggle_underline,
                         |el| el.underline(),
@@ -586,7 +588,7 @@ impl RemarksSection {
                 .text_color(c.muted_foreground)
                 .hover(|el| el.text_color(c.foreground))
                 .on_click(cx.listener(|this, _, window, cx| this.apply_color(None, window, cx)))
-                .child("Zurücksetzen")
+                .child(cx.t("detail.remarks.reset-color"))
         };
 
         div()
@@ -621,7 +623,7 @@ impl RemarksSection {
                         div()
                             .text_size(px(11.5))
                             .text_color(c.muted_foreground)
-                            .child("Textfarbe"),
+                            .child(cx.t("detail.remarks.text-color")),
                     )
                     .child(reset),
             )

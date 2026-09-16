@@ -14,10 +14,15 @@ use gpui::{
 use crate::components::button::{Button, ButtonTone};
 use crate::components::icon::Icon;
 use crate::components::segmented::Segmented;
-use crate::save::{ExportFormat, FormatKind, SaveChoice, with_extension};
+use crate::i18n::ActiveLocale;
+use crate::save::{
+    ExportFormat, FormatKind, SaveChoice, pdf_standard_conflict_message, pdf_standard_label,
+    with_extension,
+};
 use crate::theme::ActiveTheme;
 
-fn field_label(text: &str, c: Hsla) -> gpui::Div {
+fn field_label(text: impl Into<gpui::SharedString>, c: Hsla) -> gpui::Div {
+    let text = text.into();
     div()
         .text_size(px(10.))
         .font_weight(FontWeight::SEMIBOLD)
@@ -65,7 +70,7 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("Exportieren".into()),
+            title: Some(cx.t("save.window-title")),
             appears_transparent: true,
             ..Default::default()
         }),
@@ -218,7 +223,7 @@ impl Render for SaveOptions {
                     .bg(c.chrome)
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child("Exportieren"),
+                    .child(cx.t("save.window-title")),
             )
             .child(
                 div()
@@ -231,17 +236,14 @@ impl Render for SaveOptions {
                         div()
                             .text_size(px(15.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(format!("„{}“ exportieren", self.name.trim())),
+                            .child(cx.t_fmt("save.export-title", &[("name", self.name.trim())])),
                     )
-                    .child(field_label("Format", c.muted_foreground))
-                    .child(
+                    .child(field_label(cx.t("save.format-label"), c.muted_foreground))
+                    .child({
+                        let locale = cx.global::<crate::i18n::Locale>().clone();
                         Segmented::new(
                             "export-format",
-                            FormatKind::ALL.map(|k| match k {
-                                FormatKind::Pdf => "PDF",
-                                FormatKind::Docx => "DOCX",
-                                FormatKind::Blob => "Rohdaten",
-                            }),
+                            FormatKind::ALL.map(|k| k.short_label(&locale)),
                             selected,
                         )
                         .on_select({
@@ -250,8 +252,8 @@ impl Render for SaveOptions {
                                 this.update(cx, |this, cx| this.set_kind(FormatKind::ALL[idx], cx))
                                     .ok();
                             }
-                        }),
-                    )
+                        })
+                    })
                     .child(
                         div()
                             .flex()
@@ -261,58 +263,62 @@ impl Render for SaveOptions {
                             .gap(px(2.))
                             .when(kind == FormatKind::Pdf, |el| {
                                 let conflicts = pdf_standard_conflicts(self.format.pdf_standards());
-                                el.child(field_label("Standards", c.muted_foreground))
-                                    .children(PdfStandard::ALL.map(|s| {
-                                        let checked = self.format.pdf_standards().contains(&s);
-                                        let blocked = conflicts
-                                            .iter()
-                                            .find(|(c, _)| *c == s)
-                                            .map(|(_, r)| r.clone());
-                                        let row = div()
-                                            .id(("std", s as usize))
-                                            .child(checkbox_row(
-                                                s.label(),
-                                                checked,
-                                                c.line_strong,
-                                                if blocked.is_some() {
-                                                    c.line_strong
-                                                } else {
-                                                    c.primary
-                                                },
-                                            ))
-                                            .children(blocked.clone().map(|r| {
-                                                div()
-                                                    .ml(px(24.))
-                                                    .text_size(px(11.))
-                                                    .text_color(c.muted_foreground)
-                                                    .child(r)
-                                            }));
-                                        if blocked.is_some() {
-                                            row.opacity(0.55)
-                                        } else {
-                                            row.cursor_pointer().on_click(cx.listener(
-                                                move |this, _, _w, cx| this.toggle_standard(s, cx),
-                                            ))
-                                        }
-                                    }))
-                                    .children(error.clone().map(|e| {
-                                        div()
-                                            .mt(px(6.))
-                                            .text_size(px(11.5))
-                                            .text_color(c.critical)
-                                            .child(e)
-                                    }))
+                                let locale = cx.global::<crate::i18n::Locale>().clone();
+                                el.child(field_label(
+                                    cx.t("save.standards-label"),
+                                    c.muted_foreground,
+                                ))
+                                .children(PdfStandard::ALL.map(|s| {
+                                    let checked = self.format.pdf_standards().contains(&s);
+                                    let blocked =
+                                        conflicts.iter().find(|(c, _)| *c == s).map(|(_, r)| {
+                                            pdf_standard_conflict_message(s, *r, &locale)
+                                        });
+                                    let row = div()
+                                        .id(("std", s as usize))
+                                        .child(checkbox_row(
+                                            pdf_standard_label(s, &locale),
+                                            checked,
+                                            c.line_strong,
+                                            if blocked.is_some() {
+                                                c.line_strong
+                                            } else {
+                                                c.primary
+                                            },
+                                        ))
+                                        .children(blocked.clone().map(|r| {
+                                            div()
+                                                .ml(px(24.))
+                                                .text_size(px(11.))
+                                                .text_color(c.muted_foreground)
+                                                .child(r)
+                                        }));
+                                    if blocked.is_some() {
+                                        row.opacity(0.55)
+                                    } else {
+                                        row.cursor_pointer().on_click(cx.listener(
+                                            move |this, _, _w, cx| this.toggle_standard(s, cx),
+                                        ))
+                                    }
+                                }))
+                                .children(error.clone().map(|e| {
+                                    div()
+                                        .mt(px(6.))
+                                        .text_size(px(11.5))
+                                        .text_color(c.critical)
+                                        .child(e)
+                                }))
                             })
                             .when(kind == FormatKind::Docx, |el| {
                                 el.child(
                                     div()
                                         .id("embed-fonts")
                                         .cursor_pointer()
-                                        .on_click(
-                                            cx.listener(|this, _, _w, cx| this.toggle_embed_fonts(cx)),
-                                        )
+                                        .on_click(cx.listener(|this, _, _w, cx| {
+                                            this.toggle_embed_fonts(cx)
+                                        }))
                                         .child(checkbox_row(
-                                            "Schriften einbetten",
+                                            cx.t("save.embed-fonts-label"),
                                             self.format.docx_embed_fonts(),
                                             c.line_strong,
                                             c.primary,
@@ -323,10 +329,7 @@ impl Render for SaveOptions {
                                         .mt(px(6.))
                                         .text_size(px(11.5))
                                         .text_color(c.muted_foreground)
-                                        .child(
-                                            "Schriften einbetten macht die Datei eigenständig \
-                                            (~600 KB größer).",
-                                        ),
+                                        .child(cx.t("save.embed-fonts-description")),
                                 )
                             })
                             .when(kind == FormatKind::Blob, |el| {
@@ -334,10 +337,7 @@ impl Render for SaveOptions {
                                     div()
                                         .text_size(px(12.))
                                         .text_color(c.muted_foreground)
-                                        .child(
-                                            "Kopie der Rohdaten zum Sichern oder Weitergeben. \
-                                            Kann über „Wettkampf importieren“ wieder eingelesen werden.",
-                                        ),
+                                        .child(cx.t("save.blob-fallback-description")),
                                 )
                             }),
                     )
@@ -349,7 +349,7 @@ impl Render for SaveOptions {
                             .gap(px(8.))
                             .rounded(radius)
                             .child(
-                                Button::new("cancel", "Abbrechen")
+                                Button::new("cancel", cx.t("save.cancel-button"))
                                     .tone(ButtonTone::Ghost)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.cancel(cx);
@@ -357,14 +357,14 @@ impl Render for SaveOptions {
                                     })),
                             )
                             .child(
-                                Button::new("save", "Speichern unter …")
+                                Button::new("save", cx.t("save.save-button"))
                                     .tone(ButtonTone::Primary)
                                     .disabled(self.picking || error.is_some())
-                                    .on_click(
-                                        cx.listener(|this, _, window, cx| this.choose_path(window, cx)),
-                                    ),
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_path(window, cx)
+                                    })),
                             ),
-                    )
+                    ),
             )
     }
 }

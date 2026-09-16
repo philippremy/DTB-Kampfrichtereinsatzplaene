@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui::{App, Global};
+use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
 
 use crate::filesystem::FilesystemHelper;
@@ -21,6 +21,16 @@ use crate::theme::ThemeMode;
 pub struct Settings {
     /// The user's light / dark preference.
     pub theme_mode: ThemeMode,
+    /// An explicit locale override (a BCP-47 tag, e.g. `"de-DE"`). `None`
+    /// follows the OS's own locale preference. A tag that no longer matches
+    /// any shipped catalog is treated the same as `None`. See
+    /// [`crate::i18n`].
+    pub locale: Option<String>,
+    /// macOS only: tint the accent-derived palette roles (`primary`/`ring`/
+    /// `accent_soft`/`selection`) from the live `NSColor.controlAccentColor`
+    /// instead of the dtb.toml blue. Falls back to dtb.toml off macOS, or if
+    /// the OS colour can't be read. See [`crate::skin::accent`].
+    pub use_system_accent_color: bool,
     /// Snap every animation to its end state (accessibility / low-power).
     pub reduce_motion: bool,
     /// Force every window fully opaque — no blur, no Mica/MicaAlt/Acrylic —
@@ -50,6 +60,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme_mode: ThemeMode::default(),
+            locale: None,
+            use_system_accent_color: true,
             reduce_motion: false,
             reduce_transparency: false,
             autosave: AutosaveDelay::default(),
@@ -76,25 +88,24 @@ pub enum UpdateChannel {
 impl UpdateChannel {
     pub const ALL: [Self; 2] = [Self::Stable, Self::Tip];
 
-    /// A German label for the picker.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Stable => "Stabil",
-            Self::Tip => "Tip (Nightly)",
-        }
+    /// A translated label for the picker.
+    pub fn label(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+        use crate::i18n::ActiveLocale;
+        let key = match self {
+            Self::Stable => "settings.general.channel-stable",
+            Self::Tip => "settings.general.channel-tip",
+        };
+        locale.t(key)
     }
 
-    /// A short explanation for the settings window.
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::Stable => {
-                "Veröffentlichte Versionen — geprüft, signiert und (auf macOS) notariell beglaubigt."
-            }
-            Self::Tip => {
-                "Jeder Commit auf dem Hauptzweig — ungetestet, nur ad-hoc signiert; auf macOS daher \
-                           ohne automatische Installation (nur Download)."
-            }
-        }
+    /// A short translated explanation for the settings window.
+    pub fn description(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+        use crate::i18n::ActiveLocale;
+        let key = match self {
+            Self::Stable => "settings.general.channel-stable-description",
+            Self::Tip => "settings.general.channel-tip-description",
+        };
+        locale.t(key)
     }
 }
 
@@ -209,15 +220,17 @@ impl AutosaveDelay {
         })
     }
 
-    /// A German label for the picker.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Immediate => "Sofort",
-            Self::Half => "Nach 0,5 Sekunden",
-            Self::One => "Nach 1 Sekunde",
-            Self::Two => "Nach 2 Sekunden",
-            Self::Five => "Nach 5 Sekunden",
-        }
+    /// A translated label for the picker.
+    pub fn label(self, locale: &crate::i18n::Locale) -> SharedString {
+        use crate::i18n::ActiveLocale;
+        let key = match self {
+            Self::Immediate => "settings.general.autosave-immediate",
+            Self::Half => "settings.general.autosave-half",
+            Self::One => "settings.general.autosave-one",
+            Self::Two => "settings.general.autosave-two",
+            Self::Five => "settings.general.autosave-five",
+        };
+        locale.t(key)
     }
 }
 
@@ -257,15 +270,17 @@ impl LogLevel {
         }
     }
 
-    /// A short German label for the picker.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "Automatisch",
-            Self::Error => "Fehler",
-            Self::Warn => "Warnung",
-            Self::Info => "Info",
-            Self::Debug => "Debug",
-            Self::Trace => "Trace",
-        }
+    /// A short translated label for the picker.
+    pub fn label(self, locale: &crate::i18n::Locale) -> SharedString {
+        use crate::i18n::ActiveLocale;
+        let key = match self {
+            Self::Auto => "settings.advanced.log-level-auto",
+            Self::Error => "settings.advanced.log-level-error",
+            Self::Warn => "settings.advanced.log-level-warn",
+            Self::Info => "settings.advanced.log-level-info",
+            Self::Debug => "settings.advanced.log-level-debug",
+            Self::Trace => "settings.advanced.log-level-trace",
+        };
+        locale.t(key)
     }
 }

@@ -16,6 +16,7 @@ use crate::actions::file::NewCompetition;
 use crate::components::button::{Button, ButtonTone};
 use crate::components::chip::{Chip, ChipTone};
 use crate::components::org_emblem::OrgEmblem;
+use crate::i18n::{ActiveLocale, Locale};
 use crate::model::{self, CompetitionMeta, JudgingTable};
 use crate::store::{AppStore, CompetitionDocument, SaveState};
 use crate::theme::ActiveTheme;
@@ -75,10 +76,10 @@ impl Render for CompetitionToolbar {
                         .text_color(c.foreground)
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("Kein Wettkampf ausgewählt"),
+                        .child(cx.t("toolbar.no-selection")),
                 )
                 .child(
-                    Button::new("new-competition", "Neuer Wettkampf")
+                    Button::new("new-competition", cx.t("toolbar.new-competition-button"))
                         .tone(ButtonTone::Primary)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(Box::new(NewCompetition), cx);
@@ -90,12 +91,13 @@ impl Render for CompetitionToolbar {
         let meta = doc.metadata().read(cx).meta().clone();
         let save = doc.save_state();
         let conflicts = conflict_count(doc, cx);
+        let locale = cx.global::<Locale>().clone();
 
         let (save_label, save_tone) = match &save {
-            SaveState::Saved => ("Gespeichert", ChipTone::Ok),
-            SaveState::Dirty => ("Änderungen", ChipTone::Neutral),
-            SaveState::Saving => ("Speichern …", ChipTone::Neutral),
-            SaveState::Error(_) => ("Fehler beim Speichern", ChipTone::Critical),
+            SaveState::Saved => (locale.t("toolbar.save-state-saved"), ChipTone::Ok),
+            SaveState::Dirty => (locale.t("toolbar.save-state-dirty"), ChipTone::Neutral),
+            SaveState::Saving => (locale.t("toolbar.save-state-saving"), ChipTone::Neutral),
+            SaveState::Error(_) => (locale.t("toolbar.save-state-error"), ChipTone::Critical),
         };
 
         row.child(OrgEmblem::new(meta.organization))
@@ -121,13 +123,10 @@ impl Render for CompetitionToolbar {
                             .child(secondary_line(&meta)),
                     ),
             )
-            .child(Chip::new(meeting_label(&meta.meeting_times)).mono())
+            .child(Chip::new(meeting_label(&meta.meeting_times, &locale)).mono())
             .children((conflicts > 0).then(|| {
-                Chip::new(match conflicts {
-                    1 => "1 Konflikt".to_owned(),
-                    n => format!("{n} Konflikte"),
-                })
-                .tone(ChipTone::Critical)
+                Chip::new(locale.t_plural("toolbar.conflicts", conflicts as i64, &[]))
+                    .tone(ChipTone::Critical)
             }))
             .child(Chip::new(save_label).tone(save_tone))
     }
@@ -160,16 +159,21 @@ fn secondary_line(meta: &CompetitionMeta) -> String {
     parts.join(" · ")
 }
 
-fn meeting_label(times: &MeetingTimeDTO) -> String {
+fn meeting_label(times: &MeetingTimeDTO, locale: &Locale) -> String {
     match times {
-        MeetingTimeDTO::Unified(t) => format!("Besprechung um {}", t.format("%H:%M")),
+        MeetingTimeDTO::Unified(t) => locale.t_fmt(
+            "toolbar.meeting-unified",
+            &[("time", &t.format("%H:%M").to_string())],
+        ),
         MeetingTimeDTO::Split {
             qualification,
             finale,
-        } => format!(
-            "Quali. {} · Finale {}",
-            qualification.format("%H:%M"),
-            finale.format("%H:%M")
+        } => locale.t_fmt(
+            "toolbar.meeting-split",
+            &[
+                ("qualification", &qualification.format("%H:%M").to_string()),
+                ("finale", &finale.format("%H:%M").to_string()),
+            ],
         ),
     }
 }

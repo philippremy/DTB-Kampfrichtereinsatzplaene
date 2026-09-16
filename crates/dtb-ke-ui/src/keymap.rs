@@ -242,9 +242,9 @@ pub fn defaults() -> Vec<Binding> {
 /// `Settings.toml`.
 pub type Overrides = BTreeMap<String, String>;
 
-/// The configurable rows, in table order, paired with their German menu label.
-/// Powers the settings window's key-binding list.
-pub fn configurable() -> Vec<(&'static str, String)> {
+/// The configurable rows, in table order, paired with their translated menu
+/// label. Powers the settings window's key-binding list.
+pub fn configurable(locale: &crate::i18n::Locale) -> Vec<(&'static str, gpui::SharedString)> {
     defaults()
         .into_iter()
         .filter(|row| row.configurable)
@@ -252,7 +252,8 @@ pub fn configurable() -> Vec<(&'static str, String)> {
             let name = row.name();
             (
                 name,
-                crate::menu::label_for(name).unwrap_or_else(|| name.to_string()),
+                crate::menu::label_for(name, locale)
+                    .unwrap_or_else(|| gpui::SharedString::from(name)),
             )
         })
         .collect()
@@ -290,62 +291,71 @@ pub enum Conflict {
 }
 
 impl Conflict {
-    /// A German sentence for the settings window.
-    pub fn message(&self) -> String {
+    /// A localized sentence for the settings window.
+    pub fn message(&self, locale: &crate::i18n::Locale) -> String {
+        use crate::i18n::ActiveLocale;
         match self {
             Conflict::Command(label) => {
-                format!("Bereits mit „{label}“ belegt.")
+                locale.t_fmt("keymap.conflict-command", &[("label", label.as_str())])
             }
-            Conflict::Reserved(what) => {
-                format!("Überschneidet sich mit „{what}“.")
+            Conflict::Reserved(key) => {
+                let what = locale.t(key);
+                locale.t_fmt("keymap.conflict-reserved", &[("what", what.as_ref())])
             }
         }
     }
 }
 
 /// Well-known keystrokes that a user binding should not shadow. Not exhaustive
-/// — the common system and clipboard shortcuts people actually hit.
+/// — the common system and clipboard shortcuts people actually hit. The
+/// second element of each pair is a translation key (`reserved.*`), not
+/// literal text — resolved by [`Conflict::message`].
 fn reserved_keystrokes() -> &'static [(&'static str, &'static str)] {
     #[cfg(target_os = "macos")]
     {
         &[
-            ("cmd-q", "Programm beenden"),
-            ("cmd-w", "Fenster schließen"),
-            ("cmd-h", "Programm ausblenden"),
-            ("cmd-m", "Fenster minimieren"),
-            ("cmd-,", "Einstellungen"),
-            ("cmd-a", "Alles auswählen"),
-            ("cmd-z", "Widerrufen"),
-            ("cmd-x", "Ausschneiden"),
-            ("cmd-c", "Kopieren"),
-            ("cmd-v", "Einfügen"),
-            ("cmd-tab", "Programm wechseln (System)"),
-            ("cmd-space", "Spotlight (System)"),
-            ("cmd-ctrl-f", "Vollbild (System)"),
-            ("cmd-shift-3", "Bildschirmfoto (System)"),
-            ("cmd-shift-4", "Bildschirmfoto (System)"),
-            ("cmd-shift-5", "Bildschirmaufnahme (System)"),
+            ("cmd-q", "reserved.quit"),
+            ("cmd-w", "reserved.close-window"),
+            ("cmd-h", "reserved.hide-app"),
+            ("cmd-m", "reserved.minimize-window"),
+            ("cmd-,", "reserved.preferences"),
+            ("cmd-a", "reserved.select-all"),
+            ("cmd-z", "reserved.undo"),
+            ("cmd-x", "reserved.cut"),
+            ("cmd-c", "reserved.copy"),
+            ("cmd-v", "reserved.paste"),
+            ("cmd-tab", "reserved.switch-app"),
+            ("cmd-space", "reserved.spotlight"),
+            ("cmd-ctrl-f", "reserved.fullscreen"),
+            ("cmd-shift-3", "reserved.screenshot"),
+            ("cmd-shift-4", "reserved.screenshot"),
+            ("cmd-shift-5", "reserved.screen-recording"),
         ]
     }
     #[cfg(not(target_os = "macos"))]
     {
         &[
-            ("ctrl-w", "Fenster schließen"),
-            ("ctrl-a", "Alles auswählen"),
-            ("ctrl-z", "Widerrufen"),
-            ("ctrl-x", "Ausschneiden"),
-            ("ctrl-c", "Kopieren"),
-            ("ctrl-v", "Einfügen"),
-            ("alt-f4", "Fenster schließen (System)"),
-            ("ctrl-alt-delete", "System (System)"),
-            ("super-l", "Sperren (System)"),
+            ("ctrl-w", "reserved.close-window"),
+            ("ctrl-a", "reserved.select-all"),
+            ("ctrl-z", "reserved.undo"),
+            ("ctrl-x", "reserved.cut"),
+            ("ctrl-c", "reserved.copy"),
+            ("ctrl-v", "reserved.paste"),
+            ("alt-f4", "reserved.close-window-system"),
+            ("ctrl-alt-delete", "reserved.system"),
+            ("super-l", "reserved.lock"),
         ]
     }
 }
 
 /// Check `candidate` for `action_name`, given `overrides` as the *pending*
 /// override map (the edit the user is considering). Returns the first conflict.
-pub fn conflict(action_name: &str, candidate: &str, overrides: &Overrides) -> Option<Conflict> {
+pub fn conflict(
+    action_name: &str,
+    candidate: &str,
+    overrides: &Overrides,
+    locale: &crate::i18n::Locale,
+) -> Option<Conflict> {
     if !is_valid_keystroke(candidate) {
         return None;
     }
@@ -363,7 +373,9 @@ pub fn conflict(action_name: &str, candidate: &str, overrides: &Overrides) -> Op
             continue;
         };
         if same_keystroke(candidate, &effective) {
-            let label = crate::menu::label_for(name).unwrap_or_else(|| name.to_string());
+            let label = crate::menu::label_for(name, locale)
+                .unwrap_or_else(|| gpui::SharedString::from(name))
+                .to_string();
             return Some(Conflict::Command(label));
         }
     }
@@ -532,29 +544,32 @@ mod tests {
 
     #[test]
     fn configurable_rows_have_labels() {
-        let rows = configurable();
+        let locale = crate::i18n::test_locale();
+        let rows = configurable(&locale);
         assert!(!rows.is_empty());
-        // Every configurable row resolves to a real German menu label.
+        // Every configurable row resolves to a real translated menu label.
         for (name, label) in rows {
-            assert_ne!(label, name, "no menu label found for {name}");
+            assert_ne!(label.as_ref(), name, "no menu label found for {name}");
         }
     }
 
     #[test]
     fn conflict_detects_a_command_collision() {
+        let locale = crate::i18n::test_locale();
         // `file::NewCompetition` defaults to secondary-n; try to bind
         // `file::AddJudgingTable` to the same chord.
         let target = file::AddJudgingTable.name();
-        match conflict(target, "secondary-n", &Overrides::new()) {
+        match conflict(target, "secondary-n", &Overrides::new(), &locale) {
             Some(Conflict::Command(label)) => assert!(!label.is_empty()),
             other => panic!("expected a command conflict, got {other:?}"),
         }
         // Its own default is fine.
-        assert!(conflict(target, "secondary-shift-n", &Overrides::new()).is_none());
+        assert!(conflict(target, "secondary-shift-n", &Overrides::new(), &locale).is_none());
     }
 
     #[test]
     fn conflict_flags_a_reserved_shortcut() {
+        let locale = crate::i18n::test_locale();
         let target = file::NewCompetition.name();
         let reserved = if cfg!(target_os = "macos") {
             "cmd-q"
@@ -562,7 +577,7 @@ mod tests {
             "ctrl-w"
         };
         assert!(matches!(
-            conflict(target, reserved, &Overrides::new()),
+            conflict(target, reserved, &Overrides::new(), &locale),
             Some(Conflict::Reserved(_))
         ));
     }

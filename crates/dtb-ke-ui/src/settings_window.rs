@@ -13,13 +13,14 @@
 //!   [`App::intercept_keystrokes`]; the capture is checked against the other
 //!   commands and a list of reserved OS shortcuts before it can be applied.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use gpui::{
     AnyWindowHandle, App, AppContext, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Keystroke, ParentElement, Render, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
-    WindowKind, WindowOptions, div, point, prelude::FluentBuilder, px,
+    IntoElement, Keystroke, MouseButton, ParentElement, Pixels, Render, ScrollHandle, SharedString,
+    Size, StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
+    WindowKind, WindowOptions, anchored, canvas, deferred, div, point, prelude::FluentBuilder, px,
 };
 use gpui_base::Scrollbar;
 
@@ -27,13 +28,12 @@ use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
+use crate::i18n::ActiveLocale;
 use crate::keymap::{self, Conflict};
 use crate::settings::{AutosaveDelay, LogLevel, Settings};
 use crate::theme::{ActiveTheme, ThemeMode};
 
-const TITLE: &str = "Einstellungen";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
     General,
     Keybindings,
@@ -43,12 +43,13 @@ enum Tab {
 impl Tab {
     const ALL: [Tab; 3] = [Tab::General, Tab::Keybindings, Tab::Advanced];
 
-    fn label(self) -> &'static str {
-        match self {
-            Tab::General => "Allgemein",
-            Tab::Keybindings => "Tastenkürzel",
-            Tab::Advanced => "Erweitert",
-        }
+    fn label(self, locale: &crate::i18n::Locale) -> SharedString {
+        let key = match self {
+            Tab::General => "settings.tab-general",
+            Tab::Keybindings => "settings.tab-keybindings",
+            Tab::Advanced => "settings.tab-advanced",
+        };
+        locale.t(key)
     }
 
     fn icon(self) -> Icon {
@@ -93,7 +94,7 @@ fn window_options(cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(TITLE.into()),
+            title: Some(cx.t("settings.window-title")),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -125,6 +126,14 @@ pub struct SettingsWindow {
     pending: Option<Pending>,
     /// The keystroke interceptor, live only while recording.
     intercept: Option<Subscription>,
+
+    /// Whether the language dropdown's popover is open.
+    language_open: bool,
+    /// Absolute bounds of the language dropdown trigger, captured during
+    /// prepaint (via a `canvas` probe — not an entity update, which would
+    /// dead-lock) so the popover can anchor to it. Same convention as
+    /// `detail::meta_dialog::MetaDialog`'s organisation selector.
+    language_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 impl Drop for SettingsWindow {
@@ -143,6 +152,8 @@ impl SettingsWindow {
             recording: None,
             pending: None,
             intercept: None,
+            language_open: false,
+            language_bounds: Rc::new(Cell::new(None)),
         }
     }
 
@@ -150,6 +161,7 @@ impl SettingsWindow {
         if self.tab != tab {
             self.tab = tab;
             self.stop_recording(cx);
+            self.language_open = false;
             self.scroll.set_offset(point(px(0.), px(0.)));
             cx.notify();
         }
@@ -210,7 +222,12 @@ impl SettingsWindow {
         }
 
         let keystroke = ks.unparse();
-        let conflict = keymap::conflict(action, &keystroke, &self.overrides);
+        let conflict = keymap::conflict(
+            action,
+            &keystroke,
+            &self.overrides,
+            cx.global::<crate::i18n::Locale>(),
+        );
         self.recording = None;
         self.intercept = None;
         self.pending = Some(Pending {
@@ -280,8 +297,9 @@ impl SettingsWindow {
             .gap(px(2.))
             .children(Tab::ALL.into_iter().map(|tab| {
                 let selected = self.tab == tab;
+                let label = tab.label(cx.global::<crate::i18n::Locale>());
                 div()
-                    .id(tab.label())
+                    .id(SharedString::from(format!("tab-{tab:?}")))
                     .flex()
                     .items_center()
                     .gap(px(9.))
@@ -306,7 +324,7 @@ impl SettingsWindow {
                     } else {
                         c.muted_foreground
                     }))
-                    .child(tab.label())
+                    .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
             }))
     }
@@ -345,7 +363,7 @@ impl SettingsWindow {
                                 div()
                                     .text_size(px(19.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(self.tab.label()),
+                                    .child(self.tab.label(cx.global::<crate::i18n::Locale>())),
                             )
                             .child(body),
                     ),
@@ -361,17 +379,45 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .mt(px(10.))
-            .child(section_label("Erscheinungsbild", &c))
+            .child(section_label(cx.t("settings.general.language-section"), &c))
             .child(setting_row(
-                "Farbschema",
-                "Helles oder dunkles Erscheinungsbild — oder automatisch dem System folgen.",
+                cx.t("settings.general.language-title"),
+                cx.t("settings.general.language-description"),
+                &c,
+                self.language_switch(settings.locale.clone(), cx),
+            ))
+            .child(divider(&c))
+            .child(section_label(
+                cx.t("settings.general.appearance-section"),
+                &c,
+            ))
+            .child(setting_row(
+                cx.t("settings.general.theme-title"),
+                cx.t("settings.general.theme-description"),
                 &c,
                 self.theme_switch(mode, cx),
             ))
             .child(divider(&c))
             .child(setting_row(
-                "Bewegungen reduzieren",
-                "Blendet Ein-/Ausblendungen und Übergänge aus. Nützlich bei Bewegungsempfindlichkeit.",
+                cx.t("settings.general.accent-title"),
+                if cfg!(target_os = "macos") {
+                    cx.t("settings.general.accent-description")
+                } else {
+                    cx.t("settings.general.accent-description-unavailable")
+                },
+                &c,
+                Toggle::new("use-system-accent", settings.use_system_accent_color)
+                    .disabled(!cfg!(target_os = "macos"))
+                    .on_change(cx.processor(|_, next: bool, _window, cx| {
+                        Settings::update(cx, move |s| s.use_system_accent_color = next);
+                        crate::theme::Theme::reload(cx);
+                    }))
+                    .into_any_element(),
+            ))
+            .child(divider(&c))
+            .child(setting_row(
+                cx.t("settings.general.reduce-motion-title"),
+                cx.t("settings.general.reduce-motion-description"),
                 &c,
                 Toggle::new("reduce-motion", settings.reduce_motion)
                     .on_change(cx.processor(|_, next: bool, _window, cx| {
@@ -383,9 +429,8 @@ impl SettingsWindow {
             ))
             .child(divider(&c))
             .child(setting_row(
-                "Transparenz reduzieren",
-                "Stellt jedes Fenster vollständig deckend dar — ohne Unschärfe, Mica oder Acrylic. \
-                 Nützlich bei eingeschränkter Grafikleistung oder für besseren Kontrast.",
+                cx.t("settings.general.reduce-transparency-title"),
+                cx.t("settings.general.reduce-transparency-description"),
                 &c,
                 Toggle::new("reduce-transparency", settings.reduce_transparency)
                     .on_change(cx.processor(|_, next: bool, _window, cx| {
@@ -395,23 +440,21 @@ impl SettingsWindow {
                     .into_any_element(),
             ))
             .child(divider(&c))
-            .child(section_label("Bearbeiten", &c))
+            .child(section_label(cx.t("settings.general.editing-section"), &c))
             .child(setting_row(
-                "Automatisch speichern",
-                "Wie lange nach der letzten Änderung gewartet wird, bevor der Wettkampf gespeichert wird.",
+                cx.t("settings.general.autosave-title"),
+                cx.t("settings.general.autosave-description"),
                 &c,
                 self.autosave_switch(settings.autosave, cx),
             ))
             .child(divider(&c))
-            .child(section_label("Aktualisierung", &c))
+            .child(section_label(cx.t("settings.general.update-section"), &c))
             .child(setting_row(
-                "Automatisch nach Updates suchen",
+                cx.t("settings.general.auto-update-title"),
                 if crate::updater::available() {
-                    "Prüft im Hintergrund auf neue Versionen und zeigt eine Benachrichtigung an. \
-                     Die Aktualisierung wird nie ohne Bestätigung installiert."
+                    cx.t("settings.general.auto-update-description")
                 } else {
-                    "In dieser Programmversion ist die Aktualisierungsfunktion nicht verfügbar \
-                     (kein Prüfschlüssel eingebettet). Die Einstellung wird trotzdem gespeichert."
+                    cx.t("settings.general.auto-update-description-unavailable")
                 },
                 &c,
                 Toggle::new("auto-update", settings.auto_update)
@@ -423,26 +466,32 @@ impl SettingsWindow {
             ))
             .child(divider(&c))
             .child(setting_row(
-                "Aktualisierungskanal",
-                settings.update_channel.description(),
+                cx.t("settings.general.update-channel-title"),
+                settings
+                    .update_channel
+                    .description(cx.global::<crate::i18n::Locale>()),
                 &c,
                 self.channel_switch(settings.update_channel, cx),
             ))
             .when_some(settings.skipped_update.clone(), |el, version| {
+                let description = cx.t_fmt(
+                    "settings.general.skipped-update-description",
+                    &[("version", &version)],
+                );
                 el.child(divider(&c)).child(setting_row(
-                    "Übersprungene Version",
-                    &format!(
-                        "Version {version} wurde übersprungen und wird bei automatischen \
-                         Prüfungen ignoriert, bis eine neuere Version erscheint."
-                    ),
+                    cx.t("settings.general.skipped-update-title"),
+                    description,
                     &c,
-                    Button::new("reset-skipped-update", "Zurücksetzen")
-                        .small()
-                        .on_click(|_, _window, cx| {
-                            log::info!("update-skip reset from settings");
-                            Settings::update(cx, |s| s.skipped_update = None);
-                        })
-                        .into_any_element(),
+                    Button::new(
+                        "reset-skipped-update",
+                        cx.t("settings.general.skipped-update-reset-button"),
+                    )
+                    .small()
+                    .on_click(|_, _window, cx| {
+                        log::info!("update-skip reset from settings");
+                        Settings::update(cx, |s| s.skipped_update = None);
+                    })
+                    .into_any_element(),
                 ))
             })
     }
@@ -450,10 +499,12 @@ impl SettingsWindow {
     fn theme_switch(&self, current: ThemeMode, cx: &mut Context<Self>) -> gpui::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
-        let option = |mode: ThemeMode, icon: Icon| {
+        let locale = cx.global::<crate::i18n::Locale>().clone();
+        let option = |mode: ThemeMode, icon: Icon, cx: &mut Context<Self>| {
             let selected = mode == current;
+            let label = mode.label(&locale);
             div()
-                .id(mode.label())
+                .id(SharedString::from(format!("theme-{mode:?}")))
                 .flex()
                 .items_center()
                 .gap(px(6.))
@@ -474,7 +525,7 @@ impl SettingsWindow {
                 } else {
                     c.muted_foreground
                 }))
-                .child(mode.label())
+                .child(label)
                 .on_click(cx.listener(move |_, _, _window, cx| {
                     crate::theme::Theme::set_mode(mode, cx);
                 }))
@@ -490,9 +541,9 @@ impl SettingsWindow {
             .border_1()
             .border_color(c.border)
             .bg(c.chrome)
-            .child(option(ThemeMode::System, Icon::Monitor))
-            .child(option(ThemeMode::Light, Icon::Sun))
-            .child(option(ThemeMode::Dark, Icon::Moon))
+            .child(option(ThemeMode::System, Icon::Monitor, cx))
+            .child(option(ThemeMode::Light, Icon::Sun, cx))
+            .child(option(ThemeMode::Dark, Icon::Moon, cx))
             .into_any_element()
     }
 
@@ -505,10 +556,11 @@ impl SettingsWindow {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let available = crate::updater::available();
-        let option = |channel: UpdateChannel| {
+        let locale = cx.global::<crate::i18n::Locale>().clone();
+        let option = |channel: UpdateChannel, cx: &mut Context<Self>| {
             let selected = channel == current;
             div()
-                .id(channel.label())
+                .id(SharedString::from(format!("channel-{channel:?}")))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -524,7 +576,7 @@ impl SettingsWindow {
                         el.cursor_pointer().hover(|el| el.text_color(c.foreground))
                     })
                 })
-                .child(channel.label())
+                .child(channel.label(&locale))
                 .when(available, |el| {
                     el.on_click(cx.listener(move |_, _, _window, cx| {
                         // A skip recorded on one channel is meaningless on the
@@ -549,20 +601,167 @@ impl SettingsWindow {
             .border_color(c.border)
             .bg(c.chrome)
             .when(!available, |el| el.opacity(0.5))
-            .child(option(UpdateChannel::Stable))
-            .child(option(UpdateChannel::Tip))
+            .child(option(UpdateChannel::Stable, cx))
+            .child(option(UpdateChannel::Tip, cx))
+            .into_any_element()
+    }
+
+    /// A dropdown (not a pill row — with more than a couple of locales that
+    /// would grow unbounded) built from [`crate::i18n::available_locales`]
+    /// plus a leading "System" option; adding a shipped catalog needs no
+    /// change here. Same popover convention as
+    /// `detail::meta_dialog::MetaDialog::org_selector`.
+    fn language_switch(&self, current: Option<String>, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use crate::i18n::Locale;
+        let c = cx.theme().color;
+        let radius = cx.theme().skin.radius_control_px();
+        let open = self.language_open;
+
+        let active_name = cx.global::<Locale>().name.clone();
+        let system_label = cx.t_fmt(
+            "settings.general.language-system",
+            &[("name", active_name.as_str())],
+        );
+        let current_label = match &current {
+            None => system_label.clone(),
+            Some(tag) => crate::i18n::available_locales()
+                .into_iter()
+                .find(|l| l.tag == tag.as_str())
+                .map(|l| l.name)
+                .unwrap_or_else(|| tag.clone()),
+        };
+
+        let list = open.then(|| self.language_bounds.get()).flatten().map(|b| {
+            let anchor = point(b.origin.x, b.origin.y + b.size.height + px(3.));
+
+            let option = |value: Option<String>, label: SharedString, cx: &mut Context<Self>| {
+                let selected = value == current;
+                let id = value.clone().unwrap_or_else(|| "system".to_owned());
+                div()
+                    .id(SharedString::from(id))
+                    .px(px(8.))
+                    .py(px(5.))
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .when(selected, |el| el.text_color(c.primary))
+                    .hover(|el| el.bg(c.accent_soft))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _w, cx| {
+                            this.language_open = false;
+                            let next = value.clone();
+                            log::info!("locale set to {next:?}");
+                            Settings::update(cx, move |s| s.locale = next.clone());
+                            Locale::reload(cx);
+                            cx.notify();
+                        }),
+                    )
+                    .child(label)
+            };
+
+            let mut col = div()
+                .id("language-list")
+                .w(b.size.width)
+                .max_h(px(260.))
+                .flex()
+                .flex_col()
+                .py(px(2.))
+                .rounded(radius)
+                .border_1()
+                .border_color(c.border)
+                .bg(c.surface)
+                .shadow_lg()
+                .overflow_y_scroll()
+                .occlude()
+                .child(option(None, SharedString::from(system_label.clone()), cx));
+
+            for locale in crate::i18n::available_locales() {
+                col = col.child(option(
+                    Some(locale.tag.to_owned()),
+                    SharedString::from(locale.name),
+                    cx,
+                ));
+            }
+
+            // Same priority convention as `MetaDialog::org_selector` — above
+            // a `gpui_base::Dialog` (this window has none, but keeps every
+            // popover in the app consistent).
+            deferred(anchored().position(anchor).snap_to_window().child(col))
+                .with_priority(gpui_base::POPUP_PRIORITY)
+        });
+
+        let capture = self.language_bounds.clone();
+
+        div()
+            .id("language-select")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(px(220.))
+            .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
+                if this.language_open {
+                    this.language_open = false;
+                    cx.notify();
+                }
+            }))
+            // Capture the *outer* bounds of the control (no padding/border of
+            // its own) so the popover aligns with the trigger's visible edge.
+            .child(
+                canvas(
+                    move |bounds, window, _cx| {
+                        if capture.get() != Some(bounds) {
+                            capture.set(Some(bounds));
+                            window.request_animation_frame();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .id("language-select-trigger")
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(6.))
+                    .h(px(28.))
+                    .px(px(10.))
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(if open { c.primary } else { c.border })
+                    .bg(c.surface)
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _w, cx| {
+                        this.language_open = !this.language_open;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .truncate()
+                            .child(SharedString::from(current_label)),
+                    )
+                    .child(Icon::ChevronDown.size(px(13.)).color(c.muted_foreground)),
+            )
+            .children(list)
             .into_any_element()
     }
 
     fn autosave_switch(&self, current: AutosaveDelay, cx: &mut Context<Self>) -> gpui::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
-        let short = |d: AutosaveDelay| match d {
-            AutosaveDelay::Immediate => "Sofort",
-            AutosaveDelay::Half => "0,5 s",
-            AutosaveDelay::One => "1 s",
-            AutosaveDelay::Two => "2 s",
-            AutosaveDelay::Five => "5 s",
+        let short = |d: AutosaveDelay, cx: &Context<Self>| {
+            let key = match d {
+                AutosaveDelay::Immediate => "settings.general.autosave-short-immediate",
+                AutosaveDelay::Half => "settings.general.autosave-short-half",
+                AutosaveDelay::One => "settings.general.autosave-short-one",
+                AutosaveDelay::Two => "settings.general.autosave-short-two",
+                AutosaveDelay::Five => "settings.general.autosave-short-five",
+            };
+            cx.t(key)
         };
         div()
             .flex()
@@ -576,8 +775,9 @@ impl SettingsWindow {
             .bg(c.chrome)
             .children(AutosaveDelay::ALL.into_iter().map(|delay| {
                 let selected = delay == current;
+                let label = short(delay, cx);
                 div()
-                    .id(short(delay))
+                    .id(SharedString::from(format!("autosave-{delay:?}")))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -593,7 +793,7 @@ impl SettingsWindow {
                             .cursor_pointer()
                             .hover(|el| el.text_color(c.foreground))
                     })
-                    .child(short(delay))
+                    .child(label)
                     .on_click(cx.listener(move |_, _, _window, cx| {
                         log::info!("autosave delay changed to {delay:?}");
                         Settings::update(cx, move |s| s.autosave = delay);
@@ -606,29 +806,32 @@ impl SettingsWindow {
     fn advanced_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
         let settings = Settings::global(cx);
-        let auto_hint = format!(
-            "„Automatisch“ = derzeit {}. Eine feste Stufe überschreibt die Erkennung sofort, \
-             auch im laufenden Betrieb.",
-            filter_label(dtb_ke_log::effective_level())
+        let current = filter_label(
+            dtb_ke_log::effective_level(),
+            cx.global::<crate::i18n::Locale>(),
+        );
+        let auto_hint = cx.t_fmt(
+            "settings.advanced.log-level-hint",
+            &[("current", current.as_ref())],
         );
 
         div()
             .flex()
             .flex_col()
             .mt(px(10.))
-            .child(section_label("Protokollierung", &c))
+            .child(section_label(cx.t("settings.advanced.logging-section"), &c))
             .child(setting_row(
-                "Protokollstufe",
-                &auto_hint,
+                cx.t("settings.advanced.log-level-title"),
+                auto_hint,
                 &c,
                 self.loglevel_switch(settings.log_level, cx),
             ))
             .child(divider(&c))
             .child(setting_row(
-                "Protokolle ansehen",
-                "Öffnet das Protokollfenster mit allen Sitzungsdateien.",
+                cx.t("settings.advanced.view-logs-title"),
+                cx.t("settings.advanced.view-logs-description"),
                 &c,
-                Button::new("open-logs", "Protokolle öffnen")
+                Button::new("open-logs", cx.t("settings.advanced.open-logs-button"))
                     .small()
                     .on_click(|_, _window, cx| crate::logs_window::open(cx))
                     .into_any_element(),
@@ -638,6 +841,7 @@ impl SettingsWindow {
     fn loglevel_switch(&self, current: LogLevel, cx: &mut Context<Self>) -> gpui::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
+        let locale = cx.global::<crate::i18n::Locale>().clone();
         div()
             .flex()
             .flex_none()
@@ -650,8 +854,9 @@ impl SettingsWindow {
             .bg(c.chrome)
             .children(LogLevel::ALL.into_iter().map(|level| {
                 let selected = level == current;
+                let label = level.label(&locale);
                 div()
-                    .id(level.label())
+                    .id(SharedString::from(format!("loglevel-{level:?}")))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -667,7 +872,7 @@ impl SettingsWindow {
                             .cursor_pointer()
                             .hover(|el| el.text_color(c.foreground))
                     })
-                    .child(level.label())
+                    .child(label)
                     .on_click(cx.listener(move |_, _, _window, cx| {
                         log::info!("log level set to {level:?}");
                         Settings::update(cx, move |s| s.log_level = level);
@@ -681,9 +886,10 @@ impl SettingsWindow {
     fn keybindings_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
 
+        let locale = cx.global::<crate::i18n::Locale>().clone();
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        for (action, label) in keymap::configurable() {
-            rows.push(self.binding_row(action, label, cx));
+        for (action, label) in keymap::configurable(&locale) {
+            rows.push(self.binding_row(action, label.to_string(), cx));
         }
 
         let fixed: Vec<(&'static str, String)> = keymap::defaults()
@@ -693,7 +899,9 @@ impl SettingsWindow {
                 let name = row.name();
                 (
                     name,
-                    crate::menu::label_for(name).unwrap_or_else(|| name.to_string()),
+                    crate::menu::label_for(name, &locale)
+                        .unwrap_or_else(|| SharedString::from(name))
+                        .to_string(),
                 )
             })
             .collect();
@@ -707,15 +915,18 @@ impl SettingsWindow {
                     .text_size(px(12.5))
                     .text_color(c.muted_foreground)
                     .mb(px(14.))
-                    .child(
-                        "Klicke „Aufnehmen“ und drücke die gewünschte Tastenkombination. \
-                         Überschneidungen mit anderen Befehlen oder Systemkürzeln werden gemeldet.",
-                    ),
+                    .child(cx.t("settings.keybindings.hint")),
             )
-            .child(section_label("Anpassbar", &c))
+            .child(section_label(
+                cx.t("settings.keybindings.configurable-section"),
+                &c,
+            ))
             .children(rows)
             .child(divider(&c))
-            .child(section_label("Fest vergeben", &c))
+            .child(section_label(
+                cx.t("settings.keybindings.fixed-section"),
+                &c,
+            ))
             .children(fixed.into_iter().map(|(action, label)| {
                 let keystroke = keymap::effective_keystroke(action, &self.overrides);
                 div()
@@ -766,10 +977,10 @@ impl SettingsWindow {
                     .border_color(c.primary)
                     .text_size(px(12.))
                     .text_color(c.primary)
-                    .child("Taste drücken … (Esc bricht ab)"),
+                    .child(cx.t("settings.keybindings.recording-hint")),
             );
             right = right.child(
-                Button::new("cancel-rec", "Abbrechen")
+                Button::new("cancel-rec", cx.t("settings.keybindings.cancel-button"))
                     .small()
                     .on_click(cx.listener(|this, _, _window, cx| this.stop_recording(cx))),
             );
@@ -777,7 +988,7 @@ impl SettingsWindow {
             right = right
                 .child(Kbd::new(pending.keystroke.clone()))
                 .child(
-                    Button::new("apply-rec", "Übernehmen")
+                    Button::new("apply-rec", cx.t("settings.keybindings.apply-button"))
                         .small()
                         .tone(if pending.conflict.is_some() {
                             ButtonTone::Danger
@@ -787,7 +998,7 @@ impl SettingsWindow {
                         .on_click(cx.listener(|this, _, _window, cx| this.apply_pending(cx))),
                 )
                 .child(
-                    Button::new("discard-rec", "Verwerfen")
+                    Button::new("discard-rec", cx.t("settings.keybindings.discard-button"))
                         .small()
                         .on_click(cx.listener(|this, _, _window, cx| this.stop_recording(cx))),
                 );
@@ -798,17 +1009,20 @@ impl SettingsWindow {
                     None => Kbd::unbound().into_any_element(),
                 })
                 .child(
-                    Button::new(SharedString::from(format!("rec-{action}")), "Aufnehmen")
-                        .small()
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.start_recording(action, cx)
-                        })),
+                    Button::new(
+                        SharedString::from(format!("rec-{action}")),
+                        cx.t("settings.keybindings.record-button"),
+                    )
+                    .small()
+                    .on_click(
+                        cx.listener(move |this, _, _window, cx| this.start_recording(action, cx)),
+                    ),
                 );
             if overridden {
                 right = right.child(
                     Button::new(
                         SharedString::from(format!("reset-{action}")),
-                        "Zurücksetzen",
+                        cx.t("settings.keybindings.reset-button"),
                     )
                     .small()
                     .tone(ButtonTone::Ghost)
@@ -828,7 +1042,7 @@ impl SettingsWindow {
                 .text_size(px(11.5))
                 .text_color(c.warn)
                 .child(Icon::Warning.size(px(13.)).color(c.warn))
-                .child(conflict.message())
+                .child(conflict.message(cx.global::<crate::i18n::Locale>()))
         });
 
         div()
@@ -892,7 +1106,7 @@ impl Render for SettingsWindow {
                     .bg(c.chrome)
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(TITLE),
+                    .child(cx.t("settings.window-title")),
             )
             .child(
                 div()
@@ -913,7 +1127,11 @@ impl Focusable for SettingsWindow {
 
 // ── small building blocks ───────────────────────────────────────────────
 
-fn section_label(text: &str, c: &crate::theme::PaletteColors) -> impl IntoElement {
+fn section_label(
+    text: impl Into<SharedString>,
+    c: &crate::theme::PaletteColors,
+) -> impl IntoElement {
+    let text = text.into();
     div()
         .mt(px(18.))
         .mb(px(2.))
@@ -927,24 +1145,27 @@ fn divider(c: &crate::theme::PaletteColors) -> impl IntoElement {
     div().h(px(1.)).bg(c.border).my(px(4.))
 }
 
-/// German label for a resolved `LevelFilter` (for the "currently …" hint).
-fn filter_label(filter: log::LevelFilter) -> &'static str {
-    match filter {
-        log::LevelFilter::Off => "Aus",
-        log::LevelFilter::Error => "Fehler",
-        log::LevelFilter::Warn => "Warnung",
-        log::LevelFilter::Info => "Info",
-        log::LevelFilter::Debug => "Debug",
-        log::LevelFilter::Trace => "Trace",
-    }
+/// A translated label for a resolved `LevelFilter` (for the "currently …" hint).
+fn filter_label(filter: log::LevelFilter, locale: &crate::i18n::Locale) -> SharedString {
+    let key = match filter {
+        log::LevelFilter::Off => "settings.advanced.log-level-off",
+        log::LevelFilter::Error => "settings.advanced.log-level-error",
+        log::LevelFilter::Warn => "settings.advanced.log-level-warn",
+        log::LevelFilter::Info => "settings.advanced.log-level-info",
+        log::LevelFilter::Debug => "settings.advanced.log-level-debug",
+        log::LevelFilter::Trace => "settings.advanced.log-level-trace",
+    };
+    locale.t(key)
 }
 
 fn setting_row(
-    title: &str,
-    description: &str,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
     c: &crate::theme::PaletteColors,
     control: gpui::AnyElement,
 ) -> impl IntoElement {
+    let title = title.into();
+    let description = description.into();
     div()
         .flex()
         .items_start()

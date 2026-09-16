@@ -132,6 +132,37 @@ pub struct PaletteColors {
     pub emblem_ink: Hsla,
 }
 
+impl PaletteColors {
+    /// Recolour the accent-derived roles from a live system accent colour
+    /// (see [`crate::skin::accent`]), keeping every non-accent role
+    /// (ok/warn/critical/border/chrome/emblem…) untouched.
+    pub(crate) fn apply_system_accent(&mut self, accent: Hsla) {
+        self.primary = accent;
+        self.ring = accent;
+        // dtb.toml's own `primary_foreground` is white in both appearances;
+        // only override it when white would no longer read against a light
+        // accent (e.g. macOS's system Yellow). No new colour literal —
+        // `emblem_ink` is already the palette's dark-ink-on-light-fill token.
+        if accent.l > 0.6 {
+            self.primary_foreground = self.emblem_ink;
+        }
+        // `accent_soft` / `selection` are tinted *fills* — reuse the
+        // authored token's lightness+alpha (already tuned to read against
+        // this appearance's background/surface) but recolour with the live
+        // accent's hue+saturation.
+        self.accent_soft = Hsla {
+            h: accent.h,
+            s: accent.s,
+            ..self.accent_soft
+        };
+        self.selection = Hsla {
+            h: accent.h,
+            s: accent.s,
+            ..self.selection
+        };
+    }
+}
+
 /// Parse `#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa` (leading `#` optional) into
 /// `Hsla`.
 pub(crate) fn hex(value: &str) -> Result<Hsla, ThemeError> {

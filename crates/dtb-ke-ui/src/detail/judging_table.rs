@@ -21,6 +21,7 @@ use gpui_base::input::{InputEvent, InputState};
 use crate::components::button::Button;
 use crate::components::field::Field;
 use crate::components::icon::Icon;
+use crate::i18n::ActiveLocale;
 use crate::model::roles::{self, Discipline};
 use crate::store::JudgingTableEditor;
 use crate::theme::ActiveTheme;
@@ -84,10 +85,11 @@ impl JudgingTableCard {
     ) -> Self {
         let table = editor.read(cx).table().clone();
 
+        let placeholder = cx.t("detail.wizard.name-placeholder");
         let label_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(table.label.clone())
-                .placeholder("Bezeichnung")
+                .placeholder(placeholder)
         });
 
         let slots = build_slots(&table.kind, window, cx);
@@ -249,7 +251,7 @@ impl JudgingTableCard {
                                     this.change_discipline(d, window, cx)
                                 }),
                             )
-                            .child(d.label()),
+                            .child(cx.t(d.label_key())),
                     );
                 }
                 // Above the scroll container (and any dialog) — see `meta_dialog`.
@@ -305,7 +307,7 @@ impl JudgingTableCard {
                         this.discipline_open = !this.discipline_open;
                         cx.notify();
                     }))
-                    .child(current.label())
+                    .child(cx.t(current.label_key()))
                     .child(Icon::ChevronDown.size(px(12.)).color(c.primary)),
             )
             .children(list)
@@ -342,7 +344,7 @@ impl Render for JudgingTableCard {
         let editor_id = self.editor.entity_id();
         let table = self.editor.read(cx).table();
         let drag_label: SharedString = if table.label.trim().is_empty() {
-            "Kampfgericht".into()
+            cx.t("detail.wizard.fallback-name")
         } else {
             table.label.clone().into()
         };

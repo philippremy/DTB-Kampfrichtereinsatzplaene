@@ -322,15 +322,36 @@ pub fn validate_pdf_standards(list: &[PdfStandard]) -> Result<(), String> {
     })
 }
 
+/// Why a candidate [`PdfStandard`] can't be added on top of the current
+/// selection — structured data instead of pre-rendered text, so a caller
+/// with its own localization (`dtb-ke-ui`'s string catalog) can build the
+/// message in any language. This crate stays gpui-free and has no `Locale`
+/// of its own; see `dtb-ke-ui/src/save/mod.rs::pdf_standard_conflict_message`
+/// for the German (and, eventually, other-language) rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PdfStandardConflict {
+    /// Only one PDF/A standard may be active at a time — `.0` is the one
+    /// already selected.
+    ArchivalAlreadySelected(PdfStandard),
+    /// The candidate requires `needs` (e.g. `"PDF 2.0"`); the current
+    /// selection already pins `has` (e.g. `"PDF 1.7"`).
+    VersionMismatch {
+        needs: &'static str,
+        has: &'static str,
+    },
+    /// Doesn't fit the current selection for any other reason (Typst's own
+    /// combination-matrix verdict — see [`validate_pdf_standards`]).
+    Incompatible,
+}
+
 /// Given the standards the user has already ticked, returns each *other*
-/// curated [`PdfStandard`] that cannot be added on top, paired with a short
-/// German explanation suitable for a tooltip.
+/// curated [`PdfStandard`] that cannot be added on top, paired with why.
 ///
 /// The compatibility verdict is Typst's own matrix check
-/// ([`validate_pdf_standards`]); only the wording of the reason is ours. Testing
-/// each candidate against the *whole* current selection means n-ary conflicts
-/// (a triple that is invalid though every pair is fine) are handled too.
-pub fn pdf_standard_conflicts(selected: &[PdfStandard]) -> Vec<(PdfStandard, String)> {
+/// ([`validate_pdf_standards`]); classifying *why* is ours. Testing each
+/// candidate against the *whole* current selection means n-ary conflicts (a
+/// triple that is invalid though every pair is fine) are handled too.
+pub fn pdf_standard_conflicts(selected: &[PdfStandard]) -> Vec<(PdfStandard, PdfStandardConflict)> {
     PdfStandard::ALL
         .iter()
         .copied()
@@ -340,21 +361,18 @@ pub fn pdf_standard_conflicts(selected: &[PdfStandard]) -> Vec<(PdfStandard, Str
             trial.push(*candidate);
             validate_pdf_standards(&trial).is_err()
         })
-        .map(|candidate| (candidate, conflict_reason(selected, candidate)))
+        .map(|candidate| (candidate, classify_conflict(selected, candidate)))
         .collect()
 }
 
-fn conflict_reason(selected: &[PdfStandard], candidate: PdfStandard) -> String {
+fn classify_conflict(selected: &[PdfStandard], candidate: PdfStandard) -> PdfStandardConflict {
     let is_archival =
         |s: PdfStandard| matches!(s, PdfStandard::A2b | PdfStandard::A3b | PdfStandard::A4);
 
     if is_archival(candidate)
         && let Some(existing) = selected.iter().copied().find(|s| is_archival(*s))
     {
-        return format!(
-            "Nur ein PDF/A-Standard ist gleichzeitig möglich – „{}“ ist bereits gewählt.",
-            existing.label()
-        );
+        return PdfStandardConflict::ArchivalAlreadySelected(existing);
     }
 
     // Everything else in the curated set is a PDF-version clash.
@@ -362,14 +380,10 @@ fn conflict_reason(selected: &[PdfStandard], candidate: PdfStandard) -> String {
         required_version(candidate),
         selected.iter().copied().find_map(required_version),
     ) {
-        (Some(needs), Some(has)) if needs != has => format!(
-            "„{}“ benötigt {needs}; die aktuelle Auswahl legt {has} fest.",
-            candidate.label()
-        ),
-        _ => format!(
-            "„{}“ lässt sich nicht mit der aktuellen Auswahl kombinieren.",
-            candidate.label()
-        ),
+        (Some(needs), Some(has)) if needs != has => {
+            PdfStandardConflict::VersionMismatch { needs, has }
+        }
+        _ => PdfStandardConflict::Incompatible,
     }
 }
 
@@ -446,7 +460,7 @@ fn messages(diagnostics: &EcoVec<SourceDiagnostic>) -> Vec<String> {
 
 #[cfg(test)]
 mod pdf_standard_tests {
-    use super::{PdfStandard, pdf_standard_conflicts, validate_pdf_standards};
+    use super::{PdfStandard, PdfStandardConflict, pdf_standard_conflicts, validate_pdf_standards};
 
     #[test]
     fn empty_selection_has_no_conflicts() {
@@ -461,7 +475,10 @@ mod pdf_standard_tests {
                 .iter()
                 .find(|(s, _)| *s == other)
                 .unwrap_or_else(|| panic!("{other:?} should conflict with A2b"));
-            assert!(reason.contains("PDF/A-Standard"), "reason: {reason}");
+            assert_eq!(
+                *reason,
+                PdfStandardConflict::ArchivalAlreadySelected(PdfStandard::A2b)
+            );
         }
     }
 

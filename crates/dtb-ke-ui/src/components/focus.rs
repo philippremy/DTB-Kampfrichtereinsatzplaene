@@ -38,7 +38,7 @@ pub fn focus_underline(focused: bool, theme: &Theme) -> Option<Div> {
 pub fn selection_fill(theme: &Theme) -> (Hsla, Hsla) {
     let c = &theme.color;
     match theme.skin.selection_style {
-        SelectionStyle::GlassTint => (c.primary, gpui::white()),
+        SelectionStyle::GlassTint => (c.primary, c.primary_foreground),
         // A crisp pill against the chrome, matching real WinUI 3 (File
         // Explorer, Settings). In light mode `surface` (near-white) already
         // pops against `chrome` (a very light grey) — but the dark palette's

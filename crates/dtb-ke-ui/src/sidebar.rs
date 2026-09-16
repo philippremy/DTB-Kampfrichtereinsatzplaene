@@ -21,6 +21,7 @@ use crate::components::button::{Button, ButtonTone};
 use crate::components::field::Field;
 use crate::components::focus::selection_fill;
 use crate::components::icon::Icon;
+use crate::i18n::ActiveLocale;
 use crate::material;
 use crate::store::AppStore;
 use crate::theme::ActiveTheme;
@@ -51,7 +52,8 @@ pub struct Sidebar {
 
 impl Sidebar {
     pub fn new(store: Entity<AppStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Wettkampf suchen …"));
+        let placeholder = cx.t("sidebar.search-placeholder");
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subs = vec![
             cx.observe(&store, |_, _, cx| cx.notify()),
             cx.subscribe_in(
@@ -103,15 +105,18 @@ impl Sidebar {
         if ids.is_empty() {
             return;
         }
-        let message = match ids.len() {
-            1 => "Diesen Wettkampf löschen?".to_owned(),
-            n => format!("{n} Wettkämpfe löschen?"),
-        };
+        let message = cx.t_plural("sidebar.delete-confirm", ids.len() as i64, &[]);
+        let detail = cx.t("sidebar.delete-confirm-detail");
+        let delete_label = cx.t("sidebar.delete-confirm-delete-button");
+        let cancel_label = cx.t("sidebar.delete-confirm-cancel-button");
         let answer = window.prompt(
             PromptLevel::Critical,
             &message,
-            Some("Die ausgewählten Wettkämpfe werden dauerhaft entfernt."),
-            &["Löschen", "Abbrechen"],
+            Some(&detail),
+            &[
+                gpui::PromptButton::new(delete_label),
+                gpui::PromptButton::new(cancel_label),
+            ],
             cx,
         );
         let store = self.store.clone();
@@ -148,7 +153,7 @@ impl Sidebar {
             .when(!self.multi_select, |el| {
                 el.justify_end().when(!empty, |el| {
                     el.child(
-                        Button::new("multi-enter", "Auswählen")
+                        Button::new("multi-enter", cx.t("sidebar.select-button"))
                             .tone(ButtonTone::Ghost)
                             .small()
                             .on_click(cx.listener(|this, _, _w, cx| this.enter_multi_select(cx))),
@@ -157,7 +162,7 @@ impl Sidebar {
             })
             .when(self.multi_select, |el| {
                 el.child(
-                    Button::new("multi-done", "Fertig")
+                    Button::new("multi-done", cx.t("sidebar.done-button"))
                         .tone(ButtonTone::Ghost)
                         .small()
                         .on_click(cx.listener(|this, _, _w, cx| this.exit_multi_select(cx))),
@@ -167,10 +172,13 @@ impl Sidebar {
                         .flex_1()
                         .text_size(px(11.))
                         .text_color(c.muted_foreground)
-                        .child(format!("{} ausgewählt", self.checked.len())),
+                        .child(cx.t_fmt(
+                            "sidebar.selected-count",
+                            &[("n", &self.checked.len().to_string())],
+                        )),
                 )
                 .child(
-                    Button::new("multi-delete", "Löschen")
+                    Button::new("multi-delete", cx.t("sidebar.delete-button"))
                         .tone(ButtonTone::Danger)
                         .small()
                         .disabled(self.checked.is_empty())
@@ -203,7 +211,7 @@ impl Sidebar {
                 crate::store::Status::Ready => theme.color.ok,
                 crate::store::Status::Failed(_) => theme.color.critical,
             }))
-            .child(format!("{count} Wettkämpfe"))
+            .child(cx.t_plural("sidebar.competition-count", count as i64, &[]))
     }
 }
 
@@ -417,9 +425,9 @@ impl Render for Sidebar {
                         .text_size(px(12.))
                         .text_color(c.muted_foreground)
                         .child(if query.is_empty() {
-                            "Noch keine Wettkämpfe"
+                            cx.t("sidebar.empty-state")
                         } else {
-                            "Keine Treffer"
+                            cx.t("sidebar.no-matches")
                         }),
                 )
             })
@@ -431,7 +439,7 @@ impl Render for Sidebar {
                     .border_t_1()
                     .border_color(c.border)
                     .child(
-                        Button::new("new-competition", "Neuer Wettkampf")
+                        Button::new("new-competition", cx.t("sidebar.new-competition-button"))
                             .tone(ButtonTone::Secondary)
                             .leading_icon(Icon::Plus)
                             .on_click(|_, window, cx| {

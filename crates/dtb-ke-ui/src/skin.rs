@@ -5,6 +5,7 @@
 //! goes through the helpers here. See the "cfg! boundary" section of the design
 //! proposal.
 
+pub mod accent;
 pub mod decorations;
 pub mod menu;
 pub mod titlebar;

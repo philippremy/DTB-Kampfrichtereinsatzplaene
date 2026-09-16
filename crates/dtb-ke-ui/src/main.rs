@@ -13,6 +13,7 @@ mod crash_report;
 mod detail;
 mod feedback_window;
 mod filesystem;
+mod i18n;
 mod keymap;
 mod logs_window;
 mod mail;
@@ -111,6 +112,11 @@ fn main() {
             settings.theme_mode, settings.log_level, settings.autosave, settings.reduce_motion
         );
 
+        // Resolves Settings.locale (or the OS's own preference list, or the
+        // hardcoded German default) into the active string catalog. Must run
+        // before anything below that renders translated text.
+        crate::i18n::Locale::install(cx);
+
         // Persisted light/dark preference + the OS's current appearance. The
         // window then keeps the OS side in step via `observe_window_appearance`
         // (see `AppShell`).
@@ -119,6 +125,9 @@ fn main() {
             Appearance::from(cx.window_appearance()),
             cx,
         );
+        // macOS only: re-tint live when the user changes the OS accent
+        // colour (System Settings → Appearance). No-op elsewhere.
+        skin::accent::watch_system_accent(cx);
 
         // Menu commands: key bindings (defaults + the user's overrides), the
         // window-independent action handlers, and the menu bar itself. `AppShell`

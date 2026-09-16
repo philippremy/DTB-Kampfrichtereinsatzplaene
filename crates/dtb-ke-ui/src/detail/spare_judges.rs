@@ -12,6 +12,7 @@ use crate::components::button::Button;
 use crate::components::field::Field;
 use crate::components::icon::Icon;
 use crate::components::template_tile::TemplateTile;
+use crate::i18n::ActiveLocale;
 use crate::store::RoundEditor;
 use crate::theme::ActiveTheme;
 
@@ -88,8 +89,9 @@ impl SpareJudgesSection {
     }
 
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let placeholder = cx.t("detail.meta.person-placeholder");
         self.fields
-            .push(cx.new(|cx| InputState::new(window, cx).placeholder("Name")));
+            .push(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         self.resubscribe(window, cx);
         cx.notify();
     }
@@ -135,7 +137,7 @@ impl Render for SpareJudgesSection {
                     window.blur(cx);
                 }
             }))
-            .child(super::field_label("Ersatzkampfrichter*innen", &c))
+            .child(super::field_label(cx.t("detail.spare.label"), &c))
             .child(
                 div()
                     .flex()
@@ -157,7 +159,7 @@ impl Render for SpareJudgesSection {
                     }))
                     .child(
                         TemplateTile::field("add-spare")
-                            .label("Ersatzkampfrichter*in hinzufügen")
+                            .label(cx.t("detail.spare.add-button"))
                             .on_click(cx.listener(|this, _, window, cx| this.add(window, cx))),
                     ),
             )

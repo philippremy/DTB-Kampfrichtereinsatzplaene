@@ -19,6 +19,7 @@ use crate::components::field::Field;
 use crate::components::icon::Icon;
 use crate::components::template_tile::TemplateTile;
 use crate::detail::dialog_frame::{dialog_panel, dismiss_handler, scrim};
+use crate::i18n::ActiveLocale;
 use crate::model::CompetitionMeta;
 use crate::store::{MetadataEditor, default_new_meta};
 use crate::theme::ActiveTheme;
@@ -75,8 +76,8 @@ impl MetaDialog {
             on_create,
             open: false,
             focus: cx.focus_handle(),
-            name: field("Wettkampfname", window, cx),
-            location: field("Austragungsort", window, cx),
+            name: field(&cx.t("detail.meta.name-placeholder"), window, cx),
+            location: field(&cx.t("detail.meta.location-placeholder"), window, cx),
             date: field("TT.MM.JJJJ", window, cx),
             organization: OrganizationDTO::DTB,
             org_open: false,
@@ -207,15 +208,18 @@ impl MetaDialog {
     fn request_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name.read(cx).value().trim().to_string();
         let detail = if name.is_empty() {
-            "Der Wettkampf und alle Kampfgerichte werden dauerhaft entfernt.".to_owned()
+            cx.t("detail.meta.delete-detail-unnamed").to_string()
         } else {
-            format!("„{name}“ und alle Kampfgerichte werden dauerhaft entfernt.")
+            cx.t_fmt("detail.meta.delete-detail", &[("name", &name)])
         };
         let answer = window.prompt(
             PromptLevel::Critical,
-            "Diesen Wettkampf löschen?",
+            &cx.t("detail.meta.delete-confirm"),
             Some(&detail),
-            &["Löschen", "Abbrechen"],
+            &[
+                gpui::PromptButton::new(cx.t("detail.meta.delete-button")),
+                gpui::PromptButton::new(cx.t("detail.meta.delete-cancel-button")),
+            ],
             cx,
         );
         let on_delete = self.on_delete.clone();
@@ -230,8 +234,9 @@ impl MetaDialog {
     }
 
     fn add_person(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let placeholder = cx.t("detail.meta.person-placeholder");
         self.persons
-            .push(cx.new(|cx| InputState::new(window, cx).placeholder("Name")));
+            .push(cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)));
         cx.notify();
     }
 
@@ -428,14 +433,18 @@ impl Render for MetaDialog {
         let creating = self.creating;
         let can_save = self.can_save(cx);
         let title = if creating {
-            "Neuer Wettkampf"
+            cx.t("detail.meta.title-new")
         } else {
-            "Wettkampf bearbeiten"
+            cx.t("detail.meta.title-edit")
         };
 
-        let toggle = |label: &'static str, active: bool, cx: &mut Context<Self>| {
+        let toggle = |id: &'static str,
+                      label: gpui::SharedString,
+                      split: bool,
+                      active: bool,
+                      cx: &mut Context<Self>| {
             div()
-                .id(label)
+                .id(id)
                 .px(px(10.))
                 .py(px(5.))
                 .rounded(radius)
@@ -446,7 +455,7 @@ impl Render for MetaDialog {
                 .text_size(px(12.))
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _, _w, cx| {
-                    this.split_meeting = label == "Getrennt";
+                    this.split_meeting = split;
                     cx.notify();
                 }))
                 .child(label)
@@ -456,10 +465,25 @@ impl Render for MetaDialog {
             div()
                 .flex()
                 .gap(px(8.))
-                .child(labelled_time("Qualifikation", &self.quali_time, &c, radius))
-                .child(labelled_time("Finale", &self.finale_time, &c, radius))
+                .child(labelled_time(
+                    cx.t("detail.meta.meeting-qualification"),
+                    &self.quali_time,
+                    &c,
+                    radius,
+                ))
+                .child(labelled_time(
+                    cx.t("detail.meta.meeting-finale"),
+                    &self.finale_time,
+                    &c,
+                    radius,
+                ))
         } else {
-            div().child(labelled_time("Besprechung", &self.unified_time, &c, radius))
+            div().child(labelled_time(
+                cx.t("detail.meta.meeting-unified"),
+                &self.unified_time,
+                &c,
+                radius,
+            ))
         };
 
         let person_rows = div().flex().flex_col().gap(px(6.)).children(
@@ -490,34 +514,52 @@ impl Render for MetaDialog {
                 .popup(
                     dialog_panel(&theme, px(440.))
                         .child(div().text_size(px(15.)).child(title))
-                        .child(super::field_label("Name", &c))
+                        .child(super::field_label(cx.t("detail.meta.name-label"), &c))
                         .child(
                             Field::new("meta-name", &self.name)
                                 .invalid(creating && self.parsed_name(cx).is_empty()),
                         )
-                        .child(super::field_label("Organisation", &c))
+                        .child(super::field_label(
+                            cx.t("detail.meta.organization-label"),
+                            &c,
+                        ))
                         .child(self.org_selector(cx))
-                        .child(super::field_label("Datum", &c))
+                        .child(super::field_label(cx.t("detail.meta.date-label"), &c))
                         .child(
                             Field::new("meta-date", &self.date)
                                 .invalid(creating && self.parsed_date(cx).is_none()),
                         )
-                        .child(super::field_label("Ort", &c))
+                        .child(super::field_label(cx.t("detail.meta.location-label"), &c))
                         .child(Field::new("meta-location", &self.location))
-                        .child(super::field_label("Besprechungszeit", &c))
+                        .child(super::field_label(
+                            cx.t("detail.meta.meeting-time-label"),
+                            &c,
+                        ))
                         .child(
                             div()
                                 .flex()
                                 .gap(px(6.))
-                                .child(toggle("Einheitlich", !self.split_meeting, cx))
-                                .child(toggle("Getrennt", self.split_meeting, cx)),
+                                .child(toggle(
+                                    "meeting-unified-toggle",
+                                    cx.t("detail.meta.meeting-unified-toggle"),
+                                    false,
+                                    !self.split_meeting,
+                                    cx,
+                                ))
+                                .child(toggle(
+                                    "meeting-split-toggle",
+                                    cx.t("detail.meta.meeting-split-toggle"),
+                                    true,
+                                    self.split_meeting,
+                                    cx,
+                                )),
                         )
                         .child(meeting_row)
-                        .child(super::field_label("Verantwortliche Personen", &c))
+                        .child(super::field_label(cx.t("detail.meta.persons-label"), &c))
                         .child(person_rows)
                         .child(
                             TemplateTile::field("add-person")
-                                .label("Person hinzufügen")
+                                .label(cx.t("detail.meta.add-person"))
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.add_person(window, cx)),
                                 ),
@@ -530,21 +572,26 @@ impl Render for MetaDialog {
                                 .pt(px(6.))
                                 .when(!creating, |el| {
                                     el.child(
-                                        Button::new("meta-delete", "Wettkampf löschen")
-                                            .tone(ButtonTone::Danger)
-                                            .on_click(cx.listener(|this, _, window, cx| {
+                                        Button::new(
+                                            "meta-delete",
+                                            cx.t("detail.meta.delete-competition-button"),
+                                        )
+                                        .tone(ButtonTone::Danger)
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
                                                 this.request_delete(window, cx)
-                                            })),
+                                            }),
+                                        ),
                                     )
                                 })
                                 .child(div().flex_1())
                                 .child(
-                                    Button::new("meta-cancel", "Abbrechen")
+                                    Button::new("meta-cancel", cx.t("detail.meta.cancel-button"))
                                         .tone(ButtonTone::Ghost)
                                         .on_click(cx.listener(|this, _, _w, cx| this.close(cx))),
                                 )
                                 .child(
-                                    Button::new("meta-save", "Speichern")
+                                    Button::new("meta-save", cx.t("detail.meta.save-button"))
                                         .tone(ButtonTone::Primary)
                                         .disabled(!can_save)
                                         .on_click(cx.listener(|this, _, window, cx| {
@@ -558,7 +605,7 @@ impl Render for MetaDialog {
 }
 
 fn labelled_time(
-    label: &str,
+    label: impl Into<gpui::SharedString>,
     input: &Entity<InputState>,
     c: &crate::theme::PaletteColors,
     radius: gpui::Pixels,

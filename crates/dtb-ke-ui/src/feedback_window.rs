@@ -30,6 +30,7 @@ use crate::components::checkbox::Checkbox;
 use crate::components::field::Field;
 use crate::components::{Button, ButtonTone, Icon, Spinner};
 use crate::filesystem::FilesystemHelper;
+use crate::i18n::{ActiveLocale, Locale};
 use crate::mail;
 use crate::theme::ActiveTheme;
 
@@ -41,14 +42,18 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn title(self) -> &'static str {
-        match self {
-            Kind::Bug => "Bug melden",
-            Kind::Feature => "Funktion anfragen",
-        }
+    fn title(self, locale: &Locale) -> gpui::SharedString {
+        let key = match self {
+            Kind::Bug => "feedback.title-bug",
+            Kind::Feature => "feedback.title-feature",
+        };
+        locale.t(key)
     }
 
-    /// The bracketed tag that opens the e-mail subject.
+    /// The bracketed tag that opens the e-mail subject. Not user-facing (the
+    /// e-mail is sent to the German-speaking maintainer regardless of the
+    /// reporter's locale) — deliberately not translated, same reasoning as
+    /// `compose`'s body labels.
     fn subject_tag(self) -> &'static str {
         match self {
             Kind::Bug => "Bug",
@@ -56,33 +61,28 @@ impl Kind {
         }
     }
 
-    fn intro(self) -> &'static str {
-        match self {
-            Kind::Bug => {
-                "Beschreibe das Problem möglichst genau. Der Bericht enthält zusätzlich die \
-                 Programmversion und technische Angaben zum Build – keine Wettkampfdaten."
-            }
-            Kind::Feature => {
-                "Beschreibe die gewünschte Funktion und wozu sie dienen soll. Der Bericht enthält \
-                 zusätzlich die Programmversion."
-            }
-        }
+    fn intro(self, locale: &Locale) -> gpui::SharedString {
+        let key = match self {
+            Kind::Bug => "feedback.intro-bug",
+            Kind::Feature => "feedback.intro-feature",
+        };
+        locale.t(key)
     }
 
-    fn summary_placeholder(self) -> &'static str {
-        match self {
-            Kind::Bug => "Kurze Zusammenfassung des Problems",
-            Kind::Feature => "Kurze Zusammenfassung der Idee",
-        }
+    fn summary_placeholder(self, locale: &Locale) -> gpui::SharedString {
+        let key = match self {
+            Kind::Bug => "feedback.summary-placeholder-bug",
+            Kind::Feature => "feedback.summary-placeholder-feature",
+        };
+        locale.t(key)
     }
 
-    fn description_placeholder(self) -> &'static str {
-        match self {
-            Kind::Bug => {
-                "Was ist passiert? Was hättest du erwartet? Schritte zur Reproduktion, falls bekannt."
-            }
-            Kind::Feature => "Was möchtest du können, und warum wäre das hilfreich?",
-        }
+    fn description_placeholder(self, locale: &Locale) -> gpui::SharedString {
+        let key = match self {
+            Kind::Bug => "feedback.description-placeholder-bug",
+            Kind::Feature => "feedback.description-placeholder-feature",
+        };
+        locale.t(key)
     }
 
     /// Only bug reports offer to attach the session log.
@@ -136,8 +136,8 @@ fn open_kind(cx: &mut App, kind: Kind) {
             log::info!("opened the {} window", kind.subject_tag());
         }
         Err(err) => log::error!(
-            "{}-Fenster konnte nicht geöffnet werden: {err}",
-            kind.title()
+            "failed to open the feedback window ({}): {err}",
+            kind.subject_tag()
         ),
     }
 }
@@ -150,7 +150,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(kind.title().into()),
+            title: Some(kind.title(cx.global::<Locale>())),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -198,15 +198,16 @@ impl Drop for FeedbackWindow {
 
 impl FeedbackWindow {
     fn new(kind: Kind, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let locale = cx.global::<Locale>().clone();
         let summary =
-            cx.new(|cx| InputState::new(window, cx).placeholder(kind.summary_placeholder()));
+            cx.new(|cx| InputState::new(window, cx).placeholder(kind.summary_placeholder(&locale)));
         let description = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder(kind.description_placeholder())
+                .placeholder(kind.description_placeholder(&locale))
                 .auto_grow(6, 18)
         });
-        let contact = cx
-            .new(|cx| InputState::new(window, cx).placeholder("E-Mail für Rückfragen (optional)"));
+        let contact_placeholder = cx.t("feedback.contact-placeholder");
+        let contact = cx.new(|cx| InputState::new(window, cx).placeholder(contact_placeholder));
 
         summary.update(cx, |state, cx| state.focus(window, cx));
 
@@ -317,19 +318,19 @@ impl Render for FeedbackWindow {
                 div()
                     .text_size(px(15.))
                     .font_weight(FontWeight::BOLD)
-                    .child(self.kind.title()),
+                    .child(self.kind.title(cx.global::<Locale>())),
             )
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(self.kind.intro()),
+                    .child(self.kind.intro(cx.global::<Locale>())),
             )
             .map(|el| {
                 if mail::available() {
                     el.child(self.form(radius, c, cx))
                 } else {
-                    el.child(self.unavailable_notice(c))
+                    el.child(self.unavailable_notice(c, cx))
                 }
             })
     }
@@ -353,9 +354,9 @@ impl FeedbackWindow {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .child(field_label("Zusammenfassung", c))
+            .child(field_label(cx.t("feedback.summary-label"), c))
             .child(Field::new("fb-summary", &self.summary).paints_background(true))
-            .child(field_label("Beschreibung", c))
+            .child(field_label(cx.t("feedback.description-label"), c))
             .child(
                 div()
                     .flex_1()
@@ -369,7 +370,7 @@ impl FeedbackWindow {
                     .text_size(px(13.))
                     .child(Textarea::new(&self.description)),
             )
-            .child(field_label("Kontakt", c))
+            .child(field_label(cx.t("feedback.contact-label"), c))
             .child(Field::new("fb-contact", &self.contact).paints_background(true))
             .when(self.kind.offers_log(), |el| {
                 let row_weak = weak.clone();
@@ -398,9 +399,7 @@ impl FeedbackWindow {
                             div()
                                 .text_size(px(11.))
                                 .text_color(c.muted_foreground)
-                                .child(
-                                    "Protokoll dieser Sitzung anhängen (enthält Wettkampfnamen)",
-                                ),
+                                .child(cx.t("feedback.attach-log")),
                         ),
                 )
             })
@@ -433,7 +432,7 @@ impl FeedbackWindow {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(c.ok)
                                 .child(Icon::Check.size(px(15.)).color(c.ok))
-                                .child("Gesendet! Vielen Dank."),
+                                .child(cx.t("feedback.sent")),
                         )
                     })
                     .when(matches!(self.state, SendState::Sending), |el| {
@@ -442,18 +441,23 @@ impl FeedbackWindow {
                                 .flex_1()
                                 .text_size(px(11.))
                                 .text_color(c.muted_foreground)
-                                .child("Wird gesendet …"),
+                                .child(cx.t("feedback.sending")),
                         )
                     })
                     .when(!sent, |el| {
                         el.child(
-                            Button::new("fb-cancel", "Abbrechen")
+                            Button::new("fb-cancel", cx.t("feedback.cancel-button"))
                                 .disabled(busy)
                                 .on_click(|_, window, _| window.remove_window()),
                         )
                         .child({
                             let send_weak = weak.clone();
-                            Button::new("fb-send", if failed { "Erneut senden" } else { "Senden" })
+                            let label = if failed {
+                                cx.t("feedback.resend-button")
+                            } else {
+                                cx.t("feedback.send-button")
+                            };
+                            Button::new("fb-send", label)
                                 .tone(ButtonTone::Primary)
                                 .disabled(!can_send)
                                 .on_click(move |_, window, cx| {
@@ -464,7 +468,11 @@ impl FeedbackWindow {
             )
     }
 
-    fn unavailable_notice(&self, c: crate::theme::PaletteColors) -> impl IntoElement {
+    fn unavailable_notice(
+        &self,
+        c: crate::theme::PaletteColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex_1()
             .flex()
@@ -474,10 +482,7 @@ impl FeedbackWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(
-                        "Der Versand von Rückmeldungen ist in dieser Programmversion nicht möglich. \
-                         Bitte nutze den öffentlichen Issue-Tracker auf Codeberg.",
-                    ),
+                    .child(cx.t("feedback.unavailable-notice")),
             )
             .child(
                 div()
@@ -485,11 +490,11 @@ impl FeedbackWindow {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        Button::new("fb-close", "Schließen")
+                        Button::new("fb-close", cx.t("feedback.close-button"))
                             .on_click(|_, window, _| window.remove_window()),
                     )
                     .child(
-                        Button::new("fb-codeberg", "Auf Codeberg öffnen")
+                        Button::new("fb-codeberg", cx.t("feedback.codeberg-button"))
                             .tone(ButtonTone::Primary)
                             .on_click(|_, _, cx| cx.open_url(REPOSITORY_URL)),
                     ),
@@ -497,12 +502,15 @@ impl FeedbackWindow {
     }
 }
 
-fn field_label(text: &'static str, c: crate::theme::PaletteColors) -> impl IntoElement {
+fn field_label(
+    text: impl Into<gpui::SharedString>,
+    c: crate::theme::PaletteColors,
+) -> impl IntoElement {
     div()
         .text_size(px(11.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(c.muted_foreground)
-        .child(text)
+        .child(text.into())
 }
 
 /// Build the e-mail subject + plain-text body. The body leads with the build

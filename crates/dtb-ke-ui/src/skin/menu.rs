@@ -12,6 +12,7 @@
 
 use gpui::App;
 
+use crate::i18n::Locale;
 use crate::menu::{self, MenuState};
 use crate::theme::{ActiveTheme, MenuStyle};
 
@@ -19,7 +20,8 @@ use crate::theme::{ActiveTheme, MenuStyle};
 /// state that decides labels / enabled items changes. A no-op visually on
 /// Windows / Linux (gpui stores but doesn't render it there) — see [`in_app`].
 pub fn install(state: MenuState, cx: &mut App) {
-    cx.set_menus(menu::build(state));
+    let menus = menu::build(state, cx.global::<Locale>());
+    cx.set_menus(menus);
 }
 
 /// Whether the app must draw its own menu affordance (Windows strip / Linux ☰).

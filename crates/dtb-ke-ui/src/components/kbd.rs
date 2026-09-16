@@ -10,6 +10,7 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 
+use crate::i18n::ActiveLocale;
 use crate::theme::ActiveTheme;
 
 #[derive(IntoElement)]
@@ -100,14 +101,14 @@ impl RenderOnce for Kbd {
                     self.keystroke
                         .split_whitespace()
                         .filter_map(|chord| Keystroke::parse(chord).ok())
-                        .map(|ks| block(chord_label(&ks))),
+                        .map(|ks| block(chord_label(&ks, cx))),
                 )
             })
     }
 }
 
 /// The single-block label for one chord.
-fn chord_label(ks: &Keystroke) -> String {
+fn chord_label(ks: &Keystroke, cx: &App) -> String {
     let mut out = String::new();
     let m = &ks.modifiers;
 
@@ -128,61 +129,101 @@ fn chord_label(ks: &Keystroke) -> String {
         if m.platform {
             out.push('⌘');
         }
-        out.push_str(&key_label(&ks.key));
+        out.push_str(&key_label(&ks.key, cx));
     } else {
-        let mut parts: Vec<&str> = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
         if m.control {
-            parts.push("Strg");
+            parts.push(cx.t("kbd.modifier-ctrl").to_string());
         }
         if m.alt {
-            parts.push("Alt");
+            parts.push(cx.t("kbd.modifier-alt").to_string());
         }
         if m.shift {
-            parts.push("Umschalt");
+            parts.push(cx.t("kbd.modifier-shift").to_string());
         }
         if m.platform {
-            parts.push(platform_word());
+            parts.push(platform_word(cx));
         }
         if m.function {
-            parts.push("Fn");
+            parts.push(cx.t("kbd.modifier-fn").to_string());
         }
-        let key = key_label(&ks.key);
-        parts.push(&key);
+        parts.push(key_label(&ks.key, cx));
         out = parts.join("+");
     }
     out
 }
 
-fn platform_word() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "Win"
+fn platform_word(cx: &App) -> String {
+    let key = if cfg!(target_os = "windows") {
+        "kbd.modifier-platform-windows"
     } else {
-        "Super"
-    }
+        "kbd.modifier-platform-other"
+    };
+    cx.t(key).to_string()
 }
 
 /// Human-readable name for a single key.
-fn key_label(key: &str) -> String {
+fn key_label(key: &str, cx: &App) -> String {
     let mac = cfg!(target_os = "macos");
-    let named = match key {
-        "backspace" => Some(if mac { "⌫" } else { "Rück" }),
-        "delete" => Some(if mac { "⌦" } else { "Entf" }),
-        "enter" | "return" => Some(if mac { "⏎" } else { "Enter" }),
-        "tab" => Some(if mac { "⇥" } else { "Tab" }),
-        "escape" => Some(if mac { "⎋" } else { "Esc" }),
-        "space" => Some(if mac { "␣" } else { "Leer" }),
-        "up" => Some("↑"),
-        "down" => Some("↓"),
-        "left" => Some("←"),
-        "right" => Some("→"),
-        "pageup" => Some(if mac { "⇞" } else { "Bild↑" }),
-        "pagedown" => Some(if mac { "⇟" } else { "Bild↓" }),
-        "home" => Some(if mac { "↖" } else { "Pos1" }),
-        "end" => Some(if mac { "↘" } else { "Ende" }),
+    let named: Option<String> = match key {
+        "backspace" => Some(if mac {
+            "⌫".to_string()
+        } else {
+            cx.t("kbd.key-backspace").to_string()
+        }),
+        "delete" => Some(if mac {
+            "⌦".to_string()
+        } else {
+            cx.t("kbd.key-delete").to_string()
+        }),
+        "enter" | "return" => Some(if mac {
+            "⏎".to_string()
+        } else {
+            cx.t("kbd.key-enter").to_string()
+        }),
+        "tab" => Some(if mac {
+            "⇥".to_string()
+        } else {
+            cx.t("kbd.key-tab").to_string()
+        }),
+        "escape" => Some(if mac {
+            "⎋".to_string()
+        } else {
+            cx.t("kbd.key-escape").to_string()
+        }),
+        "space" => Some(if mac {
+            "␣".to_string()
+        } else {
+            cx.t("kbd.key-space").to_string()
+        }),
+        "up" => Some("↑".to_string()),
+        "down" => Some("↓".to_string()),
+        "left" => Some("←".to_string()),
+        "right" => Some("→".to_string()),
+        "pageup" => Some(if mac {
+            "⇞".to_string()
+        } else {
+            cx.t("kbd.key-pageup").to_string()
+        }),
+        "pagedown" => Some(if mac {
+            "⇟".to_string()
+        } else {
+            cx.t("kbd.key-pagedown").to_string()
+        }),
+        "home" => Some(if mac {
+            "↖".to_string()
+        } else {
+            cx.t("kbd.key-home").to_string()
+        }),
+        "end" => Some(if mac {
+            "↘".to_string()
+        } else {
+            cx.t("kbd.key-end").to_string()
+        }),
         _ => None,
     };
     if let Some(named) = named {
-        return named.to_string();
+        return named;
     }
     if key.len() == 1 {
         return key.to_uppercase();
@@ -196,11 +237,11 @@ fn key_label(key: &str) -> String {
 }
 
 /// The plain-text form (for tooltips / `aria` later).
-pub fn plain(keystroke: &str) -> String {
+pub fn plain(keystroke: &str, cx: &App) -> String {
     keystroke
         .split_whitespace()
         .filter_map(|chord| Keystroke::parse(chord).ok())
-        .map(|ks| chord_label(&ks))
+        .map(|ks| chord_label(&ks, cx))
         .collect::<Vec<_>>()
         .join(" ")
 }

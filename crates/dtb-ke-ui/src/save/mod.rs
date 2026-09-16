@@ -13,9 +13,11 @@
 
 use std::path::PathBuf;
 
-use dtb_ke_export::{DocxExport, PdfExport, PdfStandard};
+use dtb_ke_export::{DocxExport, PdfExport, PdfStandard, PdfStandardConflict};
 use futures::channel::oneshot;
-use gpui::App;
+use gpui::{App, SharedString};
+
+use crate::i18n::{ActiveLocale, Locale};
 
 mod fallback;
 #[cfg(target_os = "macos")]
@@ -84,12 +86,24 @@ impl FormatKind {
     /// In dialog order.
     pub const ALL: [Self; 3] = [Self::Pdf, Self::Docx, Self::Blob];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pdf => "Portable Document Format (.pdf)",
-            Self::Docx => "Word-Dokument (.docx)",
-            Self::Blob => "Rohdaten (.dtbke)",
-        }
+    pub fn label(self, locale: &Locale) -> SharedString {
+        let key = match self {
+            Self::Pdf => "save.format-pdf",
+            Self::Docx => "save.format-docx",
+            Self::Blob => "save.format-blob",
+        };
+        locale.t(key)
+    }
+
+    /// A short label for the fallback dialog's compact segmented picker
+    /// (the native dialogs use [`Self::label`]'s longer, descriptive text).
+    pub fn short_label(self, locale: &Locale) -> SharedString {
+        let key = match self {
+            Self::Pdf => "save.format-pdf-short",
+            Self::Docx => "save.format-docx-short",
+            Self::Blob => "save.format-blob-short",
+        };
+        locale.t(key)
     }
 
     pub fn extension(self) -> &'static str {
@@ -117,9 +131,68 @@ impl FormatKind {
                 standards: previous.pdf_standards().to_vec(),
             }),
             Self::Docx => ExportFormat::Docx(DocxExport {
-                embed_fonts: previous.docx_embed_fonts(),
+                // Checked by default (the file becomes self-contained at the
+                // cost of ~600 KB) — but keep the user's own toggle if they're
+                // just re-selecting DOCX after having already set it.
+                embed_fonts: match previous {
+                    ExportFormat::Docx(o) => o.embed_fonts,
+                    _ => true,
+                },
             }),
             Self::Blob => ExportFormat::Blob,
+        }
+    }
+}
+
+/// A translated label for a [`PdfStandard`] — `dtb-ke-export` is gpui-free
+/// and has no `Locale` access, so this stays a `dtb-ke-ui`-side lookup rather
+/// than a method on the type itself (`ui → export` is a one-directional
+/// dependency).
+pub fn pdf_standard_label(standard: PdfStandard, locale: &Locale) -> SharedString {
+    let key = match standard {
+        PdfStandard::V2_0 => "save.pdf-standard-2-0",
+        PdfStandard::A2b => "save.pdf-standard-a2b",
+        PdfStandard::A3b => "save.pdf-standard-a3b",
+        PdfStandard::A4 => "save.pdf-standard-a4",
+        PdfStandard::Ua1 => "save.pdf-standard-ua1",
+    };
+    locale.t(key)
+}
+
+/// A translated explanation for why `candidate` can't be combined with the
+/// current selection — see [`dtb_ke_export::PdfStandardConflict`] for why the
+/// classification itself lives in the (gpui-free) export crate while the
+/// wording lives here.
+pub fn pdf_standard_conflict_message(
+    candidate: PdfStandard,
+    conflict: PdfStandardConflict,
+    locale: &Locale,
+) -> String {
+    match conflict {
+        PdfStandardConflict::ArchivalAlreadySelected(existing) => {
+            let existing = pdf_standard_label(existing, locale);
+            locale.t_fmt(
+                "save.pdf-conflict-archival",
+                &[("existing", existing.as_ref())],
+            )
+        }
+        PdfStandardConflict::VersionMismatch { needs, has } => {
+            let candidate = pdf_standard_label(candidate, locale);
+            locale.t_fmt(
+                "save.pdf-conflict-version",
+                &[
+                    ("candidate", candidate.as_ref()),
+                    ("needs", needs),
+                    ("has", has),
+                ],
+            )
+        }
+        PdfStandardConflict::Incompatible => {
+            let candidate = pdf_standard_label(candidate, locale);
+            locale.t_fmt(
+                "save.pdf-conflict-incompatible",
+                &[("candidate", candidate.as_ref())],
+            )
         }
     }
 }

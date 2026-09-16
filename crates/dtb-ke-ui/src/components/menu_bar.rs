@@ -93,7 +93,7 @@ impl MenuBar {
             } => {
                 let disabled = *disabled;
                 let hint = keymap::effective_keystroke(action.name(), overrides)
-                    .map(|k| kbd::plain(&k))
+                    .map(|k| kbd::plain(&k, cx))
                     .filter(|h| !h.is_empty());
                 let action = action.boxed_clone();
                 Some(

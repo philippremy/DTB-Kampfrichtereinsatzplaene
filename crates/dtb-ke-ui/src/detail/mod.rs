@@ -42,6 +42,7 @@ use crate::detail::meta_dialog::{CreateRequest, DeleteRequest, MetaDialog};
 use crate::detail::remarks::RemarksSection;
 use crate::detail::spare_judges::SpareJudgesSection;
 use crate::detail::table_wizard::TableWizard;
+use crate::i18n::ActiveLocale;
 use crate::model::{self, JudgingTable, PhaseConflicts};
 use crate::store::{AppStore, CompetitionDocument, DocumentEvent, JudgingTableEditor, RoundEditor};
 use crate::theme::{ActiveTheme, PaletteColors};
@@ -231,10 +232,11 @@ impl DetailView {
             return;
         };
         let table = editor.read(cx).table().clone();
+        let copy_label = cx.t_fmt("detail.duplicate-table-label", &[("label", &table.label)]);
         round.update(cx, |round, cx| {
             round.add_table(
                 JudgingTable {
-                    label: format!("{} (Kopie)", table.label),
+                    label: copy_label,
                     kind: table.kind,
                 },
                 cx,
@@ -270,16 +272,19 @@ impl DetailView {
             .map(|t| t.read(cx).table().label.trim().to_owned())
             .unwrap_or_default();
         let detail = if label.is_empty() {
-            "Alle Zuordnungen dieses Kampfgerichts gehen verloren.".to_owned()
+            cx.t("detail.delete-table-detail-unnamed").to_string()
         } else {
-            format!("Alle Zuordnungen von „{label}“ gehen verloren.")
+            cx.t_fmt("detail.delete-table-detail", &[("label", &label)])
         };
 
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Kampfgericht löschen?",
+            &cx.t("detail.delete-table-confirm"),
             Some(&detail),
-            &["Löschen", "Abbrechen"],
+            &[
+                gpui::PromptButton::new(cx.t("detail.delete-table-delete-button")),
+                gpui::PromptButton::new(cx.t("detail.delete-table-cancel-button")),
+            ],
             cx,
         );
         cx.spawn_in(window, async move |view, cx| {
@@ -484,12 +489,11 @@ impl DetailView {
                 .border_color(c.warn)
                 .bg(gpui::Hsla { a: 0.10, ..c.warn })
                 .text_size(px(11.5))
-                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(
-                    match self.conflicts.len() {
-                        1 => "1 Doppelbesetzung".to_owned(),
-                        n => format!("{n} Doppelbesetzungen"),
-                    },
-                ))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(cx.t_plural("detail.conflicts", self.conflicts.len() as i64, &[])),
+                )
                 .children(self.conflicts.iter().map(|conflict| {
                     div()
                         .text_color(c.muted_foreground)
@@ -522,7 +526,7 @@ impl DetailView {
                     .children(self.cards.iter().cloned())
                     .child(
                         TemplateTile::card("add-table-template")
-                            .label("Kampfgericht hinzufügen")
+                            .label(cx.t("detail.add-table-template"))
                             .on_click({
                                 let weak = weak.clone();
                                 move |_, window, cx| {
@@ -540,22 +544,34 @@ impl DetailView {
             )
     }
 
-    /// The detail toolbar's six button labels, in render order. Kept as a const
-    /// so the width estimate in [`Self::toolbar_label_budget`] and the buttons
-    /// below can't drift apart.
-    const TOOLBAR_LABELS: [&'static str; 6] = [
-        "Kampfgericht",
-        "Duplizieren",
-        "Löschen",
-        "Wettkampf",
-        "Vorschau",
-        "Exportieren",
+    /// Stable ids for the detail toolbar's six buttons, in render order —
+    /// independent of their (translated) display label. Kept as a const so
+    /// they can't drift out of sync with the array below.
+    const TOOLBAR_IDS: [&'static str; 6] = [
+        "toolbar-add-table",
+        "toolbar-duplicate",
+        "toolbar-delete",
+        "toolbar-settings",
+        "toolbar-preview",
+        "toolbar-export",
     ];
+
+    /// The detail toolbar's six button labels, in render order.
+    fn toolbar_labels(cx: &App) -> [SharedString; 6] {
+        [
+            cx.t("detail.toolbar-add-table"),
+            cx.t("detail.toolbar-duplicate"),
+            cx.t("detail.toolbar-delete"),
+            cx.t("detail.toolbar-settings"),
+            cx.t("detail.toolbar-preview"),
+            cx.t("detail.toolbar-export"),
+        ]
+    }
 
     /// The toolbar's outer width below which the buttons can't all show their
     /// label, computed from the actual shaped label widths (so it tracks the
     /// font / locale rather than a hand-tuned guess).
-    fn toolbar_label_budget(&self, window: &Window) -> Pixels {
+    fn toolbar_label_budget(&self, window: &Window, cx: &App) -> Pixels {
         // Small ghost button: 1px border ×2 + 8px pad ×2 + 13px icon + 4px
         // icon↔label gap (see `components/button.rs`).
         const BUTTON_CHROME: f32 = 2.0 + 16.0 + 13.0 + 4.0;
@@ -564,8 +580,9 @@ impl DetailView {
         const SPACER_MIN: f32 = 12.0; // breathing room at the flex spacer
 
         let font = window.text_style().font();
-        let n = Self::TOOLBAR_LABELS.len() as f32;
-        let text: f32 = Self::TOOLBAR_LABELS
+        let labels = Self::toolbar_labels(cx);
+        let n = labels.len() as f32;
+        let text: f32 = labels
             .iter()
             .map(|label| {
                 let run = TextRun {
@@ -579,7 +596,7 @@ impl DetailView {
                 f32::from(
                     window
                         .text_system()
-                        .shape_line(SharedString::from(*label), px(12.0), &[run], None)
+                        .shape_line(label.clone(), px(12.0), &[run], None)
                         .width,
                 )
             })
@@ -596,19 +613,20 @@ impl DetailView {
         // The `canvas` probe below compares the toolbar's live outer width to
         // this budget and flips `toolbar_compact`; `compact` is last frame's
         // verdict (icon-only when the labels wouldn't fit).
-        let budget = self.toolbar_label_budget(window);
+        let budget = self.toolbar_label_budget(window, cx);
         let compact = self.toolbar_compact.get();
         let probe = self.toolbar_compact.clone();
 
-        let action = move |icon: Icon, label: &'static str, disabled: bool| {
+        let ids = Self::TOOLBAR_IDS;
+        let action = move |icon: Icon, id: &'static str, label: SharedString, disabled: bool| {
             let button = if compact {
-                Button::icon(label, icon)
+                Button::icon(id, icon)
             } else {
-                Button::new(label, label).leading_icon(icon)
+                Button::new(id, label).leading_icon(icon)
             };
             button.tone(ButtonTone::Ghost).small().disabled(disabled)
         };
-        let l = Self::TOOLBAR_LABELS;
+        let l = Self::toolbar_labels(cx);
 
         div()
             .relative()
@@ -636,43 +654,51 @@ impl DetailView {
                 .absolute()
                 .size_full(),
             )
-            .child(action(Icon::Plus, l[0], false).on_click({
+            .child(action(Icon::Plus, ids[0], l[0].clone(), false).on_click({
                 let weak = weak.clone();
                 move |_, window, cx| {
                     weak.update(cx, |view, cx| view.open_wizard(window, cx))
                         .ok();
                 }
             }))
-            .child(action(Icon::Copy, l[1], !has_selection).on_click({
-                let weak = weak.clone();
-                move |_, window, cx| {
-                    weak.update(cx, |view, cx| view.request_duplicate(window, cx))
-                        .ok();
-                }
-            }))
-            .child(action(Icon::Trash, l[2], !has_selection).on_click({
-                let weak = weak.clone();
-                move |_, window, cx| {
-                    weak.update(cx, |view, cx| view.request_delete(window, cx))
-                        .ok();
-                }
-            }))
-            .child(div().flex_1())
-            .child(action(Icon::Settings, l[3], false).on_click({
-                let weak = weak.clone();
-                move |_, window, cx| {
-                    weak.update(cx, |view, cx| view.open_meta_dialog(window, cx))
-                        .ok();
-                }
-            }))
             .child(
-                action(Icon::Preview, l[4], false).on_click(|_, window, cx| {
+                action(Icon::Copy, ids[1], l[1].clone(), !has_selection).on_click({
+                    let weak = weak.clone();
+                    move |_, window, cx| {
+                        weak.update(cx, |view, cx| view.request_duplicate(window, cx))
+                            .ok();
+                    }
+                }),
+            )
+            .child(
+                action(Icon::Trash, ids[2], l[2].clone(), !has_selection).on_click({
+                    let weak = weak.clone();
+                    move |_, window, cx| {
+                        weak.update(cx, |view, cx| view.request_delete(window, cx))
+                            .ok();
+                    }
+                }),
+            )
+            .child(div().flex_1())
+            .child(
+                action(Icon::Settings, ids[3], l[3].clone(), false).on_click({
+                    let weak = weak.clone();
+                    move |_, window, cx| {
+                        weak.update(cx, |view, cx| view.open_meta_dialog(window, cx))
+                            .ok();
+                    }
+                }),
+            )
+            .child(
+                action(Icon::Preview, ids[4], l[4].clone(), false).on_click(|_, window, cx| {
                     window.dispatch_action(Box::new(TogglePreview), cx);
                 }),
             )
-            .child(action(Icon::Export, l[5], false).on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(ExportCompetition), cx);
-            }))
+            .child(
+                action(Icon::Export, ids[5], l[5].clone(), false).on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(ExportCompetition), cx);
+                }),
+            )
     }
 }
 
@@ -688,7 +714,7 @@ impl Render for DetailView {
                 .items_center()
                 .justify_center()
                 .text_color(c.muted_foreground)
-                .child("Kein Wettkampf ausgewählt")
+                .child(cx.t("detail.no-selection"))
                 // Still mount the dialog so "Neuer Wettkampf" works with no
                 // competition selected.
                 .child(self.meta_dialog.clone())
@@ -724,7 +750,10 @@ impl Render for DetailView {
                                 div().flex().px(px(20.)).pt(px(14.)).child(
                                     Segmented::new(
                                         "detail-phase",
-                                        ["Qualifikation", "Finale"],
+                                        [
+                                            cx.t("detail.phase-qualification"),
+                                            cx.t("detail.phase-finale"),
+                                        ],
                                         selected,
                                     )
                                     .on_select({
@@ -754,7 +783,8 @@ impl Render for DetailView {
     }
 }
 
-pub(super) fn field_label(text: &str, c: &PaletteColors) -> gpui::Div {
+pub(super) fn field_label(text: impl Into<SharedString>, c: &PaletteColors) -> gpui::Div {
+    let text = text.into();
     div()
         .text_size(px(9.5))
         .text_color(c.muted_foreground)

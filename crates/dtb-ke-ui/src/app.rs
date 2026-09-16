@@ -26,6 +26,7 @@ use crate::components::button::Button;
 use crate::components::icon::Icon;
 use crate::components::menu_bar::MenuBar;
 use crate::detail::DetailView;
+use crate::i18n::{ActiveLocale, Locale};
 use crate::material;
 use crate::menu::{self, MenuState};
 use crate::preview::{self, PreviewWindow};
@@ -72,6 +73,10 @@ pub struct AppShell {
     _detail_sub: Subscription,
     /// Keeps the theme's OS-appearance side in step with the window.
     _appearance_sub: Subscription,
+    /// Rebuilds the menu bar (native + in-app) when the active locale changes
+    /// — `cx.refresh_windows()` alone re-renders gpui views but not the
+    /// push-based native macOS menu.
+    _locale_sub: Subscription,
     /// The in-app updater — background checks + the corner toast.
     updater: Entity<Updater>,
     _updater_sub: Subscription,
@@ -115,6 +120,22 @@ impl AppShell {
             Theme::set_os_appearance(Appearance::from(window.appearance()), cx);
         });
 
+        // Locale changed (Settings picker, or live OS follow later) — rebuild
+        // the menu bar with the last-known state (translation-independent;
+        // no `&Window` available here for a fresh `sync_menus`).
+        let locale_sub = cx.observe_global::<Locale>(|this, cx| {
+            if let Some(state) = this.last_menu_state {
+                skin_menu::install(state, cx);
+                if skin_menu::in_app(cx) {
+                    this.menu_bar.update(cx, |bar, cx| {
+                        let menus = menu::build(state, cx.global::<Locale>());
+                        bar.set_menus(menus, cx);
+                    });
+                }
+            }
+            cx.notify();
+        });
+
         // Closing the main window on macOS doesn't quit the app (so the
         // per-document `on_app_quit` flush won't run) — flush any pending edits
         // while the store is still alive. (The `MAIN_WINDOW` handle is cleared
@@ -146,6 +167,7 @@ impl AppShell {
             _store_sub: store_sub,
             _detail_sub: detail_sub,
             _appearance_sub: appearance_sub,
+            _locale_sub: locale_sub,
             updater,
             _updater_sub: updater_sub,
             _updater_loop: updater_loop,
@@ -245,8 +267,10 @@ impl AppShell {
             self.last_menu_state = Some(state);
             skin_menu::install(state, cx);
             if skin_menu::in_app(cx) {
-                self.menu_bar
-                    .update(cx, |bar, cx| bar.set_menus(menu::build(state), cx));
+                self.menu_bar.update(cx, |bar, cx| {
+                    let menus = menu::build(state, cx.global::<Locale>());
+                    bar.set_menus(menus, cx);
+                });
             }
         }
     }
@@ -336,8 +360,8 @@ impl AppShell {
             .store
             .read(cx)
             .name_of(id)
-            .unwrap_or("Wettkampf")
-            .to_owned();
+            .map(str::to_owned)
+            .unwrap_or_else(|| cx.t("app.default-competition-name").to_string());
 
         info!("export requested for competition {id} (\"{name}\")");
         let receiver = save::prompt(name, cx);
@@ -363,7 +387,7 @@ impl AppShell {
                 pdf_or_docx => {
                     let Some(exporter) = exporter else {
                         error!("export aborted — the Typst exporter is unavailable");
-                        alert(cx, "Der Exporter konnte nicht gestartet werden.");
+                        alert_t(cx, "app.exporter-unavailable");
                         return;
                     };
                     let Some(dto) = store.update(cx, |store, cx| {
@@ -387,20 +411,21 @@ impl AppShell {
                             match bytes {
                                 Ok(bytes) => {
                                     let n = bytes.len();
-                                    std::fs::write(&path, bytes).map(|()| n).map_err(|e| {
-                                        format!("Datei konnte nicht geschrieben werden: {e}")
-                                    })
+                                    std::fs::write(&path, bytes)
+                                        .map(|()| n)
+                                        .map_err(|e| WriteError::Io(e.to_string()))
                                 }
-                                Err(err) => Err(err.to_string()),
+                                Err(err) => Err(WriteError::Compile(err.to_string())),
                             }
                         })
                         .await;
 
                     match compiled {
                         Ok(n) => info!("{fmt} export written — {n} bytes → {}", target.display()),
-                        Err(message) => {
-                            error!("{fmt} export failed: {message}");
-                            alert(cx, &format!("Export fehlgeschlagen:\n{message}"));
+                        Err(err) => {
+                            error!("{fmt} export failed: {err:?}");
+                            let detail = err.detail(cx);
+                            alert_t_fmt(cx, "app.export-failed", &[("detail", &detail)]);
                         }
                     }
                 }
@@ -429,11 +454,12 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let prompt = cx.t("app.import-prompt");
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Wettkampf importieren".into()),
+            prompt: Some(prompt),
         });
         let store = self.store.clone();
         cx.spawn_in(window, async move |_, cx| {
@@ -464,11 +490,15 @@ impl AppShell {
             let exists = store.update(cx, |store, _| store.contains(id));
             if exists {
                 let confirm = cx.update(|window, cx| {
+                    let detail = cx.t("app.import-overwrite-detail");
                     window.prompt(
                         PromptLevel::Warning,
-                        "Dieser Wettkampf ist bereits vorhanden.",
-                        Some("Der vorhandene Wettkampf wird überschrieben."),
-                        &["Überschreiben", "Abbrechen"],
+                        &cx.t("app.import-overwrite-confirm"),
+                        Some(&detail),
+                        &[
+                            gpui::PromptButton::new(cx.t("app.import-overwrite-button")),
+                            gpui::PromptButton::new(cx.t("app.import-overwrite-cancel-button")),
+                        ],
                         cx,
                     )
                 });
@@ -813,6 +843,46 @@ fn alert(cx: &mut gpui::AsyncWindowContext, message: &str) {
         .is_err()
     {
         warn!("could not show the alert — the window is already gone");
+    }
+}
+
+/// [`alert`], resolving `key` through the active [`crate::i18n::Locale`] first.
+fn alert_t(cx: &mut gpui::AsyncWindowContext, key: &str) {
+    let message = cx
+        .update(|_, cx| cx.t(key).to_string())
+        .unwrap_or_else(|_| key.to_owned());
+    alert(cx, &message);
+}
+
+/// [`alert`], resolving `key` + `args` through the active [`crate::i18n::Locale`]
+/// first (see [`crate::i18n::ActiveLocale::t_fmt`]).
+fn alert_t_fmt(cx: &mut gpui::AsyncWindowContext, key: &str, args: &[(&str, &str)]) {
+    let message = cx
+        .update(|_, cx| cx.t_fmt(key, args))
+        .unwrap_or_else(|_| key.to_owned());
+    alert(cx, &message);
+}
+
+/// A background-executor export failure — kept as a translation key + dynamic
+/// detail rather than a formatted string, since the compile/write closure
+/// that produces it has no `Locale` access; [`Self::detail`] resolves it back
+/// on the main thread once the async continuation has `cx` again.
+#[derive(Debug)]
+enum WriteError {
+    Io(String),
+    /// `dtb_ke_export`'s own error text (e.g. a Typst diagnostic) — already
+    /// whatever language it produces; not re-translated here.
+    Compile(String),
+}
+
+impl WriteError {
+    fn detail(&self, cx: &mut gpui::AsyncWindowContext) -> String {
+        match self {
+            Self::Io(e) => cx
+                .update(|_, cx| cx.t_fmt("app.export-write-failed", &[("detail", e)]))
+                .unwrap_or_else(|_| e.clone()),
+            Self::Compile(e) => e.clone(),
+        }
     }
 }
 

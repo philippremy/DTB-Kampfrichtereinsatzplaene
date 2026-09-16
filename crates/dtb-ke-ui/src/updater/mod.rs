@@ -287,9 +287,10 @@ impl Updater {
                         this.state = if manual { State::UpToDate } else { State::Idle };
                     }
                     Err(err) => {
-                        log::warn!("update check failed: {err}");
+                        let message = err.translate(cx.global::<crate::i18n::Locale>());
+                        log::warn!("update check failed: {message}");
                         this.state = if manual {
-                            State::Failed(err)
+                            State::Failed(message)
                         } else {
                             State::Idle
                         };
@@ -386,8 +387,9 @@ impl Updater {
                     cx.emit(UpdaterEvent::RelaunchRequested);
                 }
                 Err(err) => {
-                    log::error!("update install failed: {err}");
-                    this.state = State::Failed(err);
+                    let message = err.translate(cx.global::<crate::i18n::Locale>());
+                    log::error!("update install failed: {message}");
+                    this.state = State::Failed(message);
                     cx.notify();
                     cx.emit(UpdaterEvent::Changed);
                 }
@@ -468,9 +470,56 @@ fn asset_priority(name: &str) -> Option<u32> {
     None
 }
 
+/// A background-thread update-check/install failure — kept as a translation
+/// key + dynamic detail, not a formatted string, since [`fetch_newest`] /
+/// [`run_install`] run on the background executor with no `Locale` access;
+/// [`UpdateError::translate`] resolves it on the main thread once the
+/// `Updater` entity's callback has `cx` again.
+enum UpdateError {
+    ManifestUnreachable(String),
+    ManifestUnreadable(String),
+    ManifestInvalid(String),
+    UnsupportedSchema(u64),
+    NoVerifyKey,
+    Build(String),
+    PathNotWritable,
+    VerificationRejected,
+    ChecksumMismatch,
+    Other(String),
+}
+
+impl UpdateError {
+    fn translate(&self, locale: &crate::i18n::Locale) -> String {
+        use crate::i18n::ActiveLocale;
+        match self {
+            Self::ManifestUnreachable(detail) => {
+                locale.t_fmt("updater.error-manifest-unreachable", &[("detail", detail)])
+            }
+            Self::ManifestUnreadable(detail) => {
+                locale.t_fmt("updater.error-manifest-unreadable", &[("detail", detail)])
+            }
+            Self::ManifestInvalid(detail) => {
+                locale.t_fmt("updater.error-manifest-invalid", &[("detail", detail)])
+            }
+            Self::UnsupportedSchema(schema) => locale.t_fmt(
+                "updater.error-unsupported-schema",
+                &[("schema", &schema.to_string())],
+            ),
+            Self::NoVerifyKey => locale.t("updater.error-no-verify-key").to_string(),
+            Self::Build(detail) => locale.t_fmt("updater.error-build", &[("detail", detail)]),
+            Self::PathNotWritable => locale.t("updater.error-path-not-writable").to_string(),
+            Self::VerificationRejected => {
+                locale.t("updater.error-verification-rejected").to_string()
+            }
+            Self::ChecksumMismatch => locale.t("updater.error-checksum-mismatch").to_string(),
+            Self::Other(detail) => locale.t_fmt("updater.error-other", &[("detail", detail)]),
+        }
+    }
+}
+
 /// Fetch + parse the manifest at `url`, return the newest release strictly
 /// newer than the running build (and newer than `skipped`, if given).
-fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, String> {
+fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, UpdateError> {
     let mut response = match self_update::ureq::get(url).call() {
         Ok(response) => response,
         // A missing manifest is not a failure: a rolling channel tag has
@@ -481,20 +530,17 @@ fn fetch_newest(url: &str, skipped: Option<&str>) -> Result<Option<Release>, Str
             log::info!("no update manifest on this channel yet: {url}");
             return Ok(None);
         }
-        Err(e) => return Err(format!("Manifest nicht erreichbar: {e}")),
+        Err(e) => return Err(UpdateError::ManifestUnreachable(e.to_string())),
     };
     let body = response
         .body_mut()
         .read_to_string()
-        .map_err(|e| format!("Manifest unlesbar: {e}"))?;
+        .map_err(|e| UpdateError::ManifestUnreadable(e.to_string()))?;
 
     let manifest: Manifest =
-        serde_json::from_str(&body).map_err(|e| format!("Manifest ungültig: {e}"))?;
+        serde_json::from_str(&body).map_err(|e| UpdateError::ManifestInvalid(e.to_string()))?;
     if manifest.schema != 1 {
-        return Err(format!(
-            "Manifest-Schema {} wird nicht unterstützt",
-            manifest.schema
-        ));
+        return Err(UpdateError::UnsupportedSchema(manifest.schema));
     }
 
     let current = build_info::APP_VERSION;
@@ -569,8 +615,8 @@ impl DownloadProgress {
 }
 
 /// Download the newest release's archive, verify it, and swap it in.
-fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(), String> {
-    let key = key::VERIFY_KEY.ok_or("kein Prüfschlüssel in dieser Programmversion")?;
+fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(), UpdateError> {
+    let key = key::VERIFY_KEY.ok_or(UpdateError::NoVerifyKey)?;
 
     let progress = progress.clone();
     let mut builder = self_update::backends::manifest::Update::configure();
@@ -612,7 +658,9 @@ fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(
         }
     }
 
-    let update = builder.build().map_err(|e| e.to_string())?;
+    let update = builder
+        .build()
+        .map_err(|e| UpdateError::Build(e.to_string()))?;
     match update.update() {
         Ok(status) => {
             log::info!("self_update: {status}");
@@ -622,26 +670,16 @@ fn run_install(manifest_url: &str, progress: &Arc<DownloadProgress>) -> Result<(
     }
 }
 
-/// Turn a `self_update::Error` into a German sentence for the toast.
-fn friendly_install_error(err: self_update::Error) -> String {
+/// Turn a `self_update::Error` into an [`UpdateError`] for the toast.
+fn friendly_install_error(err: self_update::Error) -> UpdateError {
     use self_update::Error;
     match err {
-        Error::InstallPathNotWritable { .. } => {
-            "Das Programmverzeichnis ist schreibgeschützt. Bitte die neue Version manuell \
-             herunterladen."
-                .to_owned()
-        }
+        Error::InstallPathNotWritable { .. } => UpdateError::PathNotWritable,
         Error::VerificationRejected { .. } | Error::ArchiveVerificationRejected { .. } => {
-            "Die Signatur der heruntergeladenen Datei ist ungültig — die Aktualisierung wurde \
-             abgebrochen."
-                .to_owned()
+            UpdateError::VerificationRejected
         }
-        Error::ChecksumMismatch { .. } => {
-            "Die Prüfsumme der heruntergeladenen Datei stimmt nicht — die Aktualisierung wurde \
-             abgebrochen."
-                .to_owned()
-        }
-        other => format!("Die Aktualisierung ist fehlgeschlagen: {other}"),
+        Error::ChecksumMismatch { .. } => UpdateError::ChecksumMismatch,
+        other => UpdateError::Other(other.to_string()),
     }
 }
 

@@ -29,6 +29,8 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakE
 use log::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
+use crate::i18n::ActiveLocale;
+
 use crate::filesystem::FilesystemHelper;
 use crate::model::{Competition, CompetitionMeta, RichText, Round};
 
@@ -439,7 +441,10 @@ impl AppStore {
                         "export_competition({id}): writing {} failed: {err}",
                         dest.display()
                     );
-                    Self::report_error(&this, cx, format!("Export fehlgeschlagen: {err}"))
+                    let message = cx.update(|cx| {
+                        cx.t_fmt("store.export-write-failed", &[("detail", &err.to_string())])
+                    });
+                    Self::report_error(&this, cx, message)
                 }
                 Err(err) => {
                     error!("export_competition({id}): serialising failed: {err}");
@@ -470,7 +475,10 @@ impl AppStore {
                         source.display(),
                         dest.display()
                     );
-                    Self::report_error(&this, cx, format!("Kopie fehlgeschlagen: {err}"));
+                    let message = cx.update(|cx| {
+                        cx.t_fmt("store.copy-failed", &[("detail", &err.to_string())])
+                    });
+                    Self::report_error(&this, cx, message);
                 }
             }
         })

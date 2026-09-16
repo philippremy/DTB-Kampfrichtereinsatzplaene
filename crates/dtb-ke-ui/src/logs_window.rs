@@ -30,9 +30,9 @@ use crate::components::icon::Icon;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
 use crate::filesystem::FilesystemHelper;
+use crate::i18n::ActiveLocale;
 use crate::theme::{ActiveTheme, PaletteColors};
 
-const TITLE: &str = "Protokolle";
 /// A sanity ceiling — a file larger than this is not loaded at all (it would be
 /// gigabytes of RAM); the user is told to open it externally.
 const HARD_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -58,7 +58,7 @@ pub fn open(cx: &mut App) {
     let options = window_options(cx);
     match cx.open_window(options, |_, cx| cx.new(LogsWindow::new)) {
         Ok(handle) => OPEN.with(|h| *h.borrow_mut() = Some(handle.into())),
-        Err(err) => log::error!("Protokollfenster konnte nicht geöffnet werden: {err}"),
+        Err(err) => log::error!("failed to open the logs window: {err}"),
     }
 }
 
@@ -70,7 +70,7 @@ fn window_options(cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(TITLE.into()),
+            title: Some(cx.t("logs.window-title")),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -199,8 +199,12 @@ impl LogsWindow {
                     Content::Loaded(loaded)
                 }
                 Err(err) => {
-                    log::warn!("log viewer: could not read {}: {err}", file.path.display());
-                    Content::Error(err)
+                    let message = err.translate(cx);
+                    log::warn!(
+                        "log viewer: could not read {}: {message}",
+                        file.path.display()
+                    );
+                    Content::Error(message)
                 }
             },
         };
@@ -239,7 +243,7 @@ impl LogsWindow {
                     .text_size(px(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(c.muted_foreground)
-                    .child("PROTOKOLLDATEIEN"),
+                    .child(cx.t("logs.files-section")),
             )
             .child(
                 div()
@@ -257,7 +261,7 @@ impl LogsWindow {
                             .pb(px(8.))
                             .children(self.files.iter().enumerate().map(|(ix, file)| {
                                 let selected = self.selected == Some(ix);
-                                let meta = file_meta_line(file);
+                                let meta = file_meta_line(file, cx);
                                 div()
                                     .id(("log-file", ix))
                                     .flex()
@@ -316,7 +320,7 @@ impl LogsWindow {
             .flex_col()
             .bg(c.background)
             .child(self.detail_toolbar(cx))
-            .child(self.detail_body(&c))
+            .child(self.detail_body(&c, cx))
     }
 
     fn detail_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -334,7 +338,7 @@ impl LogsWindow {
             .border_b_1()
             .border_color(c.border)
             .child(
-                Button::new("log-reload", "Neu laden")
+                Button::new("log-reload", cx.t("logs.reload-button"))
                     .small()
                     .tone(ButtonTone::Secondary)
                     .disabled(!has_file)
@@ -344,7 +348,7 @@ impl LogsWindow {
                     })),
             )
             .child(
-                Button::new("log-copy", "Kopieren")
+                Button::new("log-copy", cx.t("logs.copy-button"))
                     .small()
                     .tone(ButtonTone::Secondary)
                     .leading_icon(Icon::Copy)
@@ -356,7 +360,7 @@ impl LogsWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child("Einfärben"),
+                    .child(cx.t("logs.colorize-toggle")),
             )
             .child(
                 Toggle::new("log-colorize", self.colorize).on_change(cx.processor(
@@ -368,10 +372,10 @@ impl LogsWindow {
             )
     }
 
-    fn detail_body(&self, c: &PaletteColors) -> gpui::AnyElement {
+    fn detail_body(&self, c: &PaletteColors, cx: &Context<Self>) -> gpui::AnyElement {
         match &self.content {
-            Content::None => body_frame(placeholder("Keine Protokolldatei ausgewählt.", c)),
-            Content::Error(err) => body_frame(placeholder(err, c)),
+            Content::None => body_frame(placeholder(cx.t("logs.no-file-selected"), c)),
+            Content::Error(err) => body_frame(placeholder(err.clone(), c)),
             Content::Loaded(loaded) => {
                 let text = loaded.text.clone();
                 let lines = loaded.lines.clone();
@@ -445,7 +449,7 @@ impl Render for LogsWindow {
                     .bg(c.chrome)
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(TITLE),
+                    .child(cx.t("logs.window-title")),
             )
             .child(
                 div()
@@ -532,16 +536,29 @@ fn byte_offset(outer: &str, inner: &str) -> Option<usize> {
 }
 
 /// Read the whole file (lossy UTF-8) and index its lines.
-fn read_log(path: &Path) -> Result<LoadedLog, String> {
-    let len = fs::metadata(path).map_err(|e| e.to_string())?.len();
+enum ReadLogError {
+    TooLarge(u64),
+    Io(String),
+}
+
+impl ReadLogError {
+    fn translate(&self, cx: &App) -> String {
+        match self {
+            Self::TooLarge(len) => cx.t_fmt("logs.file-too-large", &[("size", &human_size(*len))]),
+            Self::Io(detail) => detail.clone(),
+        }
+    }
+}
+
+fn read_log(path: &Path) -> Result<LoadedLog, ReadLogError> {
+    let len = fs::metadata(path)
+        .map_err(|e| ReadLogError::Io(e.to_string()))?
+        .len();
     if len > HARD_MAX_BYTES {
-        return Err(format!(
-            "Datei ist {} groß — bitte extern öffnen.",
-            human_size(len)
-        ));
+        return Err(ReadLogError::TooLarge(len));
     }
 
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = fs::read(path).map_err(|e| ReadLogError::Io(e.to_string()))?;
     let text: Arc<str> = match String::from_utf8(bytes) {
         Ok(s) => Arc::from(s),
         Err(err) => Arc::from(String::from_utf8_lossy(err.as_bytes()).into_owned()),
@@ -582,7 +599,7 @@ fn read_log(path: &Path) -> Result<LoadedLog, String> {
     })
 }
 
-fn file_meta_line(file: &LogFile) -> String {
+fn file_meta_line(file: &LogFile, cx: &Context<LogsWindow>) -> String {
     let mut parts = vec![human_size(file.size)];
     if let Some(modified) = file.modified {
         let dt: chrono::DateTime<chrono::Local> =
@@ -590,7 +607,7 @@ fn file_meta_line(file: &LogFile) -> String {
         parts.push(dt.format("%d.%m.%Y %H:%M").to_string());
     }
     if file.is_current {
-        parts.push("aktuell".to_string());
+        parts.push(cx.t("logs.current-session").to_string());
     }
     parts.join(" · ")
 }

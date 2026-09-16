@@ -6,9 +6,10 @@
 //! these into a native `NSMenu`; Windows and Linux will draw their own bar from
 //! the same model in later phases.
 
-use gpui::{Menu, MenuItem, OsAction};
+use gpui::{Menu, MenuItem, OsAction, SharedString};
 
 use crate::actions::{app, edit, file, help, window};
+use crate::i18n::{ActiveLocale, Locale};
 
 /// Everything [`build`] needs to decide labels and enabled state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -46,17 +47,17 @@ impl Default for MenuState {
 
 const APP_NAME: &str = "DTB Kampfrichtereinsatzpläne";
 
-/// The German label a command shows in the menu bar, looked up by its action
-/// name (`"file::NewCompetition"`). Used by the settings window's key-binding
-/// list and its conflict messages. Trailing " …" is trimmed.
-pub fn label_for(action_name: &str) -> Option<String> {
-    fn scan(items: &[MenuItem], action_name: &str) -> Option<String> {
+/// The label a command shows in the menu bar, looked up by its action name
+/// (`"file::NewCompetition"`). Used by the settings window's key-binding list
+/// and its conflict messages. Trailing " …" is trimmed.
+pub fn label_for(action_name: &str, locale: &Locale) -> Option<SharedString> {
+    fn scan(items: &[MenuItem], action_name: &str) -> Option<SharedString> {
         for item in items {
             match item {
                 MenuItem::Action { name, action, .. } if action.name() == action_name => {
                     let label = name.as_ref().trim_end();
                     let label = label.strip_suffix('…').unwrap_or(label).trim_end();
-                    return Some(label.to_string());
+                    return Some(SharedString::from(label.to_owned()));
                 }
                 MenuItem::Submenu(menu) => {
                     if let Some(found) = scan(&menu.items, action_name) {
@@ -68,117 +69,158 @@ pub fn label_for(action_name: &str) -> Option<String> {
         }
         None
     }
-    build(MenuState::default())
+    build(MenuState::default(), locale)
         .iter()
         .find_map(|menu| scan(&menu.items, action_name))
 }
 
 /// Build the menu bar for `state`.
-pub fn build(state: MenuState) -> Vec<Menu> {
+pub fn build(state: MenuState, locale: &Locale) -> Vec<Menu> {
     vec![
-        app_menu(state),
-        file_menu(state),
-        edit_menu(state),
-        window_menu(state),
-        help_menu(state),
+        app_menu(state, locale),
+        file_menu(state, locale),
+        edit_menu(state, locale),
+        window_menu(state, locale),
+        help_menu(state, locale),
     ]
 }
 
 /// A document-scoped item: enabled only in a document window and when `available`.
 fn doc_item(
-    label: impl Into<String>,
+    label: impl Into<SharedString>,
     action: impl gpui::Action,
     state: MenuState,
     available: bool,
 ) -> MenuItem {
-    MenuItem::action(label.into(), action).disabled(!(state.document_context && available))
+    MenuItem::action(label, action).disabled(!(state.document_context && available))
 }
 
-fn app_menu(state: MenuState) -> Menu {
+fn app_menu(state: MenuState, locale: &Locale) -> Menu {
     let mut items = vec![
-        MenuItem::action(format!("Über {APP_NAME}"), app::About),
-        MenuItem::action("Nach Updates suchen …", app::CheckForUpdates)
-            .disabled(!crate::updater::available()),
+        MenuItem::action(
+            locale.t_fmt("actions.app::About", &[("app_name", APP_NAME)]),
+            app::About,
+        ),
+        MenuItem::action(
+            locale.t("actions.app::CheckForUpdates"),
+            app::CheckForUpdates,
+        )
+        .disabled(!crate::updater::available()),
         MenuItem::separator(),
-        MenuItem::action("Einstellungen …", app::OpenSettings),
+        MenuItem::action(locale.t("actions.app::OpenSettings"), app::OpenSettings),
     ];
 
     #[cfg(target_os = "macos")]
     {
         items.push(MenuItem::separator());
         items.push(MenuItem::os_submenu(
-            "Dienste",
+            locale.t("menu.app.services"),
             gpui::SystemMenuType::Services,
         ));
     }
 
     items.extend([
         MenuItem::separator(),
-        MenuItem::action(format!("{APP_NAME} ausblenden"), app::HideApp),
-        MenuItem::action("Andere ausblenden", app::HideOthers),
+        MenuItem::action(
+            locale.t_fmt("actions.app::HideApp", &[("app_name", APP_NAME)]),
+            app::HideApp,
+        ),
+        MenuItem::action(locale.t("actions.app::HideOthers"), app::HideOthers),
         MenuItem::separator(),
-        MenuItem::action(format!("{APP_NAME} beenden"), app::Quit),
+        MenuItem::action(
+            locale.t_fmt("actions.app::Quit", &[("app_name", APP_NAME)]),
+            app::Quit,
+        ),
     ]);
 
     let _ = state;
     Menu::new(APP_NAME).items(items)
 }
 
-fn file_menu(state: MenuState) -> Menu {
+fn file_menu(state: MenuState, locale: &Locale) -> Menu {
     let has_comp = state.has_competition;
-    Menu::new("Ablage").items(vec![
-        doc_item("Neuer Wettkampf", file::NewCompetition, state, true),
-        doc_item("Neues Kampfgericht", file::AddJudgingTable, state, has_comp),
+    Menu::new(locale.t("menu.file.title")).items(vec![
+        doc_item(
+            locale.t("actions.file::NewCompetition"),
+            file::NewCompetition,
+            state,
+            true,
+        ),
+        doc_item(
+            locale.t("actions.file::AddJudgingTable"),
+            file::AddJudgingTable,
+            state,
+            has_comp,
+        ),
         MenuItem::separator(),
         doc_item(
-            "Wettkampfeinstellungen …",
+            locale.t("actions.file::CompetitionSettings"),
             file::CompetitionSettings,
             state,
             has_comp,
         ),
         MenuItem::separator(),
         doc_item(
-            "Wettkampf exportieren …",
+            locale.t("actions.file::ExportCompetition"),
             file::ExportCompetition,
             state,
             has_comp,
         ),
         doc_item(
-            "Wettkampf importieren …",
+            locale.t("actions.file::ImportCompetition"),
             file::ImportCompetition,
             state,
             true,
         ),
-        doc_item("Gesamte Datenbank sichern …", file::ExportAll, state, true),
+        doc_item(
+            locale.t("actions.file::ExportAll"),
+            file::ExportAll,
+            state,
+            true,
+        ),
         MenuItem::separator(),
-        MenuItem::action("Fenster schließen", file::CloseWindow),
+        MenuItem::action(locale.t("actions.file::CloseWindow"), file::CloseWindow),
     ])
 }
 
-fn edit_menu(state: MenuState) -> Menu {
+fn edit_menu(state: MenuState, locale: &Locale) -> Menu {
     let has_sel = state.has_table_selection;
-    Menu::new("Bearbeiten").items(vec![
-        doc_item("Rückgängig", edit::Undo, state, state.can_undo),
-        doc_item("Wiederholen", edit::Redo, state, state.can_redo),
+    Menu::new(locale.t("menu.edit.title")).items(vec![
+        doc_item(
+            locale.t("actions.edit::Undo"),
+            edit::Undo,
+            state,
+            state.can_undo,
+        ),
+        doc_item(
+            locale.t("actions.edit::Redo"),
+            edit::Redo,
+            state,
+            state.can_redo,
+        ),
         MenuItem::separator(),
-        MenuItem::os_action("Ausschneiden", edit::Cut, OsAction::Cut),
-        MenuItem::os_action("Kopieren", edit::Copy, OsAction::Copy),
-        MenuItem::os_action("Einfügen", edit::Paste, OsAction::Paste),
+        MenuItem::os_action(locale.t("actions.edit::Cut"), edit::Cut, OsAction::Cut),
+        MenuItem::os_action(locale.t("actions.edit::Copy"), edit::Copy, OsAction::Copy),
+        MenuItem::os_action(
+            locale.t("actions.edit::Paste"),
+            edit::Paste,
+            OsAction::Paste,
+        ),
         MenuItem::separator(),
         doc_item(
-            "Kampfgericht hinzufügen",
+            locale.t("menu.edit.add-judging-table"),
             file::AddJudgingTable,
             state,
             state.has_competition,
         ),
         doc_item(
-            "Kampfgericht duplizieren",
+            locale.t("actions.edit::DuplicateJudgingTable"),
             edit::DuplicateJudgingTable,
             state,
             has_sel,
         ),
         doc_item(
-            "Kampfgericht löschen",
+            locale.t("actions.edit::DeleteJudgingTable"),
             edit::DeleteJudgingTable,
             state,
             has_sel,
@@ -186,37 +228,46 @@ fn edit_menu(state: MenuState) -> Menu {
     ])
 }
 
-fn window_menu(state: MenuState) -> Menu {
+fn window_menu(state: MenuState, locale: &Locale) -> Menu {
     let preview_label = if state.preview_open {
-        "Vorschaufenster schließen"
+        locale.t("menu.window.close-preview")
     } else {
-        "Vorschaufenster öffnen"
+        locale.t("menu.window.open-preview")
     };
     let fullscreen_label = if state.fullscreen {
-        "Vollbild verlassen"
+        locale.t("menu.window.exit-fullscreen")
     } else {
-        "Vollbild"
+        locale.t("menu.window.enter-fullscreen")
     };
-    Menu::new("Fenster").items(vec![
+    Menu::new(locale.t("menu.window.title")).items(vec![
         MenuItem::action(preview_label, window::TogglePreview),
         MenuItem::action(fullscreen_label, window::ToggleFullscreen),
         MenuItem::separator(),
-        MenuItem::action("Minimieren", window::Minimize),
+        MenuItem::action(locale.t("actions.window::Minimize"), window::Minimize),
     ])
 }
 
-fn help_menu(_state: MenuState) -> Menu {
-    Menu::new("Hilfe").items(vec![
-        MenuItem::action("Bug melden", help::ReportBug),
-        MenuItem::action("Funktion anfragen", help::RequestFeature),
+fn help_menu(_state: MenuState, locale: &Locale) -> Menu {
+    Menu::new(locale.t("menu.help.title")).items(vec![
+        MenuItem::action(locale.t("actions.help::ReportBug"), help::ReportBug),
+        MenuItem::action(
+            locale.t("actions.help::RequestFeature"),
+            help::RequestFeature,
+        ),
         MenuItem::separator(),
-        MenuItem::action("Logs zeigen", help::ShowLogs),
-        MenuItem::action("Logordner öffnen", help::OpenLogFolder),
-        MenuItem::action("Datenbank zeigen", help::ShowDatabase),
+        MenuItem::action(locale.t("actions.help::ShowLogs"), help::ShowLogs),
+        MenuItem::action(locale.t("actions.help::OpenLogFolder"), help::OpenLogFolder),
+        MenuItem::action(locale.t("actions.help::ShowDatabase"), help::ShowDatabase),
         MenuItem::separator(),
-        MenuItem::action("Logordner leeren", help::ClearLogFolder),
+        MenuItem::action(
+            locale.t("actions.help::ClearLogFolder"),
+            help::ClearLogFolder,
+        ),
         MenuItem::separator(),
-        MenuItem::action(format!("{APP_NAME} auf Codeberg"), help::OpenRepository),
+        MenuItem::action(
+            locale.t_fmt("actions.help::OpenRepository", &[("app_name", APP_NAME)]),
+            help::OpenRepository,
+        ),
     ])
 }
 
@@ -241,7 +292,8 @@ mod tests {
 
     #[test]
     fn builds_the_five_top_level_menus() {
-        let menus = build(MenuState::default());
+        let locale = crate::i18n::test_locale();
+        let menus = build(MenuState::default(), &locale);
         let names: Vec<_> = menus.iter().map(|m| m.name.to_string()).collect();
         assert_eq!(
             names,
@@ -257,38 +309,58 @@ mod tests {
 
     #[test]
     fn competition_items_track_selection_state() {
+        let locale = crate::i18n::test_locale();
         let none = MenuState::default();
-        assert!(disabled(&build(none), "Wettkampfeinstellungen …"));
-        assert!(disabled(&build(none), "Kampfgericht duplizieren"));
+        assert!(disabled(&build(none, &locale), "Wettkampfeinstellungen …"));
+        assert!(disabled(&build(none, &locale), "Kampfgericht duplizieren"));
 
         let with_comp = MenuState {
             has_competition: true,
             ..MenuState::default()
         };
-        assert!(!disabled(&build(with_comp), "Wettkampfeinstellungen …"));
-        assert!(disabled(&build(with_comp), "Kampfgericht duplizieren"));
+        assert!(!disabled(
+            &build(with_comp, &locale),
+            "Wettkampfeinstellungen …"
+        ));
+        assert!(disabled(
+            &build(with_comp, &locale),
+            "Kampfgericht duplizieren"
+        ));
 
         let with_table = MenuState {
             has_competition: true,
             has_table_selection: true,
             ..MenuState::default()
         };
-        assert!(!disabled(&build(with_table), "Kampfgericht duplizieren"));
-        assert!(!disabled(&build(with_table), "Kampfgericht löschen"));
+        assert!(!disabled(
+            &build(with_table, &locale),
+            "Kampfgericht duplizieren"
+        ));
+        assert!(!disabled(
+            &build(with_table, &locale),
+            "Kampfgericht löschen"
+        ));
     }
 
     #[test]
     fn undo_redo_track_history_availability() {
-        assert!(disabled(&build(MenuState::default()), "Rückgängig"));
-        assert!(disabled(&build(MenuState::default()), "Wiederholen"));
+        let locale = crate::i18n::test_locale();
+        assert!(disabled(
+            &build(MenuState::default(), &locale),
+            "Rückgängig"
+        ));
+        assert!(disabled(
+            &build(MenuState::default(), &locale),
+            "Wiederholen"
+        ));
 
         let can_undo = MenuState {
             has_competition: true,
             can_undo: true,
             ..MenuState::default()
         };
-        assert!(!disabled(&build(can_undo), "Rückgängig"));
-        assert!(disabled(&build(can_undo), "Wiederholen"));
+        assert!(!disabled(&build(can_undo, &locale), "Rückgängig"));
+        assert!(disabled(&build(can_undo, &locale), "Wiederholen"));
 
         // A non-document window disables them even with history.
         let settings = MenuState {
@@ -297,18 +369,19 @@ mod tests {
             can_redo: true,
             ..MenuState::default()
         };
-        assert!(disabled(&build(settings), "Rückgängig"));
+        assert!(disabled(&build(settings, &locale), "Rückgängig"));
     }
 
     #[test]
     fn a_non_document_window_disables_document_items() {
+        let locale = crate::i18n::test_locale();
         let settings_window = MenuState {
             document_context: false,
             has_competition: true,
             has_table_selection: true,
             ..MenuState::default()
         };
-        let menus = build(settings_window);
+        let menus = build(settings_window, &locale);
         assert!(disabled(&menus, "Neuer Wettkampf"));
         assert!(disabled(&menus, "Kampfgericht duplizieren"));
         // App / window / help items stay usable.
@@ -324,15 +397,19 @@ mod tests {
 
     #[test]
     fn fullscreen_label_flips() {
+        let locale = crate::i18n::test_locale();
         assert!(has_labelled_action(
-            &build(MenuState::default()),
+            &build(MenuState::default(), &locale),
             "Vollbild"
         ));
         assert!(has_labelled_action(
-            &build(MenuState {
-                fullscreen: true,
-                ..MenuState::default()
-            }),
+            &build(
+                MenuState {
+                    fullscreen: true,
+                    ..MenuState::default()
+                },
+                &locale
+            ),
             "Vollbild verlassen"
         ));
     }
