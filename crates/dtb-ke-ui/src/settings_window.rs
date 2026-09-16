@@ -400,14 +400,14 @@ impl SettingsWindow {
             .child(divider(&c))
             .child(setting_row(
                 cx.t("settings.general.accent-title"),
-                if cfg!(target_os = "macos") {
+                if cfg!(any(target_os = "macos", target_os = "windows")) {
                     cx.t("settings.general.accent-description")
                 } else {
                     cx.t("settings.general.accent-description-unavailable")
                 },
                 &c,
                 Toggle::new("use-system-accent", settings.use_system_accent_color)
-                    .disabled(!cfg!(target_os = "macos"))
+                    .disabled(!cfg!(any(target_os = "macos", target_os = "windows")))
                     .on_change(cx.processor(|_, next: bool, _window, cx| {
                         Settings::update(cx, move |s| s.use_system_accent_color = next);
                         crate::theme::Theme::reload(cx);

@@ -1,43 +1,55 @@
-//! The live macOS system accent colour (`NSColor.controlAccentColor`), used
-//! by [`crate::theme`] when `Settings.use_system_accent_color` is on.
+//! The live system accent colour — `NSColor.controlAccentColor` on macOS,
+//! `HKCU\Software\Microsoft\Windows\DWM\AccentColor` on Windows — used by
+//! [`crate::theme`] when `Settings.use_system_accent_color` is on.
 //!
-//! Every public fn here is `#[cfg(target_os = "macos")]` with a
-//! `#[cfg(not(target_os = "macos"))]` fallback, so callers never need
+//! Every public fn here is `#[cfg(any(target_os = "macos", target_os =
+//! "windows"))]` with a fallback for every other OS, so callers never need
 //! `#[cfg]` — the same convention as [`super::window::windows_backdrop_support`].
 
 use gpui::{App, Hsla};
 
 use crate::theme::Appearance;
 
-/// Read the live system accent colour, resolved under `appearance` (AppKit's
-/// dynamic system colours can legitimately differ between light/dark — this
-/// app's [`crate::theme::ThemeMode`] can force one appearance independent of
-/// the OS's own, so the read has to name which one explicitly rather than
-/// relying on whatever the OS currently is). `None` off macOS, with no main
-/// thread, or if AppKit resolution fails for any reason — callers fall back
-/// to the dtb.toml accent.
+/// Read the live system accent colour, resolved under `appearance` on macOS
+/// (AppKit's dynamic system colours can legitimately differ between
+/// light/dark — this app's [`crate::theme::ThemeMode`] can force one
+/// appearance independent of the OS's own, so the read has to name which one
+/// explicitly rather than relying on whatever the OS currently is). Windows'
+/// `AccentColor` isn't itself light/dark-scoped, so `appearance` is unused
+/// there. `None` off macOS/Windows, with no main thread (macOS), or if the
+/// OS read fails for any reason — callers fall back to the dtb.toml accent.
 #[cfg(target_os = "macos")]
 pub fn system_accent(appearance: Appearance) -> Option<Hsla> {
     macos::system_accent(appearance)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn system_accent(appearance: Appearance) -> Option<Hsla> {
+    let _ = appearance;
+    windows::system_accent()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn system_accent(_appearance: Appearance) -> Option<Hsla> {
     None
 }
 
-/// Start watching `NSSystemColorsDidChangeNotification` and re-apply the
-/// theme (via [`crate::theme::Theme::reload`]) whenever the user changes the
-/// OS accent colour in System Settings — so the app re-tints live, with no
-/// restart. No-op off macOS. Call once at startup, unconditionally; the
-/// observer lives for the process (never removed), the same lifetime as the
-/// crash handler.
+/// Start watching the OS accent colour and re-apply the theme (via
+/// [`crate::theme::Theme::reload`]) whenever the user changes it in system
+/// settings — so the app re-tints live, with no restart. No-op off
+/// macOS/Windows. Call once at startup, unconditionally; the observer lives
+/// for the process (never removed), the same lifetime as the crash handler.
 #[cfg(target_os = "macos")]
 pub fn watch_system_accent(cx: &mut App) {
     macos::watch_system_accent(cx);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn watch_system_accent(cx: &mut App) {
+    windows::watch_system_accent(cx);
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn watch_system_accent(_cx: &mut App) {}
 
 #[cfg(target_os = "macos")]
@@ -124,6 +136,120 @@ mod macos {
             )
         };
         OBSERVER.with(|cell| *cell.borrow_mut() = Some(token));
+
+        cx.spawn(async move |cx| {
+            while rx.next().await.is_some() {
+                cx.update(Theme::reload);
+            }
+        })
+        .detach();
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use futures::StreamExt;
+    use gpui::{App, Hsla, Rgba};
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_DWORD, REG_NOTIFY_CHANGE_LAST_SET,
+        REG_VALUE_TYPE, RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, RegQueryValueExW,
+    };
+    use windows::core::w;
+
+    use crate::theme::Theme;
+
+    /// Read the raw `AccentColor` `REG_DWORD` from
+    /// `HKCU\Software\Microsoft\Windows\DWM` — the colour picked in Settings
+    /// → Personalization → Colours, custom or automatic. `None` if the
+    /// key/value is missing, isn't a DWORD, or the read fails for any reason.
+    fn read_accent_color() -> Option<u32> {
+        unsafe {
+            let mut hkey = HKEY::default();
+            if RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\DWM"),
+                None,
+                KEY_READ,
+                &mut hkey,
+            ) != ERROR_SUCCESS
+            {
+                return None;
+            }
+
+            let mut kind = REG_VALUE_TYPE::default();
+            let mut data: u32 = 0;
+            let mut size = size_of::<u32>() as u32;
+            let status = RegQueryValueExW(
+                hkey,
+                w!("AccentColor"),
+                None,
+                Some(&mut kind),
+                Some((&mut data as *mut u32).cast()),
+                Some(&mut size),
+            );
+            let _ = RegCloseKey(hkey);
+
+            if status != ERROR_SUCCESS || kind != REG_DWORD {
+                return None;
+            }
+            Some(data)
+        }
+    }
+
+    pub fn system_accent() -> Option<Hsla> {
+        let value = read_accent_color()?;
+        // Long-reverse-engineered (undocumented by Microsoft, but stable and
+        // widely relied on by other accent-colour tools) as 0xAABBGGRR —
+        // i.e. byte 0 = R, byte 1 = G, byte 2 = B, byte 3 = A.
+        let a = ((value >> 24) & 0xFF) as f32 / 255.0;
+        let b = ((value >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((value >> 8) & 0xFF) as f32 / 255.0;
+        let r = (value & 0xFF) as f32 / 255.0;
+        Some(Hsla::from(Rgba { r, g, b, a }))
+    }
+
+    pub fn watch_system_accent(cx: &mut App) {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+
+        // `RegNotifyChangeKeyValue` with `fAsynchronous = FALSE` blocks the
+        // calling thread until the key changes, so this needs its own
+        // dedicated thread (re-issuing the call in a loop to keep watching —
+        // one registration only fires once). Nothing `HKEY`-shaped crosses a
+        // thread boundary: the key is opened, watched, and closed entirely
+        // inside this thread.
+        let spawned = std::thread::Builder::new()
+            .name("dtb-ke-accent-watch".into())
+            .spawn(move || unsafe {
+                let mut hkey = HKEY::default();
+                if RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    w!("Software\\Microsoft\\Windows\\DWM"),
+                    None,
+                    KEY_READ | KEY_NOTIFY,
+                    &mut hkey,
+                ) != ERROR_SUCCESS
+                {
+                    return;
+                }
+                loop {
+                    let status = RegNotifyChangeKeyValue(
+                        hkey,
+                        false,
+                        REG_NOTIFY_CHANGE_LAST_SET,
+                        None,
+                        false,
+                    );
+                    if status != ERROR_SUCCESS || tx.unbounded_send(()).is_err() {
+                        break;
+                    }
+                }
+                let _ = RegCloseKey(hkey);
+            });
+        if spawned.is_err() {
+            log::warn!("accent: could not start the registry watch thread");
+            return;
+        }
 
         cx.spawn(async move |cx| {
             while rx.next().await.is_some() {

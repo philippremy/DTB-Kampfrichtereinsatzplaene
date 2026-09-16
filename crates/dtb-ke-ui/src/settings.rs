@@ -26,9 +26,10 @@ pub struct Settings {
     /// any shipped catalog is treated the same as `None`. See
     /// [`crate::i18n`].
     pub locale: Option<String>,
-    /// macOS only: tint the accent-derived palette roles (`primary`/`ring`/
-    /// `accent_soft`/`selection`) from the live `NSColor.controlAccentColor`
-    /// instead of the dtb.toml blue. Falls back to dtb.toml off macOS, or if
+    /// macOS / Windows only: tint the accent-derived palette roles
+    /// (`primary`/`ring`/`accent_soft`/`selection`) from the live OS accent
+    /// colour (`NSColor.controlAccentColor` / `DWM\AccentColor`) instead of
+    /// the dtb.toml blue. Falls back to dtb.toml off those platforms, or if
     /// the OS colour can't be read. See [`crate::skin::accent`].
     pub use_system_accent_color: bool,
     /// Snap every animation to its end state (accessibility / low-power).

@@ -89,6 +89,10 @@ windows = { version = "0.61", features = [
     # `RtlGetVersion` (skin/window.rs's `windows_backdrop_support`) — the real
     # OS build number, since `GetVersionEx` lies without an app manifest.
     "Wdk_System_SystemServices", "Win32_System_SystemInformation",
+    # `skin/accent.rs`'s live system-accent-colour read
+    # (HKCU\Software\Microsoft\Windows\DWM\AccentColor) + its
+    # RegNotifyChangeKeyValue-based watcher.
+    "Win32_System_Registry",
 ] }
 windows-core = { version = "0.61.2" }
 gpui_platform = { git = "https://github.com/zed-industries/zed.git" }
