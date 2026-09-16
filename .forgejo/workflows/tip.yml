@@ -14,7 +14,10 @@ name: Tip
 
 concurrency:
   group: tip
-  cancel-in-progress: true
+  # Queue, don't cancel: Tip is this project's CI — every push should still
+  # get a real pass/fail verdict, not have its build cut short because
+  # another push landed first. Runs in this group now queue in order instead.
+  cancel-in-progress: false
 
 env:
   # Speed over size: no LTO, more codegen units, and (critically, since these
