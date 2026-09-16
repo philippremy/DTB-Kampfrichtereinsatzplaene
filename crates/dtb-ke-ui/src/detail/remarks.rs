@@ -100,11 +100,20 @@ impl RemarksSection {
         });
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
 
-        let mut subs = vec![cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.resync_styles(cx);
-            }
-        })];
+        let mut subs = vec![
+            cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.resync_styles(cx);
+                }
+            }),
+            // Generic entity-level notify, not just `InputEvent::Change`: the
+            // toolbar buttons need to re-render on a *selection*-only change
+            // too (clicking/dragging/arrow-keying to a new selection with no
+            // text edit), which `EditorState` still `cx.notify()`s on for its
+            // own cursor/selection-highlight repaint but never turns into an
+            // `InputEvent`.
+            cx.observe(&input, |_, _, cx| cx.notify()),
+        ];
         subs.push(cx.subscribe_in(
             &color_picker,
             window,
@@ -257,6 +266,26 @@ impl RemarksSection {
             .unwrap_or_default()
     }
 
+    /// The style the toolbar buttons currently reflect. With a selection:
+    /// whether *every* selected char already has each flag set — exactly the
+    /// condition [`Self::toggle_flag`] itself checks to decide on vs. off, so
+    /// a button's toggle state always matches what clicking it would do; the
+    /// color is the first selected char's, mirroring
+    /// [`Self::open_color_popover`]. With none: [`Self::caret_style`] (the
+    /// pending style if one is set, else whatever the char before the caret
+    /// has) — what typing next would carry.
+    fn current_style(&self, cx: &Context<Self>) -> CharStyle {
+        match self.selected_char_range(cx) {
+            Some(range) => CharStyle {
+                bold: range.clone().all(|i| self.styles[i].bold),
+                italic: range.clone().all(|i| self.styles[i].italic),
+                underline: range.clone().all(|i| self.styles[i].underline),
+                color: self.styles.get(range.start).and_then(|s| s.color.clone()),
+            },
+            None => self.caret_style(cx),
+        }
+    }
+
     fn toggle_bold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_flag(|s| &mut s.bold, window, cx);
     }
@@ -388,8 +417,11 @@ impl Render for RemarksSection {
         // Must accomodate for row padding beteween lines, therefore + px(3.) per row
         let editor_height = line_height * rows as f32 + px(16.);
 
+        let current = self.current_style(cx);
+
         let style_button = |glyph: gpui::SharedString,
                             id: &'static str,
+                            active: bool,
                             on_click: fn(&mut Self, &mut Window, &mut Context<Self>),
                             map: fn(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
                             cx: &mut Context<Self>| {
@@ -402,10 +434,10 @@ impl Render for RemarksSection {
                 .size(px(26.))
                 .rounded(radius)
                 .border_1()
-                .border_color(c.border)
-                .bg(c.surface)
+                .border_color(if active { c.primary } else { c.border })
+                .bg(if active { c.accent_soft } else { c.surface })
                 .text_size(px(13.))
-                .text_color(c.foreground)
+                .text_color(if active { c.primary } else { c.foreground })
                 .when(!enabled, |el| el.opacity(0.45))
                 .when(enabled, |el| {
                     el.cursor_pointer()
@@ -434,6 +466,7 @@ impl Render for RemarksSection {
                     .child(style_button(
                         cx.t("detail.remarks.bold-glyph"),
                         "fmt-bold",
+                        current.bold,
                         Self::toggle_bold,
                         |el| el.font_weight(FontWeight::BOLD),
                         cx,
@@ -441,6 +474,7 @@ impl Render for RemarksSection {
                     .child(style_button(
                         cx.t("detail.remarks.italic-glyph"),
                         "fmt-italic",
+                        current.italic,
                         Self::toggle_italic,
                         |el| el.italic(),
                         cx,
@@ -448,11 +482,12 @@ impl Render for RemarksSection {
                     .child(style_button(
                         cx.t("detail.remarks.underline-glyph"),
                         "fmt-underline",
+                        current.underline,
                         Self::toggle_underline,
                         |el| el.underline(),
                         cx,
                     ))
-                    .child(self.color_button(&c, radius, enabled, cx)),
+                    .child(self.color_button(&c, radius, enabled, current.color.as_deref(), cx)),
             )
             .child(
                 div()
@@ -480,10 +515,16 @@ impl RemarksSection {
         c: &crate::theme::PaletteColors,
         radius: Pixels,
         enabled: bool,
+        current_color: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let open = self.color_open;
         let capture = self.color_bounds.clone();
+        // The actual current colour — parsed from the selection's (or the
+        // caret's pending) style, falling back to the foreground the text
+        // would otherwise render in, same as the popover's own preview
+        // swatch (`color_panel`'s `displayed.unwrap_or(c.foreground)`).
+        let swatch_color = current_color.and_then(parse_hex).unwrap_or(c.foreground);
 
         let popover = open.then(|| self.color_bounds.get()).flatten().map(|b| {
             let anchor = point(b.origin.x, b.origin.y + b.size.height + px(4.));
@@ -524,8 +565,16 @@ impl RemarksSection {
                     .size(px(26.))
                     .rounded(radius)
                     .border_1()
-                    .border_color(c.border)
-                    .bg(c.surface)
+                    .border_color(if current_color.is_some() {
+                        c.primary
+                    } else {
+                        c.border
+                    })
+                    .bg(if current_color.is_some() {
+                        c.accent_soft
+                    } else {
+                        c.surface
+                    })
                     .when(!enabled, |el| el.opacity(0.45))
                     .when(enabled, |el| {
                         el.cursor_pointer()
@@ -537,11 +586,14 @@ impl RemarksSection {
                                 }),
                             )
                     })
-                    .child(div().size(px(14.)).rounded(px(3.)).bg(linear_gradient(
-                        45.,
-                        linear_color_stop(hsla(0., 0.75, 0.5, 1.), 0.),
-                        linear_color_stop(hsla(0.66, 0.75, 0.5, 1.), 1.),
-                    ))),
+                    .child(
+                        div()
+                            .size(px(14.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(c.border)
+                            .bg(swatch_color),
+                    ),
             )
             .children(popover)
     }
