@@ -178,6 +178,12 @@ fn file_menu(state: MenuState, locale: &Locale) -> Menu {
             state,
             true,
         ),
+        doc_item(
+            locale.t("actions.file::ShowTrash"),
+            file::ShowTrash,
+            state,
+            true,
+        ),
         MenuItem::separator(),
         MenuItem::action(locale.t("actions.file::CloseWindow"), file::CloseWindow),
     ])

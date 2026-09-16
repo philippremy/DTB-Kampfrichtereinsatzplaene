@@ -448,6 +448,18 @@ impl SettingsWindow {
                 self.autosave_switch(settings.autosave, cx),
             ))
             .child(divider(&c))
+            .child(section_label(cx.t("settings.general.backup-section"), &c))
+            .child(setting_row(
+                cx.t("settings.general.backup-title"),
+                cx.t("settings.general.backup-description"),
+                &c,
+                Toggle::new("auto-backup", settings.auto_backup)
+                    .on_change(cx.processor(|_, next: bool, _window, cx| {
+                        Settings::update(cx, move |s| s.auto_backup = next);
+                    }))
+                    .into_any_element(),
+            ))
+            .child(divider(&c))
             .child(section_label(cx.t("settings.general.update-section"), &c))
             .child(setting_row(
                 cx.t("settings.general.auto-update-title"),

@@ -29,6 +29,7 @@ mod skin;
 mod store;
 mod theme;
 mod toolbar;
+mod trash_window;
 mod updater;
 
 use log::{debug, error, info};

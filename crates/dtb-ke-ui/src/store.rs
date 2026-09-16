@@ -21,18 +21,30 @@ pub use document::{
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use chrono::{Local, NaiveTime};
-use dtb_ke_persist::{self as persist, CompetitionSummary, Db};
+use chrono::{Local, NaiveTime, Utc};
+use dtb_ke_persist::{self as persist, CompetitionSummary, Db, TrashedCompetition};
 use dtb_ke_types::{CompetitionDTO, MeetingTimeDTO, OrganizationDTO};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use log::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
+use crate::settings::Settings;
+
 use crate::i18n::ActiveLocale;
 
 use crate::filesystem::FilesystemHelper;
 use crate::model::{Competition, CompetitionMeta, RichText, Round};
+
+/// `AppShell`'s backup-loop startup delay — after the DB is bootstrapped and
+/// the first autosave cycle has had time to settle (looser than the
+/// updater's own 4s `STARTUP_DELAY`, which has no such dependency).
+pub const BACKUP_STARTUP_DELAY: Duration = Duration::from_secs(10);
+/// `AppShell`'s backup-loop recheck interval — same as the updater's own
+/// `RECHECK_INTERVAL`; a long-running session still catches a midnight
+/// rollover before the day is out.
+pub const BACKUP_RECHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Connection / load status of the store as a whole.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +59,11 @@ pub enum Status {
 pub struct AppStore {
     db: Option<Db>,
     summaries: Vec<CompetitionSummary>,
+    /// Soft-deleted competitions — the trash window's own listing. Kept in
+    /// memory the same way `summaries` is (loaded at bootstrap, updated
+    /// optimistically by every mutating method), so the trash window just
+    /// observes this entity rather than issuing its own queries.
+    trashed: Vec<TrashedCompetition>,
     selected: Option<Uuid>,
     open: HashMap<Uuid, Entity<CompetitionDocument>>,
     /// Observers on open documents that keep the sidebar summary (name / year)
@@ -70,6 +87,7 @@ impl AppStore {
             Self {
                 db: None,
                 summaries: Vec::new(),
+                trashed: Vec::new(),
                 selected: None,
                 open: HashMap::new(),
                 doc_subs: HashMap::new(),
@@ -126,6 +144,11 @@ impl AppStore {
     /// The sidebar list: newest year first, then by name. Kept sorted.
     pub fn summaries(&self) -> &[CompetitionSummary] {
         &self.summaries
+    }
+
+    /// The trash window's list: most recently deleted first.
+    pub fn trashed(&self) -> &[TrashedCompetition] {
+        &self.trashed
     }
 
     pub fn selected_id(&self) -> Option<Uuid> {
@@ -479,16 +502,19 @@ impl AppStore {
         .detach();
     }
 
-    /// Delete a competition and its open document. Updates the sidebar
-    /// optimistically, then removes the row in the background.
+    /// Move a competition to the trash and close its open document. Updates
+    /// the sidebar (and the trash list) optimistically, then writes the
+    /// actual `deleted_at` in the background. See [`Self::purge_competition`]
+    /// / [`Self::purge_all_trashed`] for the actually-irreversible step.
     pub fn delete_competition(&mut self, id: Uuid, cx: &mut Context<Self>) {
         let Some(db) = self.db.as_ref() else {
             warn!("delete_competition({id}) ignored — database not ready");
             return;
         };
         let connection = db.connection();
+        let deleted_at = Utc::now();
         info!(
-            "deleting competition {id} (\"{}\")",
+            "moving competition {id} (\"{}\") to the trash",
             self.name_of(id).unwrap_or("?")
         );
 
@@ -497,7 +523,16 @@ impl AppStore {
         if self.selected == Some(id) {
             self.selected = None;
         }
-        self.summaries.retain(|s| s.id != id);
+        if let Some(pos) = self.summaries.iter().position(|s| s.id == id) {
+            let summary = self.summaries.remove(pos);
+            self.trashed.push(TrashedCompetition {
+                id: summary.id,
+                date: summary.date,
+                name: summary.name,
+                deleted_at,
+            });
+            sort_trashed(&mut self.trashed);
+        }
         self.recompute_dirty(cx);
         self.recompute_undo_state(cx);
         cx.notify();
@@ -505,13 +540,15 @@ impl AppStore {
         cx.spawn(async move |this, cx| {
             let background = cx.background_executor().clone();
             let deleted = background
-                .spawn(async move { persist::delete_competition(&connection, id).await })
+                .spawn(async move {
+                    persist::soft_delete_competition(&connection, id, deleted_at).await
+                })
                 .await;
 
             match deleted {
-                Ok(()) => trace!("competition {id} row removed"),
+                Ok(()) => trace!("competition {id} moved to the trash"),
                 Err(err) => {
-                    error!("deleting competition {id} from the database failed: {err}");
+                    error!("moving competition {id} to the trash failed: {err}");
                     this.update(cx, |this, cx| {
                         this.status = Status::Failed(err.to_string());
                         cx.notify();
@@ -523,9 +560,10 @@ impl AppStore {
         .detach();
     }
 
-    /// Delete several competitions at once (the sidebar's multi-select bulk
-    /// delete). Updates the sidebar optimistically for every id, then issues
-    /// a single `DELETE … WHERE id IN (…)` in the background — spawning one
+    /// Move several competitions to the trash at once (the sidebar's
+    /// multi-select bulk delete). Updates the sidebar/trash lists
+    /// optimistically for every id, then issues a single
+    /// `UPDATE … WHERE id IN (…)` in the background — spawning one
     /// [`Self::delete_competition`] per id instead raced N concurrent
     /// statements against the same `turso::Connection`, which turso rejects
     /// outright ("concurrent use forbidden") once enough are in flight at
@@ -535,12 +573,17 @@ impl AppStore {
             return;
         }
         let Some(db) = self.db.as_ref() else {
-            warn!("delete_competitions({} ids) ignored — database not ready", ids.len());
+            warn!(
+                "delete_competitions({} ids) ignored — database not ready",
+                ids.len()
+            );
             return;
         };
         let connection = db.connection();
-        info!("deleting {} competition(s)", ids.len());
+        let deleted_at = Utc::now();
+        info!("moving {} competition(s) to the trash", ids.len());
 
+        let id_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
         for &id in &ids {
             self.open.remove(&id);
             self.doc_subs.remove(&id);
@@ -548,8 +591,19 @@ impl AppStore {
                 self.selected = None;
             }
         }
-        let id_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
-        self.summaries.retain(|s| !id_set.contains(&s.id));
+        self.summaries.retain(|s| {
+            if !id_set.contains(&s.id) {
+                return true;
+            }
+            self.trashed.push(TrashedCompetition {
+                id: s.id,
+                date: s.date,
+                name: s.name.clone(),
+                deleted_at,
+            });
+            false
+        });
+        sort_trashed(&mut self.trashed);
         self.recompute_dirty(cx);
         self.recompute_undo_state(cx);
         cx.notify();
@@ -558,13 +612,121 @@ impl AppStore {
             let background = cx.background_executor().clone();
             let count = ids.len();
             let deleted = background
-                .spawn(async move { persist::delete_competitions(&connection, &ids).await })
+                .spawn(async move {
+                    persist::soft_delete_competitions(&connection, &ids, deleted_at).await
+                })
                 .await;
 
             match deleted {
-                Ok(()) => trace!("{count} competition row(s) removed"),
+                Ok(()) => trace!("{count} competition(s) moved to the trash"),
                 Err(err) => {
-                    error!("deleting {count} competition(s) from the database failed: {err}");
+                    error!("moving {count} competition(s) to the trash failed: {err}");
+                    this.update(cx, |this, cx| {
+                        this.status = Status::Failed(err.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Restore a trashed competition back to the normal sidebar listing.
+    /// Optimistic, same shape as every other mutating method here.
+    pub fn restore_competition(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let Some(db) = self.db.as_ref() else {
+            warn!("restore_competition({id}) ignored — database not ready");
+            return;
+        };
+        let connection = db.connection();
+        let Some(pos) = self.trashed.iter().position(|t| t.id == id) else {
+            return;
+        };
+        let trashed = self.trashed.remove(pos);
+        info!("restoring competition {id} (\"{}\")", trashed.name);
+        self.summaries.push(CompetitionSummary {
+            id: trashed.id,
+            date: trashed.date,
+            name: trashed.name,
+        });
+        sort_summaries(&mut self.summaries);
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let background = cx.background_executor().clone();
+            let restored = background
+                .spawn(async move { persist::restore_competition(&connection, id).await })
+                .await;
+
+            if let Err(err) = restored {
+                error!("restoring competition {id} failed: {err}");
+                this.update(cx, |this, cx| {
+                    this.status = Status::Failed(err.to_string());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Permanently remove one trashed competition — the trash window's
+    /// per-row "endgültig löschen". Unlike [`Self::delete_competition`],
+    /// there is no undoing this.
+    pub fn purge_competition(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let Some(db) = self.db.as_ref() else {
+            warn!("purge_competition({id}) ignored — database not ready");
+            return;
+        };
+        let connection = db.connection();
+        self.trashed.retain(|t| t.id != id);
+        info!("purging trashed competition {id}");
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let background = cx.background_executor().clone();
+            let purged = background
+                .spawn(async move { persist::purge_competition(&connection, id).await })
+                .await;
+
+            if let Err(err) = purged {
+                error!("purging competition {id} failed: {err}");
+                this.update(cx, |this, cx| {
+                    this.status = Status::Failed(err.to_string());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Empty the trash — permanently remove every trashed competition.
+    pub fn purge_all_trashed(&mut self, cx: &mut Context<Self>) {
+        let Some(db) = self.db.as_ref() else {
+            warn!("purge_all_trashed ignored — database not ready");
+            return;
+        };
+        let connection = db.connection();
+        let count = self.trashed.len();
+        if count == 0 {
+            return;
+        }
+        self.trashed.clear();
+        info!("emptying the trash ({count} competition(s))");
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let background = cx.background_executor().clone();
+            let purged = background
+                .spawn(async move { persist::purge_all_trashed(&connection).await })
+                .await;
+
+            match purged {
+                Ok(removed) => trace!("emptied the trash — {removed} row(s) removed"),
+                Err(err) => {
+                    error!("emptying the trash failed: {err}");
                     this.update(cx, |this, cx| {
                         this.status = Status::Failed(err.to_string());
                         cx.notify();
@@ -657,6 +819,49 @@ impl AppStore {
                     });
                     Self::report_error(&this, cx, message);
                 }
+            }
+        })
+        .detach();
+    }
+
+    /// Write today's automatic backup, if one hasn't been written already and
+    /// the setting is on. Called periodically from `AppShell`'s startup +
+    /// recheck loop (see `updater`'s own loop for the identical shape this
+    /// mirrors) — cheap to call repeatedly, since both of those checks make
+    /// it a no-op almost every time. Unlike [`Self::export_all`] (a
+    /// user-initiated action, reported through [`Self::report_error`] on
+    /// failure), this is unattended housekeeping: every IO error is only
+    /// logged, never surfaced.
+    pub fn maybe_backup(&mut self, cx: &mut Context<Self>) {
+        if !Settings::global(cx).auto_backup {
+            return;
+        }
+        let today = Local::now().date_naive();
+        let dest = FilesystemHelper::instance().backup_path_for(today);
+        if dest.exists() {
+            debug!("today's automatic backup already exists → {}", dest.display());
+            return;
+        }
+        for doc in self.open.values().cloned().collect::<Vec<_>>() {
+            doc.update(cx, |doc, cx| doc.flush_now(cx).detach());
+        }
+        let source = FilesystemHelper::instance().database_path();
+        info!("creating today's automatic backup → {}", dest.display());
+        cx.spawn(async move |_, cx| {
+            // Give the debounced writes a moment to land before copying —
+            // same wait `export_all` uses for the same reason.
+            cx.background_executor()
+                .timer(Duration::from_millis(600))
+                .await;
+            match std::fs::copy(&source, &dest) {
+                Ok(bytes) => {
+                    info!("automatic backup written ({bytes} bytes) → {}", dest.display());
+                    match FilesystemHelper::instance().gc_old_backups() {
+                        0 => {}
+                        removed => info!("backup gc: removed {removed} backup(s) older than 14 days"),
+                    }
+                }
+                Err(err) => error!("automatic backup to {} failed: {err}", dest.display()),
             }
         })
         .detach();
@@ -755,9 +960,13 @@ impl AppStore {
         };
 
         let connection = db.connection();
+        let trash_connection = db.connection();
         let background = cx.background_executor().clone();
         let listed = background
             .spawn(async move { persist::list_summaries(&connection).await })
+            .await;
+        let listed_trash = background
+            .spawn(async move { persist::list_trashed(&trash_connection).await })
             .await;
 
         this.update(cx, |this, cx| {
@@ -774,6 +983,14 @@ impl AppStore {
                     this.status = Status::Failed(err.to_string());
                 }
             }
+            match listed_trash {
+                Ok(mut rows) => {
+                    sort_trashed(&mut rows);
+                    debug!("trash ready — {} competition(s)", rows.len());
+                    this.trashed = rows;
+                }
+                Err(err) => error!("listing trashed competitions failed: {err}"),
+            }
             cx.notify();
         })
         .ok();
@@ -787,6 +1004,11 @@ fn sort_summaries(summaries: &mut [CompetitionSummary]) {
             .cmp(&a.date)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
+}
+
+fn sort_trashed(trashed: &mut [TrashedCompetition]) {
+    // Most recently deleted first — matches `list_trashed`'s own ordering.
+    trashed.sort_by_key(|t| std::cmp::Reverse(t.deleted_at));
 }
 
 /// Sensible starting values for the "new competition" dialog (name blank — the

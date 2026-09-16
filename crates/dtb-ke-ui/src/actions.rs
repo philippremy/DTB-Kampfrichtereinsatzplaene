@@ -59,6 +59,8 @@ pub mod file {
             ImportCompetition,
             /// Back up the whole database (a plain file copy).
             ExportAll,
+            /// Open the trash window (soft-deleted competitions).
+            ShowTrash,
             /// Close the focused window.
             CloseWindow,
         ]

@@ -40,6 +40,11 @@ pub struct Settings {
     pub reduce_transparency: bool,
     /// How long editing must be quiet before the autosave writes the blob.
     pub autosave: AutosaveDelay,
+    /// Write an unattended daily copy of the whole database (see
+    /// [`crate::store::AppStore::maybe_backup`]). Default **on** — this is a
+    /// safety net, not a user-initiated action, so it stays on unless
+    /// explicitly turned off.
+    pub auto_backup: bool,
     /// Overrides the logger's automatic level detection (see [`dtb_ke_log`]).
     pub log_level: LogLevel,
     /// Menu-command key-binding overrides: `"file::NewCompetition" → "cmd-shift-n"`.
@@ -66,6 +71,7 @@ impl Default for Settings {
             reduce_motion: false,
             reduce_transparency: false,
             autosave: AutosaveDelay::default(),
+            auto_backup: true,
             log_level: LogLevel::default(),
             keybindings: BTreeMap::new(),
             auto_update: true,

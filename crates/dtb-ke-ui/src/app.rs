@@ -21,7 +21,7 @@ use crate::actions::app::CheckForUpdates;
 use crate::actions::edit::{DeleteJudgingTable, DuplicateJudgingTable, Redo, Undo};
 use crate::actions::file::{
     AddJudgingTable, CloseWindow, CompetitionSettings, ExportAll, ExportCompetition,
-    ImportCompetition, NewCompetition,
+    ImportCompetition, NewCompetition, ShowTrash,
 };
 use crate::actions::window::{Minimize, ToggleFullscreen, TogglePreview};
 use crate::components::button::Button;
@@ -35,7 +35,7 @@ use crate::preview::{self, PreviewWindow};
 use crate::save::{self, ExportFormat, SaveChoice};
 use crate::sidebar::{SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_SNAP, SIDEBAR_WIDTH, Sidebar};
 use crate::skin::{decorations, menu as skin_menu, titlebar, window as skin_window};
-use crate::store::AppStore;
+use crate::store::{self, AppStore};
 use crate::theme::{ActiveTheme, Appearance, Theme};
 use crate::toolbar::CompetitionToolbar;
 use crate::updater::{self, Updater, UpdaterEvent, UpdaterToast};
@@ -117,6 +117,9 @@ pub struct AppShell {
     _updater_sub: Subscription,
     /// The startup delay + periodic recheck loop.
     _updater_loop: gpui::Task<()>,
+    /// The startup delay + periodic recheck loop for `AppStore::maybe_backup`
+    /// — same shape as `_updater_loop`, see its construction below.
+    _backup_loop: gpui::Task<()>,
 }
 
 impl AppShell {
@@ -184,6 +187,24 @@ impl AppShell {
             })
         };
 
+        // Same shape as `updater_loop` above: `AppStore::maybe_backup` is
+        // cheap to call repeatedly (its own already-backed-up-today /
+        // setting-off checks make it a no-op almost every time), so a
+        // startup delay then a long recheck interval is enough to catch a
+        // fresh day without a dedicated "wait until midnight" timer.
+        let backup_loop = {
+            let store = store.clone();
+            cx.spawn(async move |_, cx| {
+                cx.background_executor().timer(store::BACKUP_STARTUP_DELAY).await;
+                loop {
+                    store.update(cx, |store, cx| store.maybe_backup(cx));
+                    cx.background_executor()
+                        .timer(store::BACKUP_RECHECK_INTERVAL)
+                        .await;
+                }
+            })
+        };
+
         // Startup value + follow OS light/dark changes.
         Theme::set_os_appearance(Appearance::from(window.appearance()), cx);
         let appearance_sub = cx.observe_window_appearance(window, |_, window, cx| {
@@ -241,6 +262,7 @@ impl AppShell {
             updater,
             _updater_sub: updater_sub,
             _updater_loop: updater_loop,
+            _backup_loop: backup_loop,
         }
     }
 }
@@ -516,6 +538,10 @@ impl AppShell {
             store.update(cx, |store, cx| store.export_all(dest, cx));
         })
         .detach();
+    }
+
+    fn handle_show_trash(&mut self, _: &ShowTrash, _window: &mut Window, cx: &mut Context<Self>) {
+        crate::trash_window::open(self.store.clone(), cx);
     }
 
     fn handle_import(
@@ -837,6 +863,7 @@ impl Render for AppShell {
             }))
             .on_action(cx.listener(Self::handle_import))
             .on_action(cx.listener(Self::handle_export_all))
+            .on_action(cx.listener(Self::handle_show_trash))
             .on_action(cx.listener(|_, _: &CloseWindow, window, _cx| window.remove_window()))
             .on_action(cx.listener(|_, _: &Minimize, window, _cx| window.minimize_window()))
             .on_action(cx.listener(|_, _: &ToggleFullscreen, window, cx| {
