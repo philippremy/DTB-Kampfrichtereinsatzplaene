@@ -361,6 +361,12 @@ label = "Remarks"
 
 [sidebar]
 "search-placeholder" = "Search competitions …"
+"duplicate-competition-label" = "{name} (Copy)"
+"context-delete" = "Delete"
+"context-duplicate" = "Duplicate"
+"context-export" = "Export …"
+"context-settings" = "Competition Settings …"
+"context-preview" = "Preview"
 "delete-confirm_one" = "Delete this competition?"
 "delete-confirm_other" = "Delete {n} competitions?"
 "delete-confirm-detail" = "The selected competitions will be permanently removed."

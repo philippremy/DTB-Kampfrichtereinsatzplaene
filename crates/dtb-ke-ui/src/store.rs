@@ -227,6 +227,56 @@ impl AppStore {
         .detach();
     }
 
+    /// As [`Self::select`], but also invokes `then` once `id` is the active
+    /// selection — synchronously if it was already open, or after the
+    /// background load lands otherwise. Used by call sites that select and
+    /// immediately act on a competition that might not be open yet (e.g. the
+    /// sidebar context menu's "Export …" / "Wettkampfeinstellungen …" /
+    /// "Vorschau" items, which reuse `AppShell`'s existing handlers — those
+    /// assume the target is already the selection).
+    pub fn select_then(
+        &mut self,
+        id: Uuid,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut App) + 'static,
+    ) {
+        if self.selected == Some(id) {
+            then(cx);
+            return;
+        }
+        let was_open = self.open.contains_key(&id);
+        self.select(id, cx);
+        if was_open {
+            then(cx);
+            return;
+        }
+
+        // `select` just kicked off an async load; poll until it lands (or the
+        // competition turns out to be gone) rather than duplicating its
+        // loading logic here — this is a rare, user-triggered path, not a
+        // hot one.
+        cx.spawn(async move |this, cx| {
+            loop {
+                let state = this.read_with(cx, |this, _| (this.selected == Some(id), this.contains(id)));
+                let (selected, listed) = match state {
+                    Ok(state) => state,
+                    Err(_) => return,
+                };
+                if selected {
+                    break;
+                }
+                if !listed {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(15))
+                    .await;
+            }
+            cx.update(|cx| then(cx));
+        })
+        .detach();
+    }
+
     /// Persist a new competition (its metadata filled in via the "new
     /// competition" dialog) and open it. The judging tables / remarks start
     /// empty.
@@ -353,6 +403,80 @@ impl AppStore {
             sort_summaries(&mut self.summaries);
             cx.notify();
         }
+    }
+
+    /// Duplicate a competition under a fresh id (a "{name} (Kopie)" copy of
+    /// its persisted state) and select the copy. Flushes the source document
+    /// first, if it is open, so the copy is current.
+    pub fn duplicate_competition(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let Some(db) = self.db.as_ref() else {
+            warn!("duplicate_competition({id}) ignored — database not ready");
+            return;
+        };
+        let load_connection = db.connection();
+        let save_connection = db.connection();
+        let flush = self
+            .open
+            .get(&id)
+            .cloned()
+            .map(|doc| doc.update(cx, |doc, cx| doc.flush_now(cx)));
+        info!("duplicating competition {id}");
+
+        cx.spawn(async move |this, cx| {
+            if let Some(flush) = flush {
+                flush.await;
+            }
+            let background = cx.background_executor().clone();
+            let loaded = background
+                .spawn(async move { persist::load_competition(&load_connection, id).await })
+                .await;
+
+            let mut dto = match loaded {
+                Ok(Some(dto)) => dto,
+                Ok(None) => {
+                    warn!("duplicate_competition({id}): row gone");
+                    return;
+                }
+                Err(err) => {
+                    error!("duplicate_competition({id}): load failed: {err}");
+                    return Self::report_error(&this, cx, err.to_string());
+                }
+            };
+
+            let new_id = Uuid::new_v4();
+            dto.id = new_id;
+            dto.name =
+                cx.update(|cx| cx.t_fmt("sidebar.duplicate-competition-label", &[("name", &dto.name)]));
+            let date = dto.date;
+            let name = dto.name.clone();
+
+            let background = cx.background_executor().clone();
+            let saved = background
+                .spawn(async move { persist::save_competition(&save_connection, &dto).await })
+                .await;
+
+            match saved {
+                Ok(()) => {
+                    this.update(cx, |this, cx| {
+                        this.summaries.push(CompetitionSummary {
+                            id: new_id,
+                            date,
+                            name: name.clone(),
+                        });
+                        sort_summaries(&mut this.summaries);
+                        this.select(new_id, cx);
+                        info!("duplicated competition {id} → {new_id} (\"{name}\")");
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    error!("duplicate_competition({id}): saving the copy failed: {err}");
+                    Self::report_error(&this, cx, err.to_string());
+                }
+            }
+        })
+        .detach();
     }
 
     /// Delete a competition and its open document. Updates the sidebar

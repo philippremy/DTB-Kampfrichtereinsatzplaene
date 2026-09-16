@@ -12,13 +12,14 @@ use std::rc::Rc;
 
 use gpui::{
     App, AppContext, Bounds, Context, Entity, EntityId, Focusable as _, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, Render, SharedString,
+    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Window, anchored, canvas, deferred, div,
     point, prelude::FluentBuilder, px,
 };
 use gpui_base::input::{InputEvent, InputState};
 
 use crate::components::button::Button;
+use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
 use crate::components::field::Field;
 use crate::components::icon::Icon;
 use crate::i18n::ActiveLocale;
@@ -27,8 +28,11 @@ use crate::store::JudgingTableEditor;
 use crate::theme::ActiveTheme;
 
 pub type SelectHandler = Rc<dyn Fn(&mut App)>;
-/// Invoked from the card's delete button; `DetailView` runs the confirm prompt.
+/// Invoked from the card's delete button (or context menu); `DetailView` runs
+/// the confirm prompt.
 pub type DeleteHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+/// Invoked from the card's context menu.
+pub type DuplicateHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 /// `(dragged editor id, drop-target editor id)` — move the first before/at the second.
 pub type ReorderHandler = Rc<dyn Fn(EntityId, EntityId, &mut Window, &mut App)>;
 
@@ -68,8 +72,12 @@ pub struct JudgingTableCard {
     /// Absolute bounds of the discipline trigger, captured during prepaint so
     /// the popover can float above the scroll container that would clip it.
     discipline_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The card's right-click context menu, anchored at this window-absolute
+    /// point — `None` unless it is currently open.
+    context_menu: Option<Point<Pixels>>,
     on_select: SelectHandler,
     on_delete: DeleteHandler,
+    on_duplicate: DuplicateHandler,
     on_reorder: ReorderHandler,
     _subs: Vec<Subscription>,
 }
@@ -79,6 +87,7 @@ impl JudgingTableCard {
         editor: Entity<JudgingTableEditor>,
         on_select: SelectHandler,
         on_delete: DeleteHandler,
+        on_duplicate: DuplicateHandler,
         on_reorder: ReorderHandler,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -102,8 +111,10 @@ impl JudgingTableCard {
             conflict_roles: Vec::new(),
             discipline_open: false,
             discipline_bounds: Rc::new(Cell::new(None)),
+            context_menu: None,
             on_select,
             on_delete,
+            on_duplicate,
             on_reorder,
             _subs: Vec::new(),
         };
@@ -312,6 +323,57 @@ impl JudgingTableCard {
             )
             .children(list)
     }
+
+    fn open_context_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.context_menu = Some(position);
+        cx.notify();
+    }
+
+    fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The card's right-click context menu (delete / duplicate) — `None`
+    /// unless it is currently open.
+    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let position = self.context_menu?;
+        let weak = cx.weak_entity();
+
+        let on_dismiss: ContextMenuHandler = {
+            let weak = weak.clone();
+            Rc::new(move |_window: &mut Window, cx: &mut App| {
+                weak.update(cx, |this, cx| this.close_context_menu(cx)).ok();
+            })
+        };
+
+        let items = vec![
+            ContextMenuItem::new(
+                "ctx-duplicate",
+                cx.t("detail.toolbar-duplicate"),
+                Icon::Copy,
+                {
+                    let on_duplicate = self.on_duplicate.clone();
+                    move |window: &mut Window, cx: &mut App| on_duplicate(window, cx)
+                },
+            ),
+            ContextMenuItem::new("ctx-delete", cx.t("detail.toolbar-delete"), Icon::Trash, {
+                let on_delete = self.on_delete.clone();
+                move |window: &mut Window, cx: &mut App| on_delete(window, cx)
+            })
+            .danger()
+            .separated(),
+        ];
+
+        Some(context_menu(
+            "table-context-menu",
+            position,
+            items,
+            on_dismiss,
+            cx,
+        ))
+    }
 }
 
 /// One `InputState` per judge slot of `kind`, seeded from its current value.
@@ -339,6 +401,7 @@ fn any_focused(inputs: &[Entity<InputState>], window: &Window, cx: &App) -> bool
 impl Render for JudgingTableCard {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let discipline_selector = self.discipline_selector(cx);
+        let context_menu_layer = self.context_menu_layer(cx);
         let theme = cx.theme();
         let c = &theme.color;
         let editor_id = self.editor.entity_id();
@@ -387,6 +450,12 @@ impl Render for JudgingTableCard {
                     window.blur(cx);
                 }
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                    this.open_context_menu(event.position, cx);
+                }),
+            )
             // Drop target for a reordering drag.
             .on_drop(move |dragged: &DragTable, window, cx| {
                 on_reorder(dragged.editor_id, editor_id, window, cx);
@@ -450,5 +519,6 @@ impl Render for JudgingTableCard {
                             )
                     })),
             )
+            .children(context_menu_layer)
     }
 }

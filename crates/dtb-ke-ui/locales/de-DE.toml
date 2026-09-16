@@ -361,6 +361,12 @@ label = "Anmerkungen"
 
 [sidebar]
 "search-placeholder" = "Wettkampf suchen …"
+"duplicate-competition-label" = "{name} (Kopie)"
+"context-delete" = "Löschen"
+"context-duplicate" = "Duplizieren"
+"context-export" = "Exportieren …"
+"context-settings" = "Wettkampfeinstellungen …"
+"context-preview" = "Vorschau"
 "delete-confirm_one" = "Diesen Wettkampf löschen?"
 "delete-confirm_other" = "{n} Wettkämpfe löschen?"
 "delete-confirm-detail" = "Die ausgewählten Wettkämpfe werden dauerhaft entfernt."

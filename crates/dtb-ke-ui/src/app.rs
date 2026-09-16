@@ -6,14 +6,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_export::Exporter;
+use futures::channel::oneshot;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, ClickEvent, Context, Entity,
     FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions,
-    PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, Window,
+    PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
     WindowControlArea, WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
 };
 use gpui_base::{ResizableState, h_resizable, resizable_panel};
 use log::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::actions::app::CheckForUpdates;
 use crate::actions::edit::{DeleteJudgingTable, DuplicateJudgingTable, Redo, Undo};
@@ -37,6 +39,39 @@ use crate::store::AppStore;
 use crate::theme::{ActiveTheme, Appearance, Theme};
 use crate::toolbar::CompetitionToolbar;
 use crate::updater::{self, Updater, UpdaterEvent, UpdaterToast};
+
+/// Select `id` in `store` — which may not be open in memory yet, so this can
+/// take a moment (see `AppStore::select_then`) — then invoke `act` on
+/// `AppShell` once it becomes the active selection. Used by the sidebar's
+/// context menu: dispatching the equivalent `window` action right after
+/// calling `select` would race the *previous* frame's action-dispatch tree
+/// (rebuilt only on the next repaint), so this calls the handler directly
+/// instead once the data is actually ready.
+fn select_then_act(
+    store: Entity<AppStore>,
+    weak: WeakEntity<AppShell>,
+    id: Uuid,
+    window: &mut Window,
+    cx: &mut App,
+    act: impl FnOnce(&mut AppShell, &mut Window, &mut Context<AppShell>) + 'static,
+) {
+    let (tx, rx) = oneshot::channel::<()>();
+    store.update(cx, |store, cx| {
+        store.select_then(id, cx, move |_cx| {
+            let _ = tx.send(());
+        });
+    });
+    window
+        .spawn(cx, async move |cx| {
+            if rx.await.is_ok() {
+                cx.update(|window, cx| {
+                    weak.update(cx, |this, cx| act(this, window, cx)).ok();
+                })
+                .ok();
+            }
+        })
+        .detach();
+}
 
 pub struct AppShell {
     store: Entity<AppStore>,
@@ -87,7 +122,42 @@ pub struct AppShell {
 impl AppShell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = AppStore::new(cx);
-        let sidebar = cx.new(|cx| Sidebar::new(store.clone(), window, cx));
+
+        // The sidebar's context menu reuses these three handlers (rather than
+        // going through `window.dispatch_action`, which would race the
+        // selection this closure makes — see `select_then_act`) so "Export …"
+        // / "Wettkampfeinstellungen …" / "Vorschau" work for a competition the
+        // user hasn't already clicked into.
+        let on_export: crate::sidebar::CompetitionAction = {
+            let weak = cx.weak_entity();
+            let store = store.clone();
+            std::rc::Rc::new(move |id, window, cx| {
+                select_then_act(store.clone(), weak.clone(), id, window, cx, |this, window, cx| {
+                    this.handle_export(&ExportCompetition, window, cx);
+                });
+            })
+        };
+        let on_settings: crate::sidebar::CompetitionAction = {
+            let weak = cx.weak_entity();
+            let store = store.clone();
+            std::rc::Rc::new(move |id, window, cx| {
+                select_then_act(store.clone(), weak.clone(), id, window, cx, |this, window, cx| {
+                    this.detail
+                        .update(cx, |detail, cx| detail.open_meta_dialog(window, cx));
+                });
+            })
+        };
+        let on_preview: crate::sidebar::CompetitionAction = {
+            let weak = cx.weak_entity();
+            let store = store.clone();
+            std::rc::Rc::new(move |id, window, cx| {
+                select_then_act(store.clone(), weak.clone(), id, window, cx, |this, _window, cx| {
+                    this.toggle_preview(cx);
+                });
+            })
+        };
+        let sidebar =
+            cx.new(|cx| Sidebar::new(store.clone(), on_export, on_settings, on_preview, window, cx));
         let toolbar = cx.new(|cx| CompetitionToolbar::new(store.clone(), cx));
         let detail = cx.new(|cx| DetailView::new(store.clone(), window, cx));
         let menu_bar = cx.new(|_| MenuBar::new());

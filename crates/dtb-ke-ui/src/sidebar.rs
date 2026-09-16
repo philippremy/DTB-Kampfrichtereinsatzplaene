@@ -9,8 +9,9 @@ use std::rc::Rc;
 use gpui::FontWeight;
 use gpui::{
     App, AppContext, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
-    ParentElement, Pixels, PromptLevel, Render, Size, StatefulInteractiveElement, Styled,
-    Subscription, Window, div, prelude::FluentBuilder, px, size,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Size,
+    StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
+    size,
 };
 use gpui_base::input::{InputEvent, InputState};
 use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
 use crate::components::button::{Button, ButtonTone};
+use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
 use crate::components::field::Field;
 use crate::components::focus::selection_fill;
 use crate::components::icon::Icon;
@@ -25,6 +27,13 @@ use crate::i18n::ActiveLocale;
 use crate::material;
 use crate::store::AppStore;
 use crate::theme::ActiveTheme;
+
+/// A competition-row action supplied by `AppShell` — reuses its existing
+/// handlers (export dialog, competition-settings dialog, preview window)
+/// rather than duplicating that wiring here. `id` may not be the current
+/// selection yet; implementations select it first (see
+/// `AppStore::select_then`).
+pub type CompetitionAction = Rc<dyn Fn(Uuid, &mut Window, &mut App)>;
 
 /// Default sidebar width, and the width restored when it is re-opened.
 pub const SIDEBAR_WIDTH: Pixels = px(256.);
@@ -47,11 +56,24 @@ pub struct Sidebar {
     multi_select: bool,
     checked: HashSet<Uuid>,
     list_scroll: VirtualListScrollHandle,
+    /// The row context menu currently open, if any — the competition id and
+    /// the window-absolute point (the right-click) to anchor the popover at.
+    context_menu: Option<(Uuid, Point<Pixels>)>,
+    on_export: CompetitionAction,
+    on_settings: CompetitionAction,
+    on_preview: CompetitionAction,
     _subs: Vec<Subscription>,
 }
 
 impl Sidebar {
-    pub fn new(store: Entity<AppStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        store: Entity<AppStore>,
+        on_export: CompetitionAction,
+        on_settings: CompetitionAction,
+        on_preview: CompetitionAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let placeholder = cx.t("sidebar.search-placeholder");
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subs = vec![
@@ -73,6 +95,10 @@ impl Sidebar {
             multi_select: false,
             checked: HashSet::new(),
             list_scroll: VirtualListScrollHandle::new(),
+            context_menu: None,
+            on_export,
+            on_settings,
+            on_preview,
             _subs: subs,
         }
     }
@@ -102,6 +128,17 @@ impl Sidebar {
 
     fn delete_checked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ids: Vec<Uuid> = self.checked.iter().copied().collect();
+        self.confirm_and_delete(ids, window, cx);
+    }
+
+    fn delete_one(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_and_delete(vec![id], window, cx);
+    }
+
+    /// Confirm, then delete every id in `ids` — shared by the bulk-select
+    /// toolbar and a single row's context menu (`ids.len() == 1` picks the
+    /// singular confirmation wording via `t_plural`).
+    fn confirm_and_delete(&mut self, ids: Vec<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
         if ids.is_empty() {
             return;
         }
@@ -122,10 +159,10 @@ impl Sidebar {
         let store = self.store.clone();
         cx.spawn_in(window, async move |this, cx| {
             if answer.await.unwrap_or(1) != 0 {
-                log::debug!("bulk delete cancelled");
+                log::debug!("delete cancelled");
                 return;
             }
-            log::info!("bulk-deleting {} competition(s)", ids.len());
+            log::info!("deleting {} competition(s)", ids.len());
             cx.update(|_, cx| {
                 store.update(cx, |store, cx| {
                     for id in ids {
@@ -137,6 +174,73 @@ impl Sidebar {
             this.update(cx, |this, cx| this.exit_multi_select(cx)).ok();
         })
         .detach();
+    }
+
+    fn duplicate_one(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.store
+            .update(cx, |store, cx| store.duplicate_competition(id, cx));
+    }
+
+    fn open_context_menu(&mut self, id: Uuid, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.context_menu = Some((id, position));
+        cx.notify();
+    }
+
+    fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The floating action menu for one competition row, anchored at the
+    /// right-click's position — `None` unless it is currently open.
+    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (id, position) = self.context_menu?;
+        let weak = cx.weak_entity();
+
+        let on_dismiss: ContextMenuHandler = {
+            let weak = weak.clone();
+            Rc::new(move |_window: &mut Window, cx: &mut App| {
+                weak.update(cx, |this, cx| this.close_context_menu(cx)).ok();
+            })
+        };
+
+        let items = vec![
+            ContextMenuItem::new("ctx-duplicate", cx.t("sidebar.context-duplicate"), Icon::Copy, {
+                let weak = weak.clone();
+                move |_window: &mut Window, cx: &mut App| {
+                    weak.update(cx, |this, cx| this.duplicate_one(id, cx)).ok();
+                }
+            }),
+            ContextMenuItem::new("ctx-export", cx.t("sidebar.context-export"), Icon::Export, {
+                let on_export = self.on_export.clone();
+                move |window: &mut Window, cx: &mut App| on_export(id, window, cx)
+            }),
+            ContextMenuItem::new(
+                "ctx-settings",
+                cx.t("sidebar.context-settings"),
+                Icon::Settings,
+                {
+                    let on_settings = self.on_settings.clone();
+                    move |window: &mut Window, cx: &mut App| on_settings(id, window, cx)
+                },
+            ),
+            ContextMenuItem::new("ctx-preview", cx.t("sidebar.context-preview"), Icon::Preview, {
+                let on_preview = self.on_preview.clone();
+                move |window: &mut Window, cx: &mut App| on_preview(id, window, cx)
+            }),
+            ContextMenuItem::new("ctx-delete", cx.t("sidebar.context-delete"), Icon::Trash, {
+                let weak = weak.clone();
+                move |window: &mut Window, cx: &mut App| {
+                    weak.update(cx, |this, cx| this.delete_one(id, window, cx))
+                        .ok();
+                }
+            })
+            .danger()
+            .separated(),
+        ];
+
+        Some(context_menu("sidebar-context-menu", position, items, on_dismiss, cx))
     }
 
     fn select_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -270,6 +374,12 @@ fn sidebar_row(
                 .cursor_pointer()
                 .when(highlight, |el| el.bg(sel_fill).text_color(sel_fg))
                 .when(!highlight, |el| el.hover(|el| el.bg(c.surface)))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                        this.open_context_menu(id, event.position, cx);
+                    }),
+                )
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     if this.multi_select {
                         this.toggle_check(id, cx);
@@ -448,5 +558,6 @@ impl Render for Sidebar {
                     ),
             )
             .child(self.status_bar(cx))
+            .children(self.context_menu_layer(cx))
     }
 }

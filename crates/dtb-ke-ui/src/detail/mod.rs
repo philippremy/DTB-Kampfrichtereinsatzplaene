@@ -36,7 +36,7 @@ use crate::components::icon::Icon;
 use crate::components::segmented::Segmented;
 use crate::components::template_tile::TemplateTile;
 use crate::detail::judging_table::{
-    DeleteHandler, JudgingTableCard, ReorderHandler, SelectHandler,
+    DeleteHandler, DuplicateHandler, JudgingTableCard, ReorderHandler, SelectHandler,
 };
 use crate::detail::meta_dialog::{CreateRequest, DeleteRequest, MetaDialog};
 use crate::detail::remarks::RemarksSection;
@@ -168,6 +168,10 @@ impl DetailView {
 
     fn selected_table_editor(&self, cx: &App) -> Option<Entity<JudgingTableEditor>> {
         let id = self.selected_table?;
+        self.table_editor_by_id(id, cx)
+    }
+
+    fn table_editor_by_id(&self, id: EntityId, cx: &App) -> Option<Entity<JudgingTableEditor>> {
         self.cards
             .iter()
             .find(|card| card.read(cx).editor_id() == id)
@@ -227,7 +231,23 @@ impl DetailView {
     }
 
     pub(crate) fn request_duplicate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(editor), Some(round)) = (self.selected_table_editor(cx), self.active_round(cx))
+        if let Some(id) = self.selected_table {
+            self.duplicate_table(id, window, cx);
+        }
+    }
+
+    /// Duplicate one judging table (by its editor id). Used by both the
+    /// toolbar / Edit menu (via [`Self::request_duplicate`], the *selected*
+    /// table) and a card's own context menu (an explicit id, which need not
+    /// be selected).
+    pub(crate) fn duplicate_table(
+        &mut self,
+        editor_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(editor), Some(round)) =
+            (self.table_editor_by_id(editor_id, cx), self.active_round(cx))
         else {
             return;
         };
@@ -410,6 +430,13 @@ impl DetailView {
                         .ok();
                 })
             };
+            let on_duplicate: DuplicateHandler = {
+                let weak = cx.weak_entity();
+                Rc::new(move |window: &mut Window, cx: &mut App| {
+                    weak.update(cx, |view, cx| view.duplicate_table(id, window, cx))
+                        .ok();
+                })
+            };
             let on_reorder: ReorderHandler = {
                 let weak = cx.weak_entity();
                 Rc::new(move |dragged, target, window: &mut Window, cx: &mut App| {
@@ -420,7 +447,15 @@ impl DetailView {
                 })
             };
             let card = cx.new(|cx| {
-                JudgingTableCard::new(editor, on_select, on_delete, on_reorder, window, cx)
+                JudgingTableCard::new(
+                    editor,
+                    on_select,
+                    on_delete,
+                    on_duplicate,
+                    on_reorder,
+                    window,
+                    cx,
+                )
             });
             self.cards.push(card);
         }
