@@ -14,7 +14,6 @@ use gpui::{App, actions};
 use crate::filesystem::FilesystemHelper;
 
 /// The project's public repository, opened by [`help::OpenRepository`].
-// TODO: replace with the real Codeberg URL once the repo is public.
 pub const REPOSITORY_URL: &str = "https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene";
 
 /// Application-level commands (the app / "DTB Kampfrichtereinsatzpläne" menu).
@@ -24,7 +23,7 @@ pub mod app {
     actions!(
         app,
         [
-            /// Open the "Über DTB Kampfrichtereinsatzpläne" window. *(stub)*
+            /// Open the "Über DTB Kampfrichtereinsatzpläne" window.
             About,
             /// Check for application updates now (handled on `AppShell`).
             CheckForUpdates,
@@ -98,7 +97,7 @@ pub mod window {
     actions!(
         window,
         [
-            /// Open or close the preview window. *(stub)*
+            /// Open or close the preview window.
             TogglePreview,
             /// Enter or leave fullscreen.
             ToggleFullscreen,
