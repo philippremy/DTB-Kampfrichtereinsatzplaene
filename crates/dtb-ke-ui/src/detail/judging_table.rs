@@ -10,11 +10,14 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use std::time::Duration;
+
 use gpui::{
-    App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity, EntityId,
-    Focusable as _, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
-    Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
-    anchored, canvas, deferred, div, point, prelude::FluentBuilder, px,
+    Animation, AnimationExt, App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
+    EntityId, Focusable as _, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Window, anchored, canvas, deferred, div, ease_out_quint, point,
+    prelude::FluentBuilder, px,
 };
 use gpui_base::input::{InputEvent, InputState};
 
@@ -33,8 +36,17 @@ pub type SelectHandler = Rc<dyn Fn(&mut App)>;
 pub type DeleteHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 /// Invoked from the card's context menu.
 pub type DuplicateHandler = Rc<dyn Fn(&mut Window, &mut App)>;
-/// `(dragged editor id, drop-target editor id)` — move the first before/at the second.
-pub type ReorderHandler = Rc<dyn Fn(EntityId, EntityId, &mut Window, &mut App)>;
+
+/// Every `DetailView`-supplied callback a card needs, bundled so `new` stays
+/// under clippy's argument-count lint instead of taking several separate
+/// ones. Reordering itself is handled by `DetailView` centrally (see
+/// `phase_body`'s own `on_drag_move`/`on_drop`), not per-card — see that
+/// method's doc comment for why.
+pub struct CardHandlers {
+    pub on_select: SelectHandler,
+    pub on_delete: DeleteHandler,
+    pub on_duplicate: DuplicateHandler,
+}
 
 /// Drag payload for reordering a judging table — also renders its own drag
 /// ghost: a read-only snapshot of the card's actual content (not the live,
@@ -49,6 +61,12 @@ pub struct DragTable {
     /// see `JudgingTableCard`'s `width_bounds`), so the ghost matches its
     /// actual on-screen size instead of some guessed constant.
     width: Pixels,
+}
+
+impl DragTable {
+    pub fn editor_id(&self) -> EntityId {
+        self.editor_id
+    }
 }
 
 impl Render for DragTable {
@@ -78,12 +96,7 @@ impl Render for DragTable {
                     .items_center()
                     .gap(px(8.))
                     .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(13.))
-                            .child(self.label.clone()),
-                    )
+                    .child(div().flex_1().text_size(px(13.)).child(self.label.clone()))
                     .child(
                         div()
                             .flex_none()
@@ -98,39 +111,35 @@ impl Render for DragTable {
                             .child(cx.t(discipline.label_key())),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .children(roles::slots(&self.kind).into_iter().map(|slot| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .w(px(148.))
-                            .child(
-                                div()
-                                    .text_size(px(9.))
-                                    .text_color(c.muted_foreground)
-                                    .child(slot.label),
-                            )
-                            .child(
-                                div()
-                                    .h(px(30.))
-                                    .px(px(8.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(field_radius)
-                                    .border_1()
-                                    .border_color(c.border)
-                                    .bg(c.surface)
-                                    .text_color(c.foreground)
-                                    .text_size(px(13.))
-                                    .child(SharedString::from(slot.value)),
-                            )
-                    })),
-            )
+            .child(div().flex().flex_wrap().gap(px(8.)).children(
+                roles::slots(&self.kind).into_iter().map(|slot| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .w(px(148.))
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .text_color(c.muted_foreground)
+                                .child(slot.label),
+                        )
+                        .child(
+                            div()
+                                .h(px(30.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded(field_radius)
+                                .border_1()
+                                .border_color(c.border)
+                                .bg(c.surface)
+                                .text_color(c.foreground)
+                                .text_size(px(13.))
+                                .child(SharedString::from(slot.value)),
+                        )
+                }),
+            ))
     }
 }
 
@@ -148,8 +157,17 @@ pub struct JudgingTableCard {
     discipline_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The card's own last-painted bounds, captured the same way as
     /// `discipline_bounds` — read at drag-start so the drag ghost (see
-    /// `DragTable`) can be sized to match the real card's current width.
+    /// `DragTable`) can be sized to match the real card's current width, and
+    /// (see the same canvas probe in `render`) to detect a reorder-preview
+    /// jump for the FLIP reflow animation below.
     card_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// FLIP state for the reorder-reflow animation: `(offset, generation)`.
+    /// `offset` is the vertical distance (in the direction *away from* the
+    /// card's new position) to animate back down to zero from; `generation`
+    /// changes every time a new jump is detected, forcing `with_animation`'s
+    /// element-state (keyed by id, see `render`) to restart rather than
+    /// resume an unrelated, possibly-already-finished tween.
+    flip: Rc<Cell<(Pixels, u64)>>,
     /// The card's right-click context menu, anchored at this window-absolute
     /// point — `None` unless it is currently open.
     context_menu: Option<Point<Pixels>>,
@@ -161,20 +179,21 @@ pub struct JudgingTableCard {
     on_select: SelectHandler,
     on_delete: DeleteHandler,
     on_duplicate: DuplicateHandler,
-    on_reorder: ReorderHandler,
     _subs: Vec<Subscription>,
 }
 
 impl JudgingTableCard {
     pub fn new(
         editor: Entity<JudgingTableEditor>,
-        on_select: SelectHandler,
-        on_delete: DeleteHandler,
-        on_duplicate: DuplicateHandler,
-        on_reorder: ReorderHandler,
+        handlers: CardHandlers,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let CardHandlers {
+            on_select,
+            on_delete,
+            on_duplicate,
+        } = handlers;
         let table = editor.read(cx).table().clone();
 
         let placeholder = cx.t("detail.wizard.name-placeholder");
@@ -195,12 +214,12 @@ impl JudgingTableCard {
             discipline_open: false,
             discipline_bounds: Rc::new(Cell::new(None)),
             card_bounds: Rc::new(Cell::new(None)),
+            flip: Rc::new(Cell::new((px(0.), 0))),
             context_menu: None,
             dragging: false,
             on_select,
             on_delete,
             on_duplicate,
-            on_reorder,
             _subs: Vec::new(),
         };
         this.wire_subs(window, cx);
@@ -268,6 +287,16 @@ impl JudgingTableCard {
 
     pub fn table_editor(&self) -> Entity<JudgingTableEditor> {
         self.editor.clone()
+    }
+
+    /// The card's own last-painted height — content-driven (the judging
+    /// table's own discipline/slot count), not dependent on where in the
+    /// list it currently renders, so `DetailView::phase_body` can use it to
+    /// compute a live reorder preview from raw cursor position without
+    /// needing to know anything about the *current* (possibly already
+    /// reordered) on-screen layout.
+    pub fn natural_height(&self) -> Option<Pixels> {
+        self.card_bounds.get().map(|b| b.size.height)
     }
 
     pub fn set_selected(&mut self, selected: bool, cx: &mut Context<Self>) {
@@ -512,87 +541,40 @@ impl Render for JudgingTableCard {
             .get()
             .map(|b| b.size.width)
             .unwrap_or(px(420.));
+        let (flip_offset, flip_generation) = self.flip.get();
+        let motion = cx.theme().skin.motion(Duration::from_millis(220));
 
         let on_select = self.on_select.clone();
-        let on_reorder = self.on_reorder.clone();
         let click_inputs = self.input_handles();
         let out_inputs = click_inputs.clone();
 
+        // An outer, purely structural wrapper around the actual visual card:
+        // the FLIP animation below applies a paint-time `top` offset to the
+        // *inner* div, and that offset must not leak into what the bounds
+        // probe measures — `top`/inset bakes into an element's own computed
+        // bounds (matching CSS `position: relative` — an offset element's
+        // `getBoundingClientRect()` moves too), so a probe *inside* the
+        // animated div would see its own mid-flight slide as a stream of new
+        // "jumps", constantly re-kicking the animation instead of settling.
+        // The probe sits on this outer wrapper instead, which is never
+        // offset, so it only ever reports genuine reorder-driven jumps.
         div()
-            .id(("table-card", editor_id))
+            .id(("table-card-slot", editor_id))
             .relative()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .p(px(12.))
-            .rounded(theme.skin.radius_lg_px())
-            .border_1()
-            .when(is_dragging, |el| el.border_dashed())
-            .border_color(if is_dragging {
-                c.line_strong
-            } else if conflicted {
-                c.warn
-            } else if selected {
-                c.primary
-            } else {
-                c.border
-            })
-            .bg(if is_dragging { c.background } else { c.surface })
-            .when(selected && !is_dragging, |el| el.bg(c.accent_soft))
-            // Select on a click on the card itself — not one that landed in (and
-            // focused) one of its text fields. A plain closure, *not*
-            // `cx.listener`: `on_select` calls back into `DetailView::select_table`
-            // which reads this card, which panics if we're inside `card.update`.
-            .on_click(move |_, window, cx| {
-                if !any_focused(&click_inputs, window, cx) {
-                    on_select(cx);
-                }
-            })
-            .on_mouse_down_out(move |_, window, cx| {
-                if any_focused(&out_inputs, window, cx) {
-                    window.blur(cx);
-                }
-            })
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                    this.open_context_menu(event.position, cx);
-                }),
-            )
-            // Drop target for a reordering drag.
-            .on_drop(move |dragged: &DragTable, window, cx| {
-                on_reorder(dragged.editor_id, editor_id, window, cx);
-            })
-            .drag_over::<DragTable>(|style, _dragged, _window, cx| {
-                // All four sides, not just the top (`border_t` alone left the
-                // top edge 1px thicker than the others, since the base
-                // `.border_1()` was still in effect on the rest) — a uniform
-                // emphasis border reads as "drop here" without the mismatch.
-                style
-                    .border_2()
-                    .border_color(cx.theme().color.primary)
-            })
-            // Tracks whether *this* card is the one currently being dragged —
-            // fires for every move of any active `DragTable` drag, regardless
-            // of where the pointer is (see `judging_table.rs`'s cursor-style
-            // fix for the same mechanism), so each card can tell itself apart
-            // from the one under the cursor purely from the payload it carries.
-            .on_drag_move::<DragTable>(cx.listener(
-                |this, event: &DragMoveEvent<DragTable>, _window, cx| {
-                    let dragging = event.drag(cx).editor_id == this.editor.entity_id();
-                    if this.dragging != dragging {
-                        this.dragging = dragging;
-                        cx.notify();
-                    }
-                },
-            ))
-            // Captures this card's own rendered bounds — read at drag-start
-            // (see `on_drag` below) so the drag ghost can be sized to match,
-            // rather than some guessed constant.
             .child({
                 let capture = self.card_bounds.clone();
+                let flip = self.flip.clone();
                 canvas(
-                    move |bounds, window, _cx| {
+                    move |bounds, window, cx| {
+                        if let Some(old) = capture.get()
+                            && cx.has_active_drag()
+                        {
+                            let dy = old.origin.y - bounds.origin.y;
+                            if dy.abs() > px(1.) {
+                                let (_, generation) = flip.get();
+                                flip.set((dy, generation.wrapping_add(1)));
+                            }
+                        }
                         if capture.get() != Some(bounds) {
                             capture.set(Some(bounds));
                             window.request_animation_frame();
@@ -604,107 +586,182 @@ impl Render for JudgingTableCard {
                 .size_full()
             })
             .child(
-                // The header + slot fields, together — hidden (not removed:
-                // `.invisible()` keeps its layout box, which is exactly the
-                // "empty rectangle, same footprint, as if already dragged
-                // away" the card needs to read as) while this card is the
-                // drag source, so its real judging table only ever appears
-                // once on screen: as the drag ghost following the cursor.
                 div()
+                    .id(("table-card", editor_id))
+                    .relative()
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .when(is_dragging, |el| el.invisible())
+                    .p(px(12.))
+                    .rounded(theme.skin.radius_lg_px())
+                    .border_1()
+                    .when(is_dragging, |el| el.border_dashed())
+                    .border_color(if is_dragging {
+                        c.line_strong
+                    } else if conflicted {
+                        c.warn
+                    } else if selected {
+                        c.primary
+                    } else {
+                        c.border
+                    })
+                    .bg(if is_dragging { c.background } else { c.surface })
+                    .when(selected && !is_dragging, |el| el.bg(c.accent_soft))
+                    // Select on a click on the card itself — not one that landed in (and
+                    // focused) one of its text fields. A plain closure, *not*
+                    // `cx.listener`: `on_select` calls back into `DetailView::select_table`
+                    // which reads this card, which panics if we're inside `card.update`.
+                    .on_click(move |_, window, cx| {
+                        if !any_focused(&click_inputs, window, cx) {
+                            on_select(cx);
+                        }
+                    })
+                    .on_mouse_down_out(move |_, window, cx| {
+                        if any_focused(&out_inputs, window, cx) {
+                            window.blur(cx);
+                        }
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.open_context_menu(event.position, cx);
+                        }),
+                    )
+                    // Tracks whether *this* card is the one currently being dragged —
+                    // fires for every move of any active `DragTable` drag, regardless
+                    // of where the pointer is (see `judging_table.rs`'s cursor-style
+                    // fix for the same mechanism), so each card can tell itself apart
+                    // from the one under the cursor purely from the payload it carries.
+                    // Reordering itself (the live preview + the actual drop) is
+                    // handled centrally by `DetailView::phase_body`, not here — see
+                    // its doc comment for why per-card hover reporting didn't work.
+                    .on_drag_move::<DragTable>(cx.listener(
+                        |this, event: &DragMoveEvent<DragTable>, _window, cx| {
+                            let dragging = event.drag(cx).editor_id == this.editor.entity_id();
+                            if this.dragging != dragging {
+                                this.dragging = dragging;
+                                cx.notify();
+                            }
+                        },
+                    ))
                     .child(
+                        // The header + slot fields, together — hidden (not removed:
+                        // `.invisible()` keeps its layout box, which is exactly the
+                        // "empty rectangle, same footprint, as if already dragged
+                        // away" the card needs to read as) while this card is the
+                        // drag source, so its real judging table only ever appears
+                        // once on screen: as the drag ghost following the cursor.
                         div()
                             .flex()
-                            .items_center()
-                            .gap(px(8.))
+                            .flex_col()
+                            .gap(px(10.))
+                            .when(is_dragging, |el| el.invisible())
                             .child(
                                 div()
-                                    .id("drag-handle")
-                                    .flex_none()
-                                    // Open hand while just hovering/about to
-                                    // grab; `.cursor_move()` is `ClosedHand`
-                                    // despite the name (a gpui naming trap) —
-                                    // that showed the "grabbing" cursor before
-                                    // any drag had actually started. The
-                                    // drag's own cursor is a *separate*
-                                    // mechanism: it's captured once, from this
-                                    // same style, the instant the drag begins
-                                    // (`AnyDrag::cursor_style`, read off this
-                                    // div's style at that moment) and then
-                                    // overrides every other cursor for the
-                                    // rest of the gesture — so it would
-                                    // otherwise stay `OpenHand` for the whole
-                                    // drag too. `on_drag_move` flips it to
-                                    // `ClosedHand` on the first move after the
-                                    // drag starts (`cx.active_drag` only
-                                    // exists by then; doing this from
-                                    // `on_drag`'s own constructor below is
-                                    // too early — it runs before gpui sets
-                                    // `cx.active_drag`, so the setter would
-                                    // no-op).
-                                    .cursor_grab()
-                                    .child(Icon::Grip.size(px(14.)).color(c.muted_foreground))
-                                    .on_drag(
-                                        DragTable {
-                                            editor_id,
-                                            label: drag_label,
-                                            kind: table.kind.clone(),
-                                            width: ghost_width,
-                                        },
-                                        |dragged: &DragTable, _pos, _window, cx| {
-                                            cx.new(|_| dragged.clone())
-                                        },
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(
+                                        div()
+                                            .id("drag-handle")
+                                            .flex_none()
+                                            // Open hand while just hovering/about to
+                                            // grab; `.cursor_move()` is `ClosedHand`
+                                            // despite the name (a gpui naming trap) —
+                                            // that showed the "grabbing" cursor before
+                                            // any drag had actually started. The
+                                            // drag's own cursor is a *separate*
+                                            // mechanism: it's captured once, from this
+                                            // same style, the instant the drag begins
+                                            // (`AnyDrag::cursor_style`, read off this
+                                            // div's style at that moment) and then
+                                            // overrides every other cursor for the
+                                            // rest of the gesture — so it would
+                                            // otherwise stay `OpenHand` for the whole
+                                            // drag too. `on_drag_move` flips it to
+                                            // `ClosedHand` on the first move after the
+                                            // drag starts (`cx.active_drag` only
+                                            // exists by then; doing this from
+                                            // `on_drag`'s own constructor below is
+                                            // too early — it runs before gpui sets
+                                            // `cx.active_drag`, so the setter would
+                                            // no-op).
+                                            .cursor_grab()
+                                            .child(
+                                                Icon::Grip.size(px(14.)).color(c.muted_foreground),
+                                            )
+                                            .on_drag(
+                                                DragTable {
+                                                    editor_id,
+                                                    label: drag_label,
+                                                    kind: table.kind.clone(),
+                                                    width: ghost_width,
+                                                },
+                                                |dragged: &DragTable, _pos, _window, cx| {
+                                                    cx.new(|_| dragged.clone())
+                                                },
+                                            )
+                                            .on_drag_move::<DragTable>(|_, window, cx| {
+                                                if cx.active_drag_cursor_style()
+                                                    != Some(CursorStyle::ClosedHand)
+                                                {
+                                                    cx.set_active_drag_cursor_style(
+                                                        CursorStyle::ClosedHand,
+                                                        window,
+                                                    );
+                                                }
+                                            }),
                                     )
-                                    .on_drag_move::<DragTable>(|_, window, cx| {
-                                        if cx.active_drag_cursor_style()
-                                            != Some(CursorStyle::ClosedHand)
-                                        {
-                                            cx.set_active_drag_cursor_style(
-                                                CursorStyle::ClosedHand,
-                                                window,
-                                            );
-                                        }
-                                    }),
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .child(Field::new("table-label", &self.label_input)),
+                                    )
+                                    .child(discipline_selector)
+                                    .child(
+                                        Button::icon("del-table", Icon::Trash).small().on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                (this.on_delete.clone())(window, cx)
+                                            }),
+                                        ),
+                                    ),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .child(Field::new("table-label", &self.label_input)),
-                            )
-                            .child(discipline_selector)
-                            .child(Button::icon("del-table", Icon::Trash).small().on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    (this.on_delete.clone())(window, cx)
+                            .child(div().flex().flex_wrap().gap(px(8.)).children(
+                                self.slots.iter().map(|(label, input)| {
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(3.))
+                                        .w(px(148.))
+                                        .child(
+                                            div()
+                                                .text_size(px(9.))
+                                                .text_color(c.muted_foreground)
+                                                .child(*label),
+                                        )
+                                        .child(
+                                            Field::new(*label, input)
+                                                .invalid(self.conflict_roles.contains(label)),
+                                        )
                                 }),
                             )),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(8.))
-                            .children(self.slots.iter().map(|(label, input)| {
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .w(px(148.))
-                                    .child(
-                                        div()
-                                            .text_size(px(9.))
-                                            .text_color(c.muted_foreground)
-                                            .child(*label),
-                                    )
-                                    .child(
-                                        Field::new(*label, input)
-                                            .invalid(self.conflict_roles.contains(label)),
-                                    )
-                            })),
+                    .children(context_menu_layer)
+                    // The FLIP reflow slide: animates `top` from `flip_offset`
+                    // back to `0` (a pure paint-time offset — `.relative()`
+                    // above, plus `top` being an inset rather than a margin,
+                    // means it never affects sibling layout, only where
+                    // *this* card paints) whenever the outer wrapper's probe
+                    // detects the card jumped to a new index. The
+                    // `flip_generation` in the id forces a fresh
+                    // `with_animation` element-state (keyed by id) each time,
+                    // rather than resuming whatever state a previous,
+                    // unrelated tween left behind.
+                    .with_animation(
+                        SharedString::from(format!("table-flip-{editor_id:?}-{flip_generation}")),
+                        Animation::new(motion).with_easing(ease_out_quint()),
+                        move |el, delta| el.top(flip_offset * (1.0 - delta)),
                     ),
             )
-            .children(context_menu_layer)
     }
 }

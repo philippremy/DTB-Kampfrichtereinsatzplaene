@@ -21,10 +21,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, App, AppContext, Context, Entity, EntityId, InteractiveElement,
-    IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, TextRun, Window, canvas, div, ease_out_quint,
-    px,
+    Animation, AnimationExt, App, AppContext, Context, DragMoveEvent, Entity, EntityId,
+    InteractiveElement, IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, TextRun, Window, canvas, div,
+    ease_out_quint, px,
 };
 use gpui_base::Scrollbar;
 use uuid::Uuid;
@@ -36,7 +36,7 @@ use crate::components::icon::Icon;
 use crate::components::segmented::Segmented;
 use crate::components::template_tile::TemplateTile;
 use crate::detail::judging_table::{
-    DeleteHandler, DuplicateHandler, JudgingTableCard, ReorderHandler, SelectHandler,
+    CardHandlers, DeleteHandler, DragTable, DuplicateHandler, JudgingTableCard, SelectHandler,
 };
 use crate::detail::meta_dialog::{CreateRequest, DeleteRequest, MetaDialog};
 use crate::detail::remarks::RemarksSection;
@@ -78,6 +78,15 @@ pub struct DetailView {
 
     /// Scroll position of the content pane, so a re-render keeps it.
     scroll: ScrollHandle,
+
+    /// While a reordering drag is in progress: the order the cards would
+    /// land in if dropped right now (computed live purely from cursor
+    /// position — see [`Self::update_drag_preview`]), purely a rendering
+    /// concern that never touches `RoundEditor`'s real order until an actual
+    /// drop ([`Self::reorder_table`]). Read only while `cx.has_active_drag()`
+    /// (see [`Self::ordered_cards`]) since nothing explicitly clears it once
+    /// a drag ends.
+    drag_preview: Option<Vec<EntityId>>,
 
     _subs: Vec<Subscription>,
     /// Observer on the active round — recomputes [`Self::conflicts`] on any
@@ -150,6 +159,7 @@ impl DetailView {
             conflicts: PhaseConflicts::default(),
             toolbar_compact: Rc::new(Cell::new(false)),
             scroll: ScrollHandle::new(),
+            drag_preview: None,
             _subs: subs,
             _round_sub: Vec::new(),
             _doc_sub: None,
@@ -246,9 +256,10 @@ impl DetailView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(editor), Some(round)) =
-            (self.table_editor_by_id(editor_id, cx), self.active_round(cx))
-        else {
+        let (Some(editor), Some(round)) = (
+            self.table_editor_by_id(editor_id, cx),
+            self.active_round(cx),
+        ) else {
             return;
         };
         let table = editor.read(cx).table().clone();
@@ -321,28 +332,102 @@ impl DetailView {
     }
 
     /// Drop of `dragged` onto `target` — move it to the target's position.
-    fn reorder_table(
-        &mut self,
-        dragged: EntityId,
-        target: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Commit a reordering drag on drop, straight from the live preview's
+    /// own computed landing index (`self.drag_preview`) — not by resolving
+    /// whatever specific card the drop landed on: the drop point is very
+    /// often the dragged card's *own* (now-relocated, empty-looking)
+    /// placeholder slot, the whole point of the live preview, which a
+    /// target-card-based resolution can't express (`target == dragged`
+    /// there is indistinguishable from a genuine no-op drop). No preview
+    /// (e.g. a drop with no prior move event — possible for a very fast
+    /// click-drag-release right at the drag threshold) is just a no-op.
+    fn reorder_table(&mut self, dragged: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(round) = self.active_round(cx) else {
             return;
         };
-        let (from, to) = {
-            let tables = round.read(cx).tables();
-            let from = tables.iter().position(|t| t.entity_id() == dragged);
-            let to = tables.iter().position(|t| t.entity_id() == target);
-            match (from, to) {
-                (Some(from), Some(to)) if from != to => (from, to),
-                _ => return,
-            }
+        let Some(preview) = self.drag_preview.take() else {
+            return;
         };
+        let real: Vec<EntityId> = round.read(cx).tables().iter().map(|t| t.entity_id()).collect();
+        let (Some(from), Some(to)) = (
+            real.iter().position(|id| *id == dragged),
+            preview.iter().position(|id| *id == dragged),
+        ) else {
+            return;
+        };
+        if from == to {
+            return;
+        }
         round.update(cx, |round, cx| round.move_table(from, to, cx));
         self.rebuild_phase(window, cx);
         cx.notify();
+    }
+
+    /// Recompute the live reorder preview from the cards container's own
+    /// `on_drag_move` (see `phase_body`) — purely from `cursor_y` (relative
+    /// to the first card's top) and each card's own [`JudgingTableCard::
+    /// natural_height`], never from "which card is currently under the
+    /// pointer".
+    ///
+    /// An earlier version had each card report its own hover state instead,
+    /// which was unstable by construction: once the preview reorders the
+    /// list, a *different* card slides under the still-stationary pointer,
+    /// which reports itself as hovered, which reorders the list again,
+    /// which slides yet another card under the pointer — a feedback loop
+    /// that visibly thrashed before settling. Deriving the target index from
+    /// the cursor's raw position and each card's *content-driven* (so
+    /// order-independent) height instead breaks that loop: the computation
+    /// no longer depends on the list's current (already-reordered) layout at
+    /// all.
+    fn update_drag_preview(&mut self, dragged: EntityId, cursor_y: Pixels, cx: &mut Context<Self>) {
+        let gap = px(10.);
+        let mut cumulative = px(0.);
+        let mut order = Vec::with_capacity(self.cards.len());
+        let mut insert_at = None;
+        for card in &self.cards {
+            let card = card.read(cx);
+            let id = card.editor_id();
+            if id == dragged {
+                continue;
+            }
+            let height = card.natural_height().unwrap_or(px(0.));
+            if insert_at.is_none() && cursor_y < cumulative + height * 0.5 {
+                insert_at = Some(order.len());
+            }
+            order.push(id);
+            cumulative += height + gap;
+        }
+        let insert_at = insert_at.unwrap_or(order.len());
+        order.insert(insert_at, dragged);
+
+        if self.drag_preview.as_ref() != Some(&order) {
+            self.drag_preview = Some(order);
+            cx.notify();
+        }
+    }
+
+    /// The cards in their live reorder-preview order while a drag is
+    /// actually in progress, else their real (`self.cards`) order.
+    /// `cx.has_active_drag()` is the authoritative gate — `drag_preview`
+    /// itself is never explicitly cleared when a drag ends (there's no such
+    /// hook; see `JudgingTableCard`'s identical `dragging` gate) — so using
+    /// it un-gated could replay a stale preview for one frame at the start
+    /// of an unrelated later drag.
+    fn ordered_cards(&self, cx: &Context<Self>) -> Vec<Entity<JudgingTableCard>> {
+        if cx.has_active_drag()
+            && let Some(order) = &self.drag_preview
+        {
+            return order
+                .iter()
+                .filter_map(|id| {
+                    self.cards
+                        .iter()
+                        .find(|card| card.read(cx).editor_id() == *id)
+                        .cloned()
+                })
+                .collect();
+        }
+        self.cards.clone()
     }
 
     fn remove_table_now(
@@ -406,6 +491,7 @@ impl DetailView {
 
     fn rebuild_phase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cards.clear();
+        self.drag_preview = None;
 
         let Some(round) = self.active_round(cx) else {
             self.spare
@@ -437,22 +523,14 @@ impl DetailView {
                         .ok();
                 })
             };
-            let on_reorder: ReorderHandler = {
-                let weak = cx.weak_entity();
-                Rc::new(move |dragged, target, window: &mut Window, cx: &mut App| {
-                    weak.update(cx, |view, cx| {
-                        view.reorder_table(dragged, target, window, cx)
-                    })
-                    .ok();
-                })
-            };
             let card = cx.new(|cx| {
                 JudgingTableCard::new(
                     editor,
-                    on_select,
-                    on_delete,
-                    on_duplicate,
-                    on_reorder,
+                    CardHandlers {
+                        on_select,
+                        on_delete,
+                        on_duplicate,
+                    },
                     window,
                     cx,
                 )
@@ -558,7 +636,27 @@ impl DetailView {
                     .flex_col()
                     .gap(px(10.))
                     .p(px(20.))
-                    .children(self.cards.iter().cloned())
+                    // The live reorder preview + its actual commit on drop are
+                    // both handled *here*, centrally, rather than per-card —
+                    // see `update_drag_preview`'s and `reorder_table`'s doc
+                    // comments for why a per-card version was unstable and
+                    // couldn't express dropping onto the dragged card's own
+                    // (relocated) placeholder slot.
+                    .on_drag_move::<DragTable>(cx.listener(
+                        |this, event: &DragMoveEvent<DragTable>, _window, cx| {
+                            let dragged = event.drag(cx).editor_id();
+                            // `.p(px(20.))` above — the first card starts 20px
+                            // below this container's own (padding-included)
+                            // top edge, which is what `event.bounds` reports.
+                            let cursor_y =
+                                event.event.position.y - event.bounds.origin.y - px(20.);
+                            this.update_drag_preview(dragged, cursor_y, cx);
+                        },
+                    ))
+                    .on_drop(cx.listener(|this, dragged: &DragTable, window, cx| {
+                        this.reorder_table(dragged.editor_id(), window, cx);
+                    }))
+                    .children(self.ordered_cards(cx))
                     .child(
                         TemplateTile::card("add-table-template")
                             .label(cx.t("detail.add-table-template"))
