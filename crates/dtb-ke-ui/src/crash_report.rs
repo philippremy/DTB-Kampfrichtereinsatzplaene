@@ -23,9 +23,11 @@
 use gpui::Subscription;
 use gpui::{
     App, AppContext, Bounds, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window,
-    WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder, px,
+    ParentElement, Render, ScrollHandle, Size, StatefulInteractiveElement, Styled,
+    TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder,
+    px,
 };
+use gpui_base::Scrollbar;
 
 use dtb_ke_crash::report;
 
@@ -531,6 +533,11 @@ struct ReportWindow {
     /// non-empty).
     attach_log: bool,
     state: SendState,
+    /// The detail card's own scroll position (kind/message/rows) — a long
+    /// value (e.g. the panic location, a deep path inside a dependency
+    /// rather than a short local one) or a long message can overflow the
+    /// card in either direction, so it scrolls instead of just running over.
+    scroll: ScrollHandle,
     _appearance_sub: Subscription,
 }
 
@@ -574,6 +581,7 @@ impl ReportWindow {
             attach_dump: false,
             attach_log: false,
             state: SendState::Idle,
+            scroll: ScrollHandle::new(),
             _appearance_sub: appearance_sub,
         }
     }
@@ -669,11 +677,16 @@ impl Render for ReportWindow {
                     .child(INTRO),
             )
             .child(
+                // The outer frame (border/bg/rounding) stays a fixed box;
+                // the actual kind/message/row content lives in a scrollable
+                // inner div below, since a long row value (a deep path
+                // inside a dependency rather than a short local one, say)
+                // or a long message can overflow the frame in either
+                // direction — it scrolls instead of just running over it.
                 div()
+                    .relative()
                     .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
+                    .min_h(px(0.))
                     .p(px(12.))
                     .bg(c.surface)
                     .border_1()
@@ -681,18 +694,32 @@ impl Render for ReportWindow {
                     .rounded(radius)
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(13.))
-                            .child(s.kind.clone()),
+                            .id("crash-detail-scroll")
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .overflow_x_scroll()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(13.))
+                                    .child(s.kind.clone()),
+                            )
+                            .when_some(s.message.clone(), |el, m| {
+                                el.child(
+                                    div().text_size(px(12.)).text_color(c.foreground).child(m),
+                                )
+                            })
+                            .children(
+                                s.rows
+                                    .iter()
+                                    .map(|(k, v)| detail_row(k, v, c.muted_foreground)),
+                            ),
                     )
-                    .when_some(s.message.clone(), |el, m| {
-                        el.child(div().text_size(px(12.)).text_color(c.foreground).child(m))
-                    })
-                    .children(
-                        s.rows
-                            .iter()
-                            .map(|(k, v)| detail_row(k, v, c.muted_foreground)),
-                    ),
+                    .child(Scrollbar::new(&self.scroll)),
             )
             .child(self.footer(cx))
     }
@@ -888,6 +915,14 @@ fn truncate(s: &str, max: usize) -> String {
 fn detail_row(label: &str, value: &str, muted: Hsla) -> impl IntoElement {
     div()
         .flex()
+        .flex_none()
+        // The scroll container is a flex_col, which stretches children to
+        // its own (viewport) width by default — that clips a wide row
+        // instead of letting it overflow, which is exactly what needs to
+        // happen for the container's `overflow_x_scroll` to have anything
+        // to scroll *to*. `self_start()` opts this row out of that stretch,
+        // sizing it to its own (possibly wider) content instead.
+        .self_start()
         .gap(px(8.))
         .text_size(px(12.))
         .child(
@@ -897,7 +932,11 @@ fn detail_row(label: &str, value: &str, muted: Hsla) -> impl IntoElement {
                 .text_color(muted)
                 .child(label.to_string()),
         )
-        .child(div().child(value.to_string()))
+        // A location/address/thread value is one technical token (a path,
+        // not prose) — keep it on one line rather than wrapping mid-path;
+        // the detail card's own scroll (see `Render for ReportWindow`)
+        // handles the overflow that leaves for a long one.
+        .child(div().flex_none().whitespace_nowrap().child(value.to_string()))
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ mod toolbar;
 mod trash_window;
 mod updater;
 
+use gpui::AppContext as _;
 use log::{debug, error, info};
 
 use crate::menu::MenuState;
@@ -160,31 +161,59 @@ fn main() {
             _ => {}
         }
 
-        // Crash-handler smoke test: `DTB_KE_CRASH_TEST=segv|panic|bus[,thread]`
+        // Crash-handler smoke test: `DTB_KE_CRASH_TEST=segv|panic|bus[,thread]|borrow`
         // faults ~2 s after launch (on a worker thread with the `,thread`
         // suffix) so a `.dmp` should land under logs/crashes/.
         #[allow(clippy::manual_dangling_ptr)]
         if let Ok(kind) = std::env::var("DTB_KE_CRASH_TEST") {
-            let on_thread = kind.contains(",thread");
-            let fault = move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                eprintln!("DTB_KE_CRASH_TEST: faulting now ({kind})");
-                match kind.split(',').next() {
-                    Some("panic") => panic!("DTB_KE_CRASH_TEST: deliberate panic"),
-                    // Deliberate faults — clippy's dangling/null warnings are the point.
-                    Some("bus") => unsafe {
-                        std::ptr::with_exposed_provenance_mut::<u64>(1).write_volatile(0)
-                    },
-                    _ => unsafe { std::ptr::null_mut::<u64>().write_volatile(0xdead) },
-                }
-            };
-            if on_thread {
-                std::thread::Builder::new()
-                    .name("crash-test".into())
-                    .spawn(fault)
-                    .ok();
+            if kind.split(',').next() == Some("borrow") {
+                // Unlike the other kinds, this can't run on a bare OS thread
+                // — it needs a real gpui entity mid-`update`, which only
+                // exists on the main thread's `App`. Reproduces the exact
+                // panic class this app hit for real (reading an entity from
+                // inside its own `update` — see the judging-table
+                // drag-reorder fix); useful here specifically because the
+                // resulting panic location lands inside gpui's own source
+                // tree (a long, dependency path) rather than a short local
+                // one, which the crash reporter's detail card needs to
+                // actually be tested against for its scroll behaviour.
+                struct CrashTestDummy;
+                let entity = cx.new(|_| CrashTestDummy);
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(2))
+                        .await;
+                    cx.update(|cx| {
+                        eprintln!("DTB_KE_CRASH_TEST: faulting now (borrow)");
+                        let reentrant = entity.clone();
+                        entity.update(cx, move |_, cx| {
+                            reentrant.read(cx);
+                        });
+                    });
+                })
+                .detach();
             } else {
-                std::thread::spawn(fault);
+                let on_thread = kind.contains(",thread");
+                let fault = move || {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    eprintln!("DTB_KE_CRASH_TEST: faulting now ({kind})");
+                    match kind.split(',').next() {
+                        Some("panic") => panic!("DTB_KE_CRASH_TEST: deliberate panic"),
+                        // Deliberate faults — clippy's dangling/null warnings are the point.
+                        Some("bus") => unsafe {
+                            std::ptr::with_exposed_provenance_mut::<u64>(1).write_volatile(0)
+                        },
+                        _ => unsafe { std::ptr::null_mut::<u64>().write_volatile(0xdead) },
+                    }
+                };
+                if on_thread {
+                    std::thread::Builder::new()
+                        .name("crash-test".into())
+                        .spawn(fault)
+                        .ok();
+                } else {
+                    std::thread::spawn(fault);
+                }
             }
         }
 
