@@ -22,6 +22,7 @@ use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
+use crate::actions::window::ToggleSidebar;
 use crate::components::button::{Button, ButtonTone};
 use crate::skin::glass::{self, GlassRole};
 use crate::skin::titlebar;
@@ -29,6 +30,7 @@ use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, conte
 use crate::components::field::Field;
 use crate::components::focus::sidebar_selection_fill;
 use crate::components::icon::Icon;
+use crate::components::toolbar_group::ToolbarGroup;
 use crate::i18n::ActiveLocale;
 use crate::material;
 use crate::store::AppStore;
@@ -67,6 +69,9 @@ pub struct Sidebar {
     /// The row context menu currently open, if any — the competition id and
     /// the window-absolute point (the right-click) to anchor the popover at.
     context_menu: Option<(Uuid, Point<Pixels>)>,
+    /// The selected document whose save state the row indicator shows.
+    watched_doc: Option<gpui::EntityId>,
+    doc_sub: Option<Subscription>,
     on_export: CompetitionAction,
     on_settings: CompetitionAction,
     on_preview: CompetitionAction,
@@ -87,6 +92,7 @@ impl Sidebar {
         let subs = vec![
             cx.observe(&store, |this, _, cx| {
                 this.reconcile(cx);
+                this.rewatch_document(cx);
                 cx.notify();
             }),
             cx.subscribe_in(
@@ -107,6 +113,8 @@ impl Sidebar {
             anchor: None,
             list_scroll: VirtualListScrollHandle::new(),
             context_menu: None,
+            watched_doc: None,
+            doc_sub: None,
             on_export,
             on_settings,
             on_preview,
@@ -132,6 +140,17 @@ impl Sidebar {
             }
             None => self.selection.clear(),
             _ => {}
+        }
+    }
+
+    /// Keeps [`Self::doc_sub`] on the selected document so its save-state
+    /// changes (typing → saving → saved) repaint the row indicator.
+    fn rewatch_document(&mut self, cx: &mut Context<Self>) {
+        let doc = self.store.read(cx).selected_document().cloned();
+        let id = doc.as_ref().map(|d| d.entity_id());
+        if id != self.watched_doc {
+            self.watched_doc = id;
+            self.doc_sub = doc.map(|d| cx.observe(&d, |_, _, cx| cx.notify()));
         }
     }
 
@@ -395,9 +414,74 @@ fn sidebar_row(
                                 .child(meta.clone()),
                         ),
                 )
+                // Save state — only for the competition shown in the detail
+                // pane, so it doesn't clutter every row.
+                .children(
+                    (this.store.read(cx).selected_id() == Some(id))
+                        .then(|| save_indicator(this, c, cx)),
+                )
                 .into_any_element()
         }
     }
+}
+
+/// The small save-state marker at the end of the selected competition's row:
+/// a spinner while saving (or an edit is pending), a red "!" on failure, each
+/// with a tooltip — and nothing when all is well. The slot keeps its size
+/// either way, so the title doesn't shift when the marker appears.
+fn save_indicator(
+    this: &Sidebar,
+    c: crate::theme::PaletteColors,
+    cx: &mut Context<Sidebar>,
+) -> gpui::AnyElement {
+    use crate::components::spinner::Spinner;
+    use crate::components::tooltip::text_tooltip;
+    use crate::store::SaveState;
+
+    let state = this
+        .store
+        .read(cx)
+        .selected_document()
+        .map(|doc| doc.read(cx).save_state())
+        .unwrap_or(SaveState::Saved);
+    let slot = || {
+        div()
+            .id("save-indicator")
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(16.))
+    };
+    let (tooltip, content): (gpui::SharedString, gpui::AnyElement) = match state {
+        SaveState::Saved => return slot().into_any_element(),
+        SaveState::Dirty => (
+            cx.t("toolbar.save-state-dirty"),
+            Spinner::new()
+                .size(px(12.))
+                .color(c.muted_foreground)
+                .into_any_element(),
+        ),
+        SaveState::Saving => (
+            cx.t("toolbar.save-state-saving"),
+            Spinner::new()
+                .size(px(12.))
+                .color(c.muted_foreground)
+                .into_any_element(),
+        ),
+        SaveState::Error(message) => (
+            cx.t_fmt("sidebar.save-error-tooltip", &[("error", &message)])
+                .into(),
+            Icon::AlertCircle
+                .size(px(14.))
+                .color(c.critical)
+                .into_any_element(),
+        ),
+    };
+    slot()
+        .tooltip(text_tooltip(tooltip))
+        .child(content)
+        .into_any_element()
 }
 
 impl Render for Sidebar {
@@ -481,10 +565,31 @@ impl Render for Sidebar {
             // The native glass behind the sidebar (macOS 26+; a no-op elsewhere).
             .child(glass::region("sidebar", GlassRole::Sidebar))
             .bg(material::sidebar_fill(theme, cx))
-            .border_r_1()
-            .border_color(c.border)
-            // Clears the macOS traffic lights (0 elsewhere).
-            .child(div().flex_none().h(top_inset))
+            // Clears the macOS traffic lights (0 elsewhere) and, beside them,
+            // holds the sidebar toggle.
+            .when(top_inset > px(0.), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .h(top_inset)
+                        .pl(titlebar::content_leading_inset(window))
+                        // Same capsule (and id) as the collapsed-state toggle in
+                        // the toolbar, so it's one glass view moving between them.
+                        // The margin is *outside* the glass capsule.
+                        .child(div().flex_none().mx(px(6.)).child(
+                            ToolbarGroup::new("toolbar-toggle").child(
+                                Button::icon("sidebar-toggle", Icon::PanelLeft)
+                                    .oval()
+                                    .tooltip(cx.t("toolbar.toggle-sidebar"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(ToggleSidebar), cx)
+                                    }),
+                            ),
+                        )),
+                )
+            })
             .when(is_empty, |el| {
                 el.child(
                     div()

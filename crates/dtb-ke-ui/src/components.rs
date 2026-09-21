@@ -20,6 +20,8 @@ pub mod segmented;
 pub mod spinner;
 pub mod template_tile;
 pub mod toggle;
+pub mod toolbar_group;
+pub mod tooltip;
 
 // Consumed by the shell / detail views from Phase 3 on.
 #[allow(unused_imports)]

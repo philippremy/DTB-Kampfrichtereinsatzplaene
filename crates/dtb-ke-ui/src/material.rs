@@ -171,6 +171,10 @@ pub fn chrome_fill(theme: &Theme, cx: &App) -> Hsla {
 /// material stays visible only behind the sidebar.
 pub fn toolbar_fill(theme: &Theme, cx: &App) -> Hsla {
     match effective(theme, cx) {
+        // On the glass tier the band stays transparent: its flat colour (and
+        // the capsules) come from native views underneath. Before macOS 26 the
+        // band is simply part of the opaque content column.
+        Effective::Native if crate::skin::glass::active() => gpui::transparent_black(),
         Effective::Native => content_fill(theme),
         _ => chrome_like_fill(theme, cx),
     }

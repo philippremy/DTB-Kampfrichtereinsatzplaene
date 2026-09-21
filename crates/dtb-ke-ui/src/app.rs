@@ -23,10 +23,11 @@ use crate::actions::file::{
     AddJudgingTable, CloseWindow, CompetitionSettings, DeleteCompetitions, ExportAll,
     ExportCompetition, ImportCompetition, NewCompetition, ShowTrash,
 };
-use crate::actions::window::{Minimize, ToggleFullscreen, TogglePreview};
+use crate::actions::window::{Minimize, ToggleFullscreen, TogglePreview, ToggleSidebar};
 use crate::components::button::Button;
 use crate::components::icon::Icon;
 use crate::components::menu_bar::MenuBar;
+use crate::components::toolbar_group::ToolbarGroup;
 use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
 use crate::material;
@@ -34,7 +35,8 @@ use crate::menu::{self, DbStatus, MenuState};
 use crate::preview::{self, PreviewWindow};
 use crate::save::{self, ExportFormat, SaveChoice};
 use crate::sidebar::{SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_SNAP, SIDEBAR_WIDTH, Sidebar};
-use crate::skin::{decorations, glass, menu as skin_menu, titlebar, window as skin_window};
+use crate::skin::glass::{self, GlassRole};
+use crate::skin::{decorations, menu as skin_menu, titlebar, window as skin_window};
 use crate::store::{self, AppStore};
 use crate::theme::{ActiveTheme, Appearance, Theme};
 use crate::toolbar::CompetitionToolbar;
@@ -161,8 +163,8 @@ impl AppShell {
         };
         let sidebar =
             cx.new(|cx| Sidebar::new(store.clone(), on_export, on_settings, on_preview, window, cx));
-        let toolbar = cx.new(|cx| CompetitionToolbar::new(store.clone(), cx));
         let detail = cx.new(|cx| DetailView::new(store.clone(), window, cx));
+        let toolbar = cx.new(|cx| CompetitionToolbar::new(store.clone(), detail.clone(), cx));
         let menu_bar = cx.new(|_| MenuBar::new());
         let store_sub = cx.observe(&store, |_, _, cx| cx.notify());
         let detail_sub = cx.observe(&detail, |_, _, cx| cx.notify());
@@ -633,23 +635,49 @@ impl AppShell {
         // `menu_bar_row` under CSD (Linux) — not here. They used to sit at the
         // end of this row, but that's the same row as the competition toolbar,
         // so the toolbar visibly shifted left whenever the controls appeared.
+        let native = glass::active();
+        // On macOS the toggle lives in the sidebar, beside the traffic lights,
+        // while the sidebar is open — and takes the same spot here once it's
+        // collapsed, so it never moves.
+        let sidebar_owns_toggle = !self.sidebar_collapsed
+            && titlebar::sidebar_top_inset(window, bar_height) > px(0.);
         div()
             .id("title-bar")
-            .flex()
+            .relative()
             .flex_none()
-            .items_center()
-            .gap(px(8.))
             .h(bar_height)
-            .pl(leading)
-            .pr(px(12.))
             .bg(fill)
-            .border_b_1()
-            .border_color(border)
+            // The glass tier has no divider: the band's flat colour and the
+            // content's scroll-edge fade meet seamlessly.
+            .when(!native, |el| el.border_b_1().border_color(border))
+            // Native backing behind the band (glass tier) — see
+            // `GlassRole::ToolbarBand`. The probe lives on this *unpadded*
+            // wrapper: an absolute child covers its parent's content box, so
+            // inside the padded row below it would skip the padding.
+            .child(glass::region("toolbar-band", GlassRole::ToolbarBand))
             .child(
-                Button::icon("toggle-sidebar", Icon::PanelLeft)
-                    .on_click(cx.listener(|this, _, _window, cx| this.toggle_sidebar(cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .size_full()
+                    .pl(leading)
+                    .pr(px(12.))
+                    .when(!sidebar_owns_toggle, |el| {
+                        // The margin is *outside* the glass capsule.
+                        el.child(div().flex_none().mx(px(6.)).child(
+                            ToolbarGroup::new("toolbar-toggle").child(
+                                Button::icon("toggle-sidebar", Icon::PanelLeft)
+                                    .oval()
+                                    .tooltip(cx.t("toolbar.toggle-sidebar"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(ToggleSidebar), cx)
+                                    }),
+                            ),
+                        ))
+                    })
+                    .child(self.toolbar.clone()),
             )
-            .child(self.toolbar.clone())
     }
 
     /// The min / max / close buttons — drawn only under client-side decorations.
@@ -791,19 +819,23 @@ impl AppShell {
     ) -> impl IntoElement {
         let row = div().flex().flex_1().min_h(px(0.));
 
-        // The content column: toolbar band on top, detail beneath.
+        // The content column: toolbar band on top, detail beneath. On the glass
+        // tier the band must stay transparent so the native backing and
+        // capsules beneath gpui show through — an opaque fill on the column
+        // would paint over them — so the opaque content colour goes on the
+        // detail area only. (Elsewhere the band paints its own fill.)
         let detail = div()
             .flex()
             .flex_col()
             .size_full()
             .min_w(px(0.))
-            .bg(content_fill)
             .child(self.toolbar_row(window, cx))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h(px(0.))
+                    .bg(content_fill)
                     .child(self.detail.clone()),
             );
 
@@ -901,6 +933,9 @@ impl Render for AppShell {
             }))
             .on_action(cx.listener(|this, _: &TogglePreview, _window, cx| {
                 this.toggle_preview(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
+                this.toggle_sidebar(cx);
             }))
             .when(updater::available(), |el| {
                 el.on_action(cx.listener(|this, _: &CheckForUpdates, _window, cx| {

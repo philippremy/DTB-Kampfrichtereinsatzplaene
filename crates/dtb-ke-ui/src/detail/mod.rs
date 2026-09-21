@@ -16,23 +16,18 @@ mod remarks;
 mod spare_judges;
 mod table_wizard;
 
-use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, App, AppContext, Context, DragMoveEvent, Entity, EntityId,
     InteractiveElement, IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, TextRun, Window, canvas, div,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
     ease_out_quint, px,
 };
 use gpui_base::Scrollbar;
 use uuid::Uuid;
 
-use crate::actions::file::ExportCompetition;
-use crate::actions::window::TogglePreview;
-use crate::components::button::{Button, ButtonTone};
-use crate::components::icon::Icon;
 use crate::components::segmented::Segmented;
 use crate::components::template_tile::TemplateTile;
 use crate::detail::judging_table::{
@@ -74,7 +69,6 @@ pub struct DetailView {
     /// from a `canvas` width probe (see [`Self::detail_toolbar`]), read on the
     /// next frame. Interior mutability so the probe can update it without a
     /// re-entrant entity borrow.
-    toolbar_compact: Rc<Cell<bool>>,
 
     /// Scroll position of the content pane, so a re-render keeps it.
     scroll: ScrollHandle,
@@ -157,7 +151,6 @@ impl DetailView {
             wizard,
             meta_dialog,
             conflicts: PhaseConflicts::default(),
-            toolbar_compact: Rc::new(Cell::new(false)),
             scroll: ScrollHandle::new(),
             drag_preview: None,
             _subs: subs,
@@ -676,167 +669,10 @@ impl DetailView {
                 |el, t| el.opacity(t),
             )
     }
-
-    /// Stable ids for the detail toolbar's six buttons, in render order —
-    /// independent of their (translated) display label. Kept as a const so
-    /// they can't drift out of sync with the array below.
-    const TOOLBAR_IDS: [&'static str; 6] = [
-        "toolbar-add-table",
-        "toolbar-duplicate",
-        "toolbar-delete",
-        "toolbar-settings",
-        "toolbar-preview",
-        "toolbar-export",
-    ];
-
-    /// The detail toolbar's six button labels, in render order.
-    fn toolbar_labels(cx: &App) -> [SharedString; 6] {
-        [
-            cx.t("detail.toolbar-add-table"),
-            cx.t("detail.toolbar-duplicate"),
-            cx.t("detail.toolbar-delete"),
-            cx.t("detail.toolbar-settings"),
-            cx.t("detail.toolbar-preview"),
-            cx.t("detail.toolbar-export"),
-        ]
-    }
-
-    /// The toolbar's outer width below which the buttons can't all show their
-    /// label, computed from the actual shaped label widths (so it tracks the
-    /// font / locale rather than a hand-tuned guess).
-    fn toolbar_label_budget(&self, window: &Window, cx: &App) -> Pixels {
-        // Small ghost button: 1px border ×2 + 8px pad ×2 + 13px icon + 4px
-        // icon↔label gap (see `components/button.rs`).
-        const BUTTON_CHROME: f32 = 2.0 + 16.0 + 13.0 + 4.0;
-        const BUTTON_GAP: f32 = 4.0; // `.gap(px(4.))` between toolbar buttons
-        const TOOLBAR_PAD_X: f32 = 40.0; // the toolbar's own `.px(px(20.))`
-        const SPACER_MIN: f32 = 12.0; // breathing room at the flex spacer
-
-        let font = window.text_style().font();
-        let labels = Self::toolbar_labels(cx);
-        let n = labels.len() as f32;
-        let text: f32 = labels
-            .iter()
-            .map(|label| {
-                let run = TextRun {
-                    len: label.len(),
-                    font: font.clone(),
-                    color: gpui::black(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                f32::from(
-                    window
-                        .text_system()
-                        .shape_line(label.clone(), px(12.0), &[run], None)
-                        .width,
-                )
-            })
-            .sum();
-
-        px(text + BUTTON_CHROME * n + BUTTON_GAP * (n - 1.0) + TOOLBAR_PAD_X + SPACER_MIN)
-    }
-
-    fn detail_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = cx.theme().color;
-        let weak = cx.weak_entity();
-        let has_selection = self.selected_table.is_some();
-
-        // The `canvas` probe below compares the toolbar's live outer width to
-        // this budget and flips `toolbar_compact`; `compact` is last frame's
-        // verdict (icon-only when the labels wouldn't fit).
-        let budget = self.toolbar_label_budget(window, cx);
-        let compact = self.toolbar_compact.get();
-        let probe = self.toolbar_compact.clone();
-
-        let ids = Self::TOOLBAR_IDS;
-        let action = move |icon: Icon, id: &'static str, label: SharedString, disabled: bool| {
-            let button = if compact {
-                Button::icon(id, icon)
-            } else {
-                Button::new(id, label).leading_icon(icon)
-            };
-            button.tone(ButtonTone::Ghost).small().disabled(disabled)
-        };
-        let l = Self::toolbar_labels(cx);
-
-        div()
-            .relative()
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .px(px(20.))
-            .py(px(10.))
-            .border_b_1()
-            .border_color(c.border)
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        // `bounds` is the toolbar's padding box (its own `.px`
-                        // is inside it), so compare against a budget that also
-                        // includes that padding.
-                        let want = bounds.size.width < budget;
-                        if probe.get() != want {
-                            probe.set(want);
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
-            .child(action(Icon::Plus, ids[0], l[0].clone(), false).on_click({
-                let weak = weak.clone();
-                move |_, window, cx| {
-                    weak.update(cx, |view, cx| view.open_wizard(window, cx))
-                        .ok();
-                }
-            }))
-            .child(
-                action(Icon::Copy, ids[1], l[1].clone(), !has_selection).on_click({
-                    let weak = weak.clone();
-                    move |_, window, cx| {
-                        weak.update(cx, |view, cx| view.request_duplicate(window, cx))
-                            .ok();
-                    }
-                }),
-            )
-            .child(
-                action(Icon::Trash, ids[2], l[2].clone(), !has_selection).on_click({
-                    let weak = weak.clone();
-                    move |_, window, cx| {
-                        weak.update(cx, |view, cx| view.request_delete(window, cx))
-                            .ok();
-                    }
-                }),
-            )
-            .child(div().flex_1())
-            .child(
-                action(Icon::Settings, ids[3], l[3].clone(), false).on_click({
-                    let weak = weak.clone();
-                    move |_, window, cx| {
-                        weak.update(cx, |view, cx| view.open_meta_dialog(window, cx))
-                            .ok();
-                    }
-                }),
-            )
-            .child(
-                action(Icon::Preview, ids[4], l[4].clone(), false).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(TogglePreview), cx);
-                }),
-            )
-            .child(
-                action(Icon::Export, ids[5], l[5].clone(), false).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(ExportCompetition), cx);
-                }),
-            )
-    }
 }
 
 impl Render for DetailView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
 
         if self.doc.is_none() {
@@ -865,7 +701,6 @@ impl Render for DetailView {
             .min_w(px(0.))
             .flex()
             .flex_col()
-            .child(self.detail_toolbar(window, cx))
             .child(
                 div()
                     .relative()
@@ -908,6 +743,10 @@ impl Render for DetailView {
                             .child(self.phase_body(cx))
                             .child(self.remarks.clone()),
                     )
+                    // Scroll-edge effect: content fades into the toolbar band
+                    // above instead of being cut off by it. It sits over the
+                    // scroll area's top edge and doesn't take input.
+                    .child(scroll_edge_fade(cx.theme().color.background))
                     .child(Scrollbar::vertical(&self.scroll)),
             )
             .child(self.wizard.clone())
@@ -922,4 +761,21 @@ pub(super) fn field_label(text: impl Into<SharedString>, c: &PaletteColors) -> g
         .text_size(px(9.5))
         .text_color(c.muted_foreground)
         .child(text.to_uppercase())
+}
+
+/// A short gradient from `fill` (opaque) to transparent, pinned to the top of a
+/// `relative` scroll container — the scroll-edge effect for content scrolling
+/// under the toolbar band. `fill` must match the band's backing colour.
+fn scroll_edge_fade(fill: gpui::Hsla) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .h(px(18.))
+        .bg(gpui::linear_gradient(
+            180.,
+            gpui::linear_color_stop(fill, 0.),
+            gpui::linear_color_stop(gpui::Hsla { a: 0.0, ..fill }, 1.),
+        ))
 }

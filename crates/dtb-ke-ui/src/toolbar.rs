@@ -12,31 +12,41 @@ use gpui::{
 };
 use uuid::Uuid;
 
-use crate::actions::file::NewCompetition;
+use crate::actions::edit::{DeleteJudgingTable, DuplicateJudgingTable};
+use crate::actions::file::{AddJudgingTable, CompetitionSettings, ExportCompetition, NewCompetition};
+use crate::actions::window::TogglePreview;
 use crate::components::button::{Button, ButtonTone};
-use crate::components::chip::{Chip, ChipTone};
+use crate::components::icon::Icon;
 use crate::components::org_emblem::OrgEmblem;
+use crate::components::toolbar_group::ToolbarGroup;
+use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
-use crate::model::{self, CompetitionMeta, JudgingTable};
-use crate::store::{AppStore, CompetitionDocument, SaveState};
+use crate::model::CompetitionMeta;
+use crate::store::AppStore;
 use crate::theme::ActiveTheme;
 
 pub struct CompetitionToolbar {
     store: Entity<AppStore>,
+    /// Read for the table-selection state that enables Duplicate / Delete.
+    detail: Entity<DetailView>,
     /// The competition currently being watched via `watch_subs`.
     watched: Option<Uuid>,
     watch_subs: Vec<Subscription>,
     _store_sub: Subscription,
+    _detail_sub: Subscription,
 }
 
 impl CompetitionToolbar {
-    pub fn new(store: Entity<AppStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(store: Entity<AppStore>, detail: Entity<DetailView>, cx: &mut Context<Self>) -> Self {
         let store_sub = cx.observe(&store, |this, _, cx| this.rewatch(cx));
+        let detail_sub = cx.observe(&detail, |_, _, cx| cx.notify());
         let mut this = Self {
             store,
+            detail,
             watched: None,
             watch_subs: Vec::new(),
             _store_sub: store_sub,
+            _detail_sub: detail_sub,
         };
         this.rewatch(cx);
         this
@@ -89,16 +99,10 @@ impl Render for CompetitionToolbar {
 
         let doc = doc.read(cx);
         let meta = doc.metadata().read(cx).meta().clone();
-        let save = doc.save_state();
-        let conflicts = conflict_count(doc, cx);
         let locale = cx.global::<Locale>().clone();
 
-        let (save_label, save_tone) = match &save {
-            SaveState::Saved => (locale.t("toolbar.save-state-saved"), ChipTone::Ok),
-            SaveState::Dirty => (locale.t("toolbar.save-state-dirty"), ChipTone::Neutral),
-            SaveState::Saving => (locale.t("toolbar.save-state-saving"), ChipTone::Neutral),
-            SaveState::Error(_) => (locale.t("toolbar.save-state-error"), ChipTone::Critical),
-        };
+        let has_table = self.detail.read(cx).has_table_selection();
+        let label = |key: &str| cx.t(&format!("detail.toolbar-{key}"));
 
         row.child(OrgEmblem::new(meta.organization))
             .child(
@@ -120,32 +124,83 @@ impl Render for CompetitionToolbar {
                             .text_size(px(11.))
                             .text_color(c.muted_foreground)
                             .truncate()
-                            .child(secondary_line(&meta)),
+                            .child(format!(
+                                "{} · {}",
+                                secondary_line(&meta),
+                                meeting_label(&meta.meeting_times, &locale)
+                            )),
                     ),
             )
-            .child(Chip::new(meeting_label(&meta.meeting_times, &locale)).mono())
-            .children((conflicts > 0).then(|| {
-                Chip::new(locale.t_plural("toolbar.conflicts", conflicts as i64, &[]))
-                    .tone(ChipTone::Critical)
-            }))
-            .child(Chip::new(save_label).tone(save_tone))
+            .child(
+                ToolbarGroup::new("toolbar-tables")
+                    .child(action(
+                        "toolbar-add-table",
+                        Icon::Plus,
+                        label("add-table"),
+                        false,
+                        || Box::new(AddJudgingTable),
+                    ))
+                    .child(action(
+                        "toolbar-duplicate",
+                        Icon::Copy,
+                        label("duplicate"),
+                        !has_table,
+                        || Box::new(DuplicateJudgingTable),
+                    ))
+                    .child(action(
+                        "toolbar-delete",
+                        Icon::Trash,
+                        label("delete"),
+                        !has_table,
+                        || Box::new(DeleteJudgingTable),
+                    )),
+            )
+            .child(
+                ToolbarGroup::new("toolbar-competition")
+                    .child(action(
+                        "toolbar-settings",
+                        Icon::Settings,
+                        label("settings"),
+                        false,
+                        || Box::new(CompetitionSettings),
+                    ))
+                    .child(action(
+                        "toolbar-preview",
+                        Icon::Preview,
+                        label("preview"),
+                        false,
+                        || Box::new(TogglePreview),
+                    )),
+            )
+            .child(
+                ToolbarGroup::new("toolbar-export").prominent().child(
+                    action(
+                        "toolbar-export",
+                        Icon::Export,
+                        label("export"),
+                        false,
+                        || Box::new(ExportCompetition),
+                    )
+                    .foreground(c.primary_foreground),
+                ),
+            )
     }
 }
 
-/// Total judge double-bookings across both phases (drives the toolbar badge).
-fn conflict_count(doc: &CompetitionDocument, cx: &gpui::App) -> usize {
-    [doc.qualification(), doc.finale()]
-        .into_iter()
-        .map(|round| {
-            let round = round.read(cx);
-            let tables: Vec<JudgingTable> = round
-                .tables()
-                .iter()
-                .map(|editor| editor.read(cx).table().clone())
-                .collect();
-            model::detect_phase(&tables, round.spare_judges()).len()
-        })
-        .sum()
+/// One icon-only toolbar button: dispatches `action` (the same command the
+/// menu bar runs), with a tooltip as its accessible name.
+fn action(
+    id: &'static str,
+    icon: Icon,
+    label: gpui::SharedString,
+    disabled: bool,
+    action: impl Fn() -> Box<dyn gpui::Action> + 'static,
+) -> Button {
+    Button::icon(id, icon)
+        .oval()
+        .tooltip(label)
+        .disabled(disabled)
+        .on_click(move |_, window, cx| window.dispatch_action(action(), cx))
 }
 
 fn secondary_line(meta: &CompetitionMeta) -> String {

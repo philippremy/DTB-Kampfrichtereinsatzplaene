@@ -133,7 +133,13 @@ mod mac {
     struct GlassEntry {
         backing: Retained<NSBox>,
         glass: Retained<NSGlassEffectView>,
+        /// Standalone glass sits in a clipping wrapper, so its drop shadow
+        /// can't spill past the region into the transparent gpui area beside
+        /// it (the toolbar band) — where nothing would hide it.
+        clip: Option<Retained<NSView>>,
         last: GlassRegion,
+        /// Whether the views are currently shown (vs. hidden for an absent region).
+        shown: bool,
     }
 
     /// The glass tier's native views.
@@ -143,6 +149,11 @@ mod mac {
         container: Retained<NSView>,
         /// The container's `contentView`; the glass views are its subviews.
         holder: Retained<NSView>,
+        /// Holds the glass that stands outside the container (the sidebar).
+        direct_holder: Retained<NSView>,
+        /// Sits *below* the container: every region's flat backing fill, so a
+        /// backing (the toolbar band) can never cover another region's glass.
+        backing_holder: Retained<NSView>,
         views: HashMap<&'static str, GlassEntry>,
     }
 
@@ -221,7 +232,11 @@ mod mac {
             if let Some(state) = s.borrow_mut().take() {
                 match &state.kind {
                     Kind::Vibrancy(view) => view.removeFromSuperview(),
-                    Kind::Glass(host) => host.container.removeFromSuperview(),
+                    Kind::Glass(host) => {
+                        host.container.removeFromSuperview();
+                        host.direct_holder.removeFromSuperview();
+                        host.backing_holder.removeFromSuperview();
+                    }
                 }
                 debug!("native backdrop removed");
             }
@@ -253,10 +268,14 @@ mod mac {
 
             // No implicit Core Animation motion on any of this.
             begin_no_actions();
-            for (id, entry) in host.views.iter() {
-                if !regions.contains_key(id) {
+            for (id, entry) in host.views.iter_mut() {
+                if entry.shown && !regions.contains_key(id) {
                     entry.backing.setHidden(true);
                     entry.glass.setHidden(true);
+                    if let Some(clip) = &entry.clip {
+                        clip.setHidden(true);
+                    }
+                    entry.shown = false;
                 }
             }
             for (id, region) in regions {
@@ -268,48 +287,63 @@ mod mac {
                     backing.setBorderWidth(0.0);
                     backing.setCornerRadius(0.0);
                     let glass = NSGlassEffectView::initWithFrame(mtm.alloc(), frame);
-                    host.holder.addSubview(&backing);
-                    host.holder.addSubview(&glass);
+                    host.backing_holder.addSubview(&backing);
+                    let clip = if region.contained {
+                        host.holder.addSubview(&glass);
+                        None
+                    } else {
+                        let clip = NSView::initWithFrame(mtm.alloc(), frame);
+                        clip.setClipsToBounds(true);
+                        clip.addSubview(&glass);
+                        host.direct_holder.addSubview(&clip);
+                        Some(clip)
+                    };
                     host.views.insert(
                         id,
                         GlassEntry {
                             backing,
                             glass,
+                            clip,
                             // Forces the first full apply below.
-                            last: GlassRegion {
-                                bounds: gpui::Bounds::default(),
-                                ..*region
-                            },
+                            last: *region,
+                            // Not shown yet, so the first pass below applies it.
+                            shown: false,
                         },
                     );
-                    // A brand-new pair must be applied even if `region` equals
-                    // the placeholder.
-                    if let Some(e) = host.views.get(id) {
-                        e.backing.setHidden(true);
-                    }
                 }
                 let entry = host.views.get_mut(id).expect("just inserted");
-                let unchanged = entry.last == *region && !entry.glass.isHidden();
-                if unchanged {
+                if entry.shown && entry.last == *region {
                     continue;
                 }
                 let frame = ns_frame(region);
                 let mask = edge_mask(region, size);
-                for view in [&*entry.backing as &NSView, &*entry.glass as &NSView] {
+                // The view that carries the region's frame: the clip wrapper for
+                // standalone glass, else the glass itself.
+                let root: &NSView = entry.clip.as_deref().unwrap_or(&entry.glass);
+                for view in [&*entry.backing as &NSView, root] {
                     if view.frame() != frame {
                         view.setFrame(frame);
                     }
                     if view.autoresizingMask() != mask {
                         view.setAutoresizingMask(mask);
                     }
-                    view.setHidden(false);
+                }
+                if let Some(clip) = &entry.clip {
+                    clip.setHidden(false);
+                    // Inside the wrapper the glass simply fills it.
+                    let inner = NSRect::new(NSPoint::new(0.0, 0.0), frame.size);
+                    if entry.glass.frame() != inner {
+                        entry.glass.setFrame(inner);
+                    }
+                    entry.glass.setAutoresizingMask(fill_mask());
                 }
                 entry.backing.setHidden(region.backing.a <= 0.0);
                 entry.backing.setFillColor(&ns_color(region.backing));
 
+                entry.glass.setHidden(region.style.is_none());
                 entry.glass.setStyle(match region.style {
-                    GlassStyle::Regular => NSGlassEffectViewStyle::Regular,
-                    GlassStyle::Clear => NSGlassEffectViewStyle::Clear,
+                    Some(GlassStyle::Clear) => NSGlassEffectViewStyle::Clear,
+                    _ => NSGlassEffectViewStyle::Regular,
                 });
                 entry
                     .glass
@@ -320,6 +354,7 @@ mod mac {
                         .as_deref(),
                 );
                 entry.last = *region;
+                entry.shown = true;
             }
             end_no_actions();
         });
@@ -410,9 +445,27 @@ mod mac {
         }
         container.setAutoresizingMask(fill_mask());
         content.addSubview_positioned_relativeTo(&container, NSWindowOrderingMode::Below, None);
+        let backing_holder = FlippedView::new(mtm, frame).into_super();
+        backing_holder.setAutoresizingMask(fill_mask());
+        content.addSubview_positioned_relativeTo(
+            &backing_holder,
+            NSWindowOrderingMode::Below,
+            None,
+        );
+        let direct_holder = FlippedView::new(mtm, frame).into_super();
+        direct_holder.setAutoresizingMask(fill_mask());
+        // Just above the backing layer (bottom → top: backings, standalone
+        // glass, the container).
+        content.addSubview_positioned_relativeTo(
+            &direct_holder,
+            NSWindowOrderingMode::Above,
+            Some(&backing_holder),
+        );
         Some(GlassHost {
             container,
             holder,
+            direct_holder,
+            backing_holder,
             views: HashMap::new(),
         })
     }

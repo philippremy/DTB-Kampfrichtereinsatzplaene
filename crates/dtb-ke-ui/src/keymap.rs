@@ -221,6 +221,7 @@ pub fn defaults() -> Vec<Binding> {
         ),
         // -- window ------------------------------------------------------------
         binding!(window::TogglePreview, All("secondary-shift-v"), true),
+        binding!(window::ToggleSidebar, All("secondary-alt-s"), true),
         // Was `All("fn-f")` — macOS's own fullscreen chord, but "fn" isn't a
         // real modifier on Windows/Linux, leaving no keyboard way at all to
         // exit fullscreen there once the OS-drawn min/max/close buttons are

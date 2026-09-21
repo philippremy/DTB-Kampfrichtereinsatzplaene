@@ -106,6 +106,8 @@ pub mod window {
         [
             /// Open or close the preview window.
             TogglePreview,
+            /// Show or hide the competition sidebar.
+            ToggleSidebar,
             /// Enter or leave fullscreen.
             ToggleFullscreen,
             /// Minimise the focused window.

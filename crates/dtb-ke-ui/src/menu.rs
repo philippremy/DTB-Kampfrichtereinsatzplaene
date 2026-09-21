@@ -293,6 +293,7 @@ fn window_menu(state: MenuState, locale: &Locale) -> Menu {
     };
     Menu::new(locale.t("menu.window.title")).items(vec![
         MenuItem::action(preview_label, window::TogglePreview),
+        MenuItem::action(locale.t("actions.window::ToggleSidebar"), window::ToggleSidebar),
         MenuItem::action(fullscreen_label, window::ToggleFullscreen),
         MenuItem::separator(),
         MenuItem::action(locale.t("actions.window::Minimize"), window::Minimize),

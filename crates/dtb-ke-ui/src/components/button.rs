@@ -54,6 +54,9 @@ pub struct Button {
     size: ButtonSize,
     disabled: bool,
     round: bool,
+    oval: bool,
+    tooltip: Option<SharedString>,
+    foreground: Option<Hsla>,
     on_click: Option<ClickHandler>,
 }
 
@@ -67,6 +70,9 @@ impl Button {
             size: ButtonSize::default(),
             disabled: false,
             round: false,
+            oval: false,
+            tooltip: None,
+            foreground: None,
             on_click: None,
         }
     }
@@ -81,6 +87,9 @@ impl Button {
             size: ButtonSize::default(),
             disabled: false,
             round: false,
+            oval: false,
+            tooltip: None,
+            foreground: None,
             on_click: None,
         }
     }
@@ -102,6 +111,28 @@ impl Button {
 
     pub fn leading_icon(mut self, icon: Icon) -> Self {
         self.leading = Some(icon);
+        self
+    }
+
+    /// A hover tooltip — give every icon-only button one (it is also its
+    /// accessible name).
+    pub fn tooltip(mut self, label: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(label.into());
+        self
+    }
+
+    /// Overrides the label / icon colour (e.g. on an accent-filled surface).
+    pub fn foreground(mut self, color: Hsla) -> Self {
+        self.foreground = Some(color);
+        self
+    }
+
+    /// An icon-only button drawn as an oval rather than a circle: same icon,
+    /// a little less padding above and below, more at the sides. Implies
+    /// [`Self::round`]. For buttons inside a toolbar capsule.
+    pub fn oval(mut self) -> Self {
+        self.round = true;
+        self.oval = true;
         self
     }
 
@@ -175,6 +206,13 @@ impl RenderOnce for Button {
             ),
         };
 
+        let fg = self.foreground.unwrap_or(fg);
+        // An oval icon button is shorter than a round one and wider than tall.
+        let (height, width) = if self.oval && icon_only {
+            (px(28.), px(36.))
+        } else {
+            (height, height)
+        };
         let mut el = div()
             .id(self.id)
             .flex()
@@ -190,8 +228,12 @@ impl RenderOnce for Button {
             .bg(fill)
             .text_color(fg)
             .text_size(text_size)
-            .when(icon_only, |el| el.w(height))
+            .when(icon_only, |el| el.w(width))
             .when(!icon_only, |el| el.px(pad_x));
+
+        if let Some(label) = self.tooltip {
+            el = el.tooltip(crate::components::tooltip::text_tooltip(label));
+        }
 
         if self.disabled {
             el = el.opacity(0.45);

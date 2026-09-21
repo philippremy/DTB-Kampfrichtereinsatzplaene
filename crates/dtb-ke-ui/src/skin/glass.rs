@@ -38,12 +38,17 @@ pub enum GlassStyle {
 pub struct GlassRegion {
     /// Window-relative bounds, top-left origin (gpui's space).
     pub bounds: Bounds<Pixels>,
-    pub style: GlassStyle,
+    /// `None` = no glass, only the [`Self::backing`] fill (the toolbar band).
+    pub style: Option<GlassStyle>,
     pub corner_radius: Pixels,
     /// Tints the glass itself (alpha = strength; `a == 0.0` = untinted).
     pub tint: Hsla,
     /// Fill placed behind the glass (`a == 0.0` = none).
     pub backing: Hsla,
+    /// Whether the glass joins the shared container (nearby shapes merge and
+    /// render together) or stands alone. Large surfaces stand alone: merged
+    /// into the container they enlarged the capsules' shadows.
+    pub contained: bool,
 }
 
 /// What a surface *is*; maps to a style + shape so views don't pick raw
@@ -52,18 +57,38 @@ pub struct GlassRegion {
 pub enum GlassRole {
     /// The full-height navigation sidebar (edge-to-edge, square corners).
     Sidebar,
+    /// The toolbar band: no glass of its own, just the opaque content colour
+    /// *behind* the capsules that float on it. It exists because native views
+    /// sit under gpui — the band's gpui pixels must stay transparent for the
+    /// capsules to show, so the flat colour has to come from below too.
+    ToolbarBand,
+    /// A group of toolbar controls in one capsule.
+    Capsule,
+    /// The one primary toolbar action — accent-tinted capsule.
+    CapsuleProminent,
 }
 
 impl GlassRole {
-    fn style(self) -> GlassStyle {
+    fn style(self) -> Option<GlassStyle> {
         match self {
-            GlassRole::Sidebar => GlassStyle::Regular,
+            GlassRole::ToolbarBand => None,
+            GlassRole::Sidebar | GlassRole::Capsule | GlassRole::CapsuleProminent => {
+                Some(GlassStyle::Regular)
+            }
         }
     }
 
-    fn corner_radius(self) -> Pixels {
+    fn contained(self) -> bool {
+        !matches!(self, GlassRole::Sidebar)
+    }
+
+    /// Capsules are fully rounded, whatever size they lay out to.
+    fn corner_radius(self, bounds: Bounds<Pixels>) -> Pixels {
         match self {
-            GlassRole::Sidebar => px(0.),
+            GlassRole::Sidebar | GlassRole::ToolbarBand => px(0.),
+            GlassRole::Capsule | GlassRole::CapsuleProminent => {
+                bounds.size.width.min(bounds.size.height) / 2.0
+            }
         }
     }
 
@@ -81,8 +106,24 @@ impl GlassRole {
             (true, Some(a)) => a,
             _ => skin.glass_backing_opacity,
         };
+        let none = Hsla { a: 0.0, ..chrome };
         match self {
             GlassRole::Sidebar => (Hsla { a: tint, ..chrome }, Hsla { a: backing, ..chrome }),
+            GlassRole::ToolbarBand => (
+                none,
+                Hsla {
+                    a: 1.0,
+                    ..theme.color.background
+                },
+            ),
+            GlassRole::Capsule => (none, none),
+            GlassRole::CapsuleProminent => (
+                Hsla {
+                    a: 0.9,
+                    ..theme.color.primary
+                },
+                none,
+            ),
         }
     }
 }
@@ -107,9 +148,10 @@ pub fn region(id: &'static str, role: GlassRole) -> impl IntoElement {
                         GlassRegion {
                             bounds,
                             style: role.style(),
-                            corner_radius: role.corner_radius(),
+                            corner_radius: role.corner_radius(bounds),
                             tint,
                             backing,
+                            contained: role.contained(),
                         },
                     );
                 });
@@ -140,3 +182,10 @@ pub fn end_frame() -> impl IntoElement {
 
 /// The regions type the backdrop consumes.
 pub(super) type Regions = Frame;
+
+/// Whether glass regions are being drawn natively right now (macOS 26+ and
+/// not "Reduce Transparency"). Components use it to choose between a
+/// transparent surface (the native glass shows through) and their token fill.
+pub fn active() -> bool {
+    super::backdrop::glass_active()
+}

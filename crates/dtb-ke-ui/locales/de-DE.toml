@@ -388,6 +388,7 @@ label = "Anmerkungen"
 [sidebar]
 "search-placeholder" = "Wettkampf suchen …"
 "duplicate-competition-label" = "{name} (Kopie)"
+"save-error-tooltip" = "Speichern fehlgeschlagen: {error}"
 "context-delete" = "Löschen"
 "context-duplicate" = "Duplizieren"
 "context-export" = "Exportieren …"
@@ -405,6 +406,7 @@ label = "Anmerkungen"
 "new-competition-button" = "Neuer Wettkampf"
 
 [toolbar]
+"toggle-sidebar" = "Seitenleiste ein-/ausblenden"
 "no-selection" = "Kein Wettkampf ausgewählt"
 "new-competition-button" = "Neuer Wettkampf"
 "save-state-saved" = "Gespeichert"
@@ -486,6 +488,7 @@ lock = "Sperren (System)"
 "edit::DuplicateJudgingTable" = "Kampfgericht duplizieren"
 "edit::DeleteJudgingTable" = "Kampfgericht löschen"
 
+"window::ToggleSidebar" = "Seitenleiste ein-/ausblenden"
 "window::Minimize" = "Minimieren"
 
 "help::ReportBug" = "Bug melden"

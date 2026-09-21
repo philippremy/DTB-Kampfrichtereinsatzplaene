@@ -388,6 +388,7 @@ label = "Remarks"
 [sidebar]
 "search-placeholder" = "Search competitions …"
 "duplicate-competition-label" = "{name} (Copy)"
+"save-error-tooltip" = "Saving failed: {error}"
 "context-delete" = "Delete"
 "context-duplicate" = "Duplicate"
 "context-export" = "Export …"
@@ -405,6 +406,7 @@ label = "Remarks"
 "new-competition-button" = "New Competition"
 
 [toolbar]
+"toggle-sidebar" = "Show/Hide Sidebar"
 "no-selection" = "No competition selected"
 "new-competition-button" = "New Competition"
 "save-state-saved" = "Saved"
@@ -486,6 +488,7 @@ lock = "Lock (System)"
 "edit::DuplicateJudgingTable" = "Duplicate Judging Table"
 "edit::DeleteJudgingTable" = "Delete Judging Table"
 
+"window::ToggleSidebar" = "Show/Hide Sidebar"
 "window::Minimize" = "Minimize"
 
 "help::ReportBug" = "Report a Bug"
