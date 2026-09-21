@@ -31,9 +31,13 @@ use crate::theme::{ActiveTheme, Theme, WindowMaterial};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Effective {
     Opaque,
-    /// A real blur — macOS's native compositor blur, or Windows' Acrylic
-    /// blur-behind fallback when Mica isn't available.
+    /// A real blur — Windows' Acrylic blur-behind fallback when Mica isn't
+    /// available.
     Blurred,
+    /// macOS: a transparent gpui window over our own stock
+    /// `NSVisualEffectView` ([`crate::skin::backdrop`]). The system material
+    /// carries its own tint, so our chrome paints no fill of its own.
+    Native,
     Mica,
     MicaAlt,
 }
@@ -47,6 +51,7 @@ fn effective(theme: &Theme, cx: &App) -> Effective {
     }
     match theme.skin.material {
         WindowMaterial::Opaque => Effective::Opaque,
+        WindowMaterial::Blurred if crate::skin::backdrop::available() => Effective::Native,
         WindowMaterial::Blurred => Effective::Blurred,
         WindowMaterial::Mica => match crate::skin::window::windows_backdrop_support() {
             WindowsBackdropSupport::Mica => Effective::Mica,
@@ -91,6 +96,7 @@ pub fn window_background(theme: &Theme, cx: &App) -> WindowBackgroundAppearance 
     match effective(theme, cx) {
         Effective::Opaque => WindowBackgroundAppearance::Opaque,
         Effective::Blurred => WindowBackgroundAppearance::Blurred,
+        Effective::Native => WindowBackgroundAppearance::Transparent,
         Effective::Mica => WindowBackgroundAppearance::MicaBackdrop,
         Effective::MicaAlt => WindowBackgroundAppearance::MicaAltBackdrop,
     }
@@ -104,12 +110,26 @@ pub fn window_background(theme: &Theme, cx: &App) -> WindowBackgroundAppearance 
 /// backdrop itself — that needs this explicit per-window call.
 pub fn apply_background_to_all_windows(cx: &mut App) {
     for handle in cx.windows() {
+        let is_main = crate::app::is_main_window(handle);
         let _ = handle.update(cx, |_, window, cx| {
             let appearance = window_background(cx.theme(), cx);
             window.set_background_appearance(appearance);
+            if is_main {
+                sync_native_backdrop(window, cx);
+            }
         });
     }
     cx.refresh_windows();
+}
+
+/// Installs or removes the main window's native backdrop to match
+/// [`effective`] — a no-op off macOS, where nothing resolves to `Native`.
+pub fn sync_native_backdrop(window: &gpui::Window, cx: &App) {
+    if effective(cx.theme(), cx) == Effective::Native {
+        crate::skin::backdrop::install(window, cx.theme().mode);
+    } else {
+        crate::skin::backdrop::remove();
+    }
 }
 
 fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
@@ -133,6 +153,7 @@ fn chrome_like_fill(theme: &Theme, cx: &App) -> Hsla {
     match effective(theme, cx) {
         Effective::Opaque => theme.color.chrome,
         Effective::Blurred => with_alpha(theme.color.chrome, theme.skin.material_opacity_for(true)),
+        Effective::Native => gpui::transparent_black(),
         Effective::Mica | Effective::MicaAlt => {
             with_alpha(theme.color.chrome, theme.skin.material_opacity_for(false))
         }

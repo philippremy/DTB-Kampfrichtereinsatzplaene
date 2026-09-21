@@ -2156,6 +2156,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "raw-window-handle",
  "rayon",
  "self_update",
  "serde",

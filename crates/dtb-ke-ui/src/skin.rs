@@ -6,6 +6,7 @@
 //! proposal.
 
 pub mod accent;
+pub mod backdrop;
 pub mod decorations;
 pub mod menu;
 pub mod titlebar;

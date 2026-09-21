@@ -56,6 +56,9 @@ rayon = { version = "1.12" }
 # version tracks the copy Typst/gpui already pull in)
 resvg = { version = "0.47" }
 
+# `skin/backdrop.rs` reaches gpui's `NSView` through its `HasWindowHandle` impl.
+raw-window-handle = { version = "0.6", default-features = false }
+
 # macOS save-panel FFI (matches gpui's objc2 pin)
 block2 = { version = "0.6" }
 objc2 = { version = "0.6" }
@@ -67,6 +70,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     # `skin/accent.rs`'s system-accent-colour read + `NSAppearance`-scoped
     # resolution.
     "NSColor", "NSColorSpace", "NSAppearance", "objc2-core-foundation", "block2",
+    # `skin/backdrop.rs`'s native window backdrop.
+    "NSVisualEffectView",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSString", "NSURL", "NSArray", "NSObject", "NSGeometry",

@@ -186,6 +186,7 @@ impl Theme {
             theme.appearance
         );
         theme.bridge_to_base(cx);
+        crate::skin::backdrop::set_mode(mode);
         cx.set_global(theme);
         cx.refresh_windows();
     }

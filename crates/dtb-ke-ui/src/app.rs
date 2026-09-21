@@ -1013,7 +1013,19 @@ pub fn open_main_window(cx: &mut App) {
     info!("opening the main window");
     let options = skin_window::main_window_options(cx);
     match cx.open_window(options, |window, cx| cx.new(|cx| AppShell::new(window, cx))) {
-        Ok(handle) => MAIN_WINDOW.with(|m| *m.borrow_mut() = Some(handle.into())),
+        Ok(handle) => {
+            MAIN_WINDOW.with(|m| *m.borrow_mut() = Some(handle.into()));
+            handle
+                .update(cx, |_, window, cx| {
+                    material::sync_native_backdrop(window, cx)
+                })
+                .ok();
+        }
         Err(err) => error!("failed to open the main window: {err}"),
     }
+}
+
+/// Whether `handle` is the main window (the only one with a native backdrop).
+pub fn is_main_window(handle: AnyWindowHandle) -> bool {
+    MAIN_WINDOW.with(|m| *m.borrow() == Some(handle))
 }
