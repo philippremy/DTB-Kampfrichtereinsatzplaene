@@ -20,8 +20,8 @@ use uuid::Uuid;
 use crate::actions::app::CheckForUpdates;
 use crate::actions::edit::{DeleteJudgingTable, DuplicateJudgingTable, Redo, Undo};
 use crate::actions::file::{
-    AddJudgingTable, CloseWindow, CompetitionSettings, ExportAll, ExportCompetition,
-    ImportCompetition, NewCompetition, ShowTrash,
+    AddJudgingTable, CloseWindow, CompetitionSettings, DeleteCompetitions, ExportAll,
+    ExportCompetition, ImportCompetition, NewCompetition, ShowTrash,
 };
 use crate::actions::window::{Minimize, ToggleFullscreen, TogglePreview};
 use crate::components::button::Button;
@@ -30,7 +30,7 @@ use crate::components::menu_bar::MenuBar;
 use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
 use crate::material;
-use crate::menu::{self, MenuState};
+use crate::menu::{self, DbStatus, MenuState};
 use crate::preview::{self, PreviewWindow};
 use crate::save::{self, ExportFormat, SaveChoice};
 use crate::sidebar::{SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_SNAP, SIDEBAR_WIDTH, Sidebar};
@@ -354,6 +354,12 @@ impl AppShell {
             can_redo,
             fullscreen: window.is_fullscreen(),
             preview_open: self.preview_window.is_some(),
+            db_status: match self.store.read(cx).status() {
+                store::Status::Connecting => DbStatus::Connecting,
+                store::Status::Ready => DbStatus::Ready,
+                store::Status::Failed(_) => DbStatus::Failed,
+            },
+            competition_count: self.store.read(cx).summaries().len(),
         };
         if self.last_menu_state != Some(state) {
             self.last_menu_state = Some(state);
@@ -609,10 +615,19 @@ impl AppShell {
         .detach();
     }
 
-    fn title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The toolbar band at the top of the **content column** (the sidebar runs
+    /// the full window height beside it, so the toolbar starts after it).
+    /// With the sidebar collapsed on macOS the traffic lights float over this
+    /// row's leading edge, so it keeps the OS inset then.
+    fn toolbar_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bar_height = theme.skin.title_bar_height_px();
-        let (fill, border) = (material::chrome_fill(theme, cx), theme.color.border);
+        let (fill, border) = (material::toolbar_fill(theme, cx), theme.color.border);
+        let leading = if self.sidebar_collapsed {
+            titlebar::content_leading_inset(window)
+        } else {
+            px(12.)
+        };
 
         // Window drag / maximize / the min-max-close controls live on
         // `menu_bar_row` under CSD (Linux) — not here. They used to sit at the
@@ -625,7 +640,7 @@ impl AppShell {
             .items_center()
             .gap(px(8.))
             .h(bar_height)
-            .pl(titlebar::content_leading_inset(window))
+            .pl(leading)
             .pr(px(12.))
             .bg(fill)
             .border_b_1()
@@ -768,15 +783,29 @@ impl AppShell {
     /// [`SIDEBAR_MIN`]…[`SIDEBAR_MAX`]); releasing the handle below
     /// [`SIDEBAR_SNAP`] snaps it to hidden. When hidden, the detail pane fills
     /// the width and a short fade plays when it comes back.
-    fn body(&self, content_fill: gpui::Hsla, cx: &mut Context<Self>) -> impl IntoElement {
+    fn body(
+        &mut self,
+        window: &mut Window,
+        content_fill: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let row = div().flex().flex_1().min_h(px(0.));
 
+        // The content column: toolbar band on top, detail beneath.
         let detail = div()
             .flex()
+            .flex_col()
             .size_full()
             .min_w(px(0.))
             .bg(content_fill)
-            .child(self.detail.clone());
+            .child(self.toolbar_row(window, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(self.detail.clone()),
+            );
 
         if self.sidebar_collapsed {
             return row.child(detail).into_any_element();
@@ -899,6 +928,10 @@ impl Render for AppShell {
                     this.detail
                         .update(cx, |detail, cx| detail.open_meta_dialog(window, cx));
                 }))
+                .on_action(cx.listener(|this, _: &DeleteCompetitions, window, cx| {
+                    this.sidebar
+                        .update(cx, |sidebar, cx| sidebar.request_delete_selection(window, cx));
+                }))
                 .on_action(cx.listener(Self::handle_export))
                 // ExportPdf / ExportDocx have no handler yet → stay greyed.
             })
@@ -918,8 +951,7 @@ impl Render for AppShell {
             .when(skin_menu::in_app(cx), |el| {
                 el.child(self.menu_bar_row(window, cx))
             })
-            .child(self.title_bar(window, cx))
-            .child(self.body(content_fill, cx))
+            .child(self.body(window, content_fill, cx))
             .children(self.updater_toast(cx));
 
         // Client-side decorations (Linux): wrap in the frame chrome + resize

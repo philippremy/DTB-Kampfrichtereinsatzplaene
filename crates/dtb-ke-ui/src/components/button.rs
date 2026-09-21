@@ -53,6 +53,7 @@ pub struct Button {
     tone: ButtonTone,
     size: ButtonSize,
     disabled: bool,
+    round: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -65,6 +66,7 @@ impl Button {
             tone: ButtonTone::default(),
             size: ButtonSize::default(),
             disabled: false,
+            round: false,
             on_click: None,
         }
     }
@@ -78,6 +80,7 @@ impl Button {
             tone: ButtonTone::Ghost,
             size: ButtonSize::default(),
             disabled: false,
+            round: false,
             on_click: None,
         }
     }
@@ -99,6 +102,12 @@ impl Button {
 
     pub fn leading_icon(mut self, icon: Icon) -> Self {
         self.leading = Some(icon);
+        self
+    }
+
+    /// Fully rounded (a circle for an icon-only button, a capsule otherwise).
+    pub fn round(mut self) -> Self {
+        self.round = true;
         self
     }
 
@@ -174,7 +183,8 @@ impl RenderOnce for Button {
             .justify_center()
             .gap(gap)
             .h(height)
-            .rounded(theme.skin.radius_control_px())
+            .when(self.round, |el| el.rounded_full())
+            .when(!self.round, |el| el.rounded(theme.skin.radius_control_px()))
             .border_1()
             .border_color(border)
             .bg(fill)

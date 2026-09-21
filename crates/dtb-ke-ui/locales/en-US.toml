@@ -3,6 +3,9 @@ tag = "en-US"
 name = "English (US)"
 
 [menu.file]
+"db-connecting" = "Connecting to database …"
+"db-ready" = "Database connected"
+"db-failed" = "Database error"
 title = "File"
 
 [menu.edit]
@@ -395,10 +398,6 @@ label = "Remarks"
 "delete-confirm-detail" = "The selected competitions will be moved to the trash."
 "delete-confirm-delete-button" = "Delete"
 "delete-confirm-cancel-button" = "Cancel"
-"select-button" = "Select"
-"done-button" = "Done"
-"selected-count" = "{n} selected"
-"delete-button" = "Delete"
 "competition-count_one" = "{n} competition"
 "competition-count_other" = "{n} competitions"
 "empty-state" = "No competitions yet"
@@ -476,6 +475,7 @@ lock = "Lock (System)"
 "file::ImportCompetition" = "Import Competition …"
 "file::ExportAll" = "Back Up Entire Database …"
 "file::ShowTrash" = "Show Trash …"
+"file::DeleteCompetitions" = "Delete Competitions …"
 "file::CloseWindow" = "Close Window"
 
 "edit::Undo" = "Undo"

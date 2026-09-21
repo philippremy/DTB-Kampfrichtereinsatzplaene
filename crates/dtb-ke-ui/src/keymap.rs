@@ -124,6 +124,15 @@ pub fn defaults() -> Vec<Binding> {
         binding!(file::AddJudgingTable, All("secondary-shift-n"), true),
         binding!(file::CompetitionSettings, All("secondary-shift-,"), true),
         binding!(
+            file::DeleteCompetitions,
+            Split {
+                mac: "cmd-backspace",
+                other: "ctrl-delete"
+            },
+            true,
+            Some("!Input")
+        ),
+        binding!(
             file::ExportCompetition,
             Split {
                 mac: "cmd-e",

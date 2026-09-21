@@ -1,14 +1,18 @@
-//! The navigation sidebar: a search field, then competitions grouped by year.
+//! The navigation sidebar: competitions grouped by year, with the search field
+//! and the "add" button along the bottom.
 //!
-//! A **multi-select mode** (toggled explicitly) replaces row selection with
-//! checkboxes and a bulk-delete action.
+//! Selection is Finder-style: a click selects one competition (and shows it in
+//! the detail pane), Cmd/Ctrl-click adds or removes one, Shift-click selects
+//! the range from the last plain/Cmd-clicked row. The most recently clicked
+//! competition is the one the detail pane shows; "Löschen" (context menu and
+//! File menu) acts on the whole selection.
 
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::FontWeight;
 use gpui::{
-    App, AppContext, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
+    App, AppContext, ClickEvent, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Size,
     StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
     size,
@@ -19,9 +23,10 @@ use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
 use crate::components::button::{Button, ButtonTone};
+use crate::skin::titlebar;
 use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
 use crate::components::field::Field;
-use crate::components::focus::selection_fill;
+use crate::components::focus::sidebar_selection_fill;
 use crate::components::icon::Icon;
 use crate::i18n::ActiveLocale;
 use crate::material;
@@ -52,9 +57,11 @@ const SB_COMP_H: f32 = 42.0;
 pub struct Sidebar {
     store: Entity<AppStore>,
     search: Entity<InputState>,
-    /// Bulk-selection mode — entered / left explicitly via the toolbar buttons.
-    multi_select: bool,
-    checked: HashSet<Uuid>,
+    /// Every selected competition. Always contains the store's selected
+    /// competition (see [`Self::reconcile`]).
+    selection: HashSet<Uuid>,
+    /// Where a Shift-click range starts: the last plain- or Cmd-clicked row.
+    anchor: Option<Uuid>,
     list_scroll: VirtualListScrollHandle,
     /// The row context menu currently open, if any — the competition id and
     /// the window-absolute point (the right-click) to anchor the popover at.
@@ -77,7 +84,10 @@ impl Sidebar {
         let placeholder = cx.t("sidebar.search-placeholder");
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let subs = vec![
-            cx.observe(&store, |_, _, cx| cx.notify()),
+            cx.observe(&store, |this, _, cx| {
+                this.reconcile(cx);
+                cx.notify();
+            }),
             cx.subscribe_in(
                 &search,
                 window,
@@ -92,8 +102,8 @@ impl Sidebar {
         Self {
             store,
             search,
-            multi_select: false,
-            checked: HashSet::new(),
+            selection: HashSet::new(),
+            anchor: None,
             list_scroll: VirtualListScrollHandle::new(),
             context_menu: None,
             on_export,
@@ -107,36 +117,99 @@ impl Sidebar {
         self.search.read(cx).value().trim().to_lowercase()
     }
 
-    fn enter_multi_select(&mut self, cx: &mut Context<Self>) {
-        self.multi_select = true;
-        self.checked.clear();
-        cx.notify();
-    }
-
-    fn exit_multi_select(&mut self, cx: &mut Context<Self>) {
-        self.multi_select = false;
-        self.checked.clear();
-        cx.notify();
-    }
-
-    fn toggle_check(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        if !self.checked.remove(&id) {
-            self.checked.insert(id);
+    /// Keeps [`Self::selection`] consistent with the store: drops competitions
+    /// that no longer exist, and resets to the store's selection when that was
+    /// changed from elsewhere (a new competition, an import, …).
+    fn reconcile(&mut self, cx: &App) {
+        let store = self.store.read(cx);
+        self.selection.retain(|id| store.contains(*id));
+        match store.selected_id() {
+            Some(selected) if !self.selection.contains(&selected) => {
+                self.selection.clear();
+                self.selection.insert(selected);
+                self.anchor = Some(selected);
+            }
+            None => self.selection.clear(),
+            _ => {}
         }
+    }
+
+    /// The listed competitions in display order, honouring the search filter.
+    fn visible_ids(&self, cx: &App) -> Vec<Uuid> {
+        let query = self.query(cx);
+        self.store
+            .read(cx)
+            .summaries()
+            .iter()
+            .filter(|s| query.is_empty() || s.name.to_lowercase().contains(&query))
+            .map(|s| s.id)
+            .collect()
+    }
+
+    /// Apply a click on a competition row, honouring Cmd/Ctrl (toggle) and
+    /// Shift (range).
+    fn click_row(&mut self, id: Uuid, modifiers: gpui::Modifiers, cx: &mut Context<Self>) {
+        if modifiers.shift {
+            let visible = self.visible_ids(cx);
+            let from = self.anchor.and_then(|a| visible.iter().position(|v| *v == a));
+            let to = visible.iter().position(|v| *v == id);
+            if let (Some(from), Some(to)) = (from, to) {
+                let (lo, hi) = (from.min(to), from.max(to));
+                if !modifiers.secondary() {
+                    self.selection.clear();
+                }
+                self.selection.extend(visible[lo..=hi].iter().copied());
+                self.store.update(cx, |store, cx| store.select(id, cx));
+                cx.notify();
+                return;
+            }
+        }
+        if modifiers.secondary() {
+            if self.selection.contains(&id) {
+                // Never empty the selection: the detail pane always shows one.
+                if self.selection.len() > 1 {
+                    self.selection.remove(&id);
+                    let visible = self.visible_ids(cx);
+                    let next = visible.into_iter().find(|v| self.selection.contains(v));
+                    if let Some(next) = next {
+                        self.anchor = Some(next);
+                        self.store.update(cx, |store, cx| store.select(next, cx));
+                    }
+                }
+            } else {
+                self.selection.insert(id);
+                self.anchor = Some(id);
+                self.store.update(cx, |store, cx| store.select(id, cx));
+            }
+            cx.notify();
+            return;
+        }
+        self.selection.clear();
+        self.selection.insert(id);
+        self.anchor = Some(id);
+        self.store.update(cx, |store, cx| store.select(id, cx));
         cx.notify();
     }
 
-    fn delete_checked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ids: Vec<Uuid> = self.checked.iter().copied().collect();
+    /// A right-click on a row outside the selection selects just that row
+    /// first (Finder behaviour); inside it, the whole selection stays.
+    fn prepare_context_menu(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        if !self.selection.contains(&id) {
+            self.selection.clear();
+            self.selection.insert(id);
+            self.anchor = Some(id);
+            self.store.update(cx, |store, cx| store.select(id, cx));
+        }
+    }
+
+    /// Confirm, then move every selected competition to the trash — the
+    /// File-menu "Löschen" and the context menu's entry.
+    pub fn request_delete_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<Uuid> = self.selection.iter().copied().collect();
         self.confirm_and_delete(ids, window, cx);
     }
 
-    fn delete_one(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        self.confirm_and_delete(vec![id], window, cx);
-    }
-
-    /// Confirm, then delete every id in `ids` — shared by the bulk-select
-    /// toolbar and a single row's context menu (`ids.len() == 1` picks the
+    /// Confirm, then delete every id in `ids` (`ids.len() == 1` picks the
     /// singular confirmation wording via `t_plural`).
     fn confirm_and_delete(&mut self, ids: Vec<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
         if ids.is_empty() {
@@ -157,7 +230,7 @@ impl Sidebar {
             cx,
         );
         let store = self.store.clone();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             if answer.await.unwrap_or(1) != 0 {
                 log::debug!("delete cancelled");
                 return;
@@ -167,7 +240,6 @@ impl Sidebar {
                 store.update(cx, |store, cx| store.delete_competitions(ids, cx));
             })
             .ok();
-            this.update(cx, |this, cx| this.exit_multi_select(cx)).ok();
         })
         .detach();
     }
@@ -201,7 +273,19 @@ impl Sidebar {
             })
         };
 
-        let items = vec![
+        let delete = ContextMenuItem::new("ctx-delete", cx.t("sidebar.context-delete"), Icon::Trash, {
+            let weak = weak.clone();
+            move |window: &mut Window, cx: &mut App| {
+                weak.update(cx, |this, cx| this.request_delete_selection(window, cx))
+                    .ok();
+            }
+        })
+        .danger();
+        // Everything but deleting acts on a single competition.
+        let items = if self.selection.len() > 1 {
+            vec![delete]
+        } else {
+        vec![
             ContextMenuItem::new("ctx-duplicate", cx.t("sidebar.context-duplicate"), Icon::Copy, {
                 let weak = weak.clone();
                 move |_window: &mut Window, cx: &mut App| {
@@ -225,93 +309,11 @@ impl Sidebar {
                 let on_preview = self.on_preview.clone();
                 move |window: &mut Window, cx: &mut App| on_preview(id, window, cx)
             }),
-            ContextMenuItem::new("ctx-delete", cx.t("sidebar.context-delete"), Icon::Trash, {
-                let weak = weak.clone();
-                move |window: &mut Window, cx: &mut App| {
-                    weak.update(cx, |this, cx| this.delete_one(id, window, cx))
-                        .ok();
-                }
-            })
-            .danger()
-            .separated(),
-        ];
+            delete.separated(),
+        ]
+        };
 
         Some(context_menu("sidebar-context-menu", position, items, on_dismiss, cx))
-    }
-
-    fn select_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let c = cx.theme().color;
-        let empty = self.store.read(cx).summaries().is_empty();
-
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(6.))
-            .h(px(28.))
-            .px(px(8.))
-            .when(!self.multi_select, |el| {
-                el.justify_end().when(!empty, |el| {
-                    el.child(
-                        Button::new("multi-enter", cx.t("sidebar.select-button"))
-                            .tone(ButtonTone::Ghost)
-                            .small()
-                            .on_click(cx.listener(|this, _, _w, cx| this.enter_multi_select(cx))),
-                    )
-                })
-            })
-            .when(self.multi_select, |el| {
-                el.child(
-                    Button::new("multi-done", cx.t("sidebar.done-button"))
-                        .tone(ButtonTone::Ghost)
-                        .small()
-                        .on_click(cx.listener(|this, _, _w, cx| this.exit_multi_select(cx))),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(11.))
-                        .text_color(c.muted_foreground)
-                        .child(cx.t_fmt(
-                            "sidebar.selected-count",
-                            &[("n", &self.checked.len().to_string())],
-                        )),
-                )
-                .child(
-                    Button::new("multi-delete", cx.t("sidebar.delete-button"))
-                        .tone(ButtonTone::Danger)
-                        .small()
-                        .disabled(self.checked.is_empty())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.delete_checked(window, cx)),
-                        ),
-                )
-            })
-    }
-
-    fn status_bar(&self, cx: &App) -> impl IntoElement {
-        let theme = cx.theme();
-        let c = &theme.color;
-        let count = self.store.read(cx).summaries().len();
-        let status = self.store.read(cx).status();
-
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .gap(px(4.))
-            .h(px(22.))
-            .px(px(10.))
-            .py(px(4.))
-            .text_size(px(10.5))
-            .text_color(c.muted_foreground)
-            .child(div().w_1().h_1().block().rounded_full().bg(match status {
-                crate::store::Status::Connecting => theme.color.warn,
-                crate::store::Status::Ready => theme.color.ok,
-                crate::store::Status::Failed(_) => theme.color.critical,
-            }))
-            .child(cx.t_plural("sidebar.competition-count", count as i64, &[]))
     }
 }
 
@@ -335,8 +337,6 @@ fn sidebar_row(
     radius: Pixels,
     sel_fill: gpui::Hsla,
     sel_fg: gpui::Hsla,
-    multi: bool,
-    selected: Option<Uuid>,
     cx: &mut Context<Sidebar>,
 ) -> gpui::AnyElement {
     match row {
@@ -354,9 +354,7 @@ fn sidebar_row(
             .into_any_element(),
         Row::Competition { id, name, meta } => {
             let id = *id;
-            let checked = this.checked.contains(&id);
-            let is_selected = !multi && selected == Some(id);
-            let highlight = is_selected || (multi && checked);
+            let highlight = this.selection.contains(&id);
             div()
                 .id(id)
                 .h(px(SB_COMP_H))
@@ -373,33 +371,13 @@ fn sidebar_row(
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                        this.prepare_context_menu(id, cx);
                         this.open_context_menu(id, event.position, cx);
                     }),
                 )
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    if this.multi_select {
-                        this.toggle_check(id, cx);
-                    } else {
-                        this.store.update(cx, |store, cx| store.select(id, cx));
-                    }
+                .on_click(cx.listener(move |this, ev: &ClickEvent, _window, cx| {
+                    this.click_row(id, ev.modifiers(), cx);
                 }))
-                .when(multi, |el| {
-                    el.child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(15.))
-                            .rounded(px(3.))
-                            .border_1()
-                            .border_color(if checked { c.primary } else { c.line_strong })
-                            .when(checked, |el| el.bg(c.primary))
-                            .when(checked, |el| {
-                                el.child(Icon::Check.size(px(11.)).color(c.primary_foreground))
-                            }),
-                    )
-                })
                 .child(
                     div()
                         .flex_1()
@@ -422,14 +400,13 @@ fn sidebar_row(
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let c = &theme.color;
-        let radius = theme.skin.radius_control_px();
-        let (sel_fill, sel_fg) = selection_fill(theme);
-        let multi = self.multi_select;
+        let radius = theme.skin.radius_lg_px();
+        let (sel_fill, sel_fg) = sidebar_selection_fill(theme);
+        let top_inset = titlebar::sidebar_top_inset(window, theme.skin.title_bar_height_px());
 
-        let selected = self.store.read(cx).selected_id();
         let query = self.query(cx);
 
         // Year headers interleaved with matching competition rows (summaries are
@@ -481,8 +458,7 @@ impl Render for Sidebar {
                         range
                             .map(|idx| {
                                 sidebar_row(
-                                    this, idx, &rows[idx], colors, radius, sel_fill, sel_fg, multi,
-                                    selected, cx,
+                                    this, idx, &rows[idx], colors, radius, sel_fill, sel_fg, cx,
                                 )
                             })
                             .collect()
@@ -503,23 +479,8 @@ impl Render for Sidebar {
             .bg(material::sidebar_fill(theme, cx))
             .border_r_1()
             .border_color(c.border)
-            .child(
-                div()
-                    .id("sidebar-search-slot")
-                    .p(px(8.))
-                    .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                        let focused = this.search.read(cx).focus_handle(cx).is_focused(window);
-                        if focused {
-                            window.blur(cx);
-                        }
-                    }))
-                    .child(
-                        Field::new("sidebar-search", &self.search)
-                            .leading_icon(Icon::Search)
-                            .paints_background(false),
-                    ),
-            )
-            .child(self.select_toolbar(cx))
+            // Clears the macOS traffic lights (0 elsewhere).
+            .child(div().flex_none().h(top_inset))
             .when(is_empty, |el| {
                 el.child(
                     div()
@@ -539,21 +500,38 @@ impl Render for Sidebar {
             })
             .when(!is_empty, |el| el.child(list))
             .child(
+                // Search + "add" live at the bottom (Xcode's navigator layout):
+                // a capsule filter field and a round "+" beside it.
                 div()
-                    .pt(px(8.))
-                    .px(px(8.))
-                    .border_t_1()
-                    .border_color(c.border)
+                    .id("sidebar-search-slot")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(8.))
+                    .p(px(8.))
+                    .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                        let focused = this.search.read(cx).focus_handle(cx).is_focused(window);
+                        if focused {
+                            window.blur(cx);
+                        }
+                    }))
                     .child(
-                        Button::new("new-competition", cx.t("sidebar.new-competition-button"))
+                        div().flex_1().min_w_0().child(
+                            Field::new("sidebar-search", &self.search)
+                                .leading_icon(Icon::Search)
+                                .pill()
+                                .paints_background(true),
+                        ),
+                    )
+                    .child(
+                        Button::icon("new-competition", Icon::Plus)
                             .tone(ButtonTone::Secondary)
-                            .leading_icon(Icon::Plus)
+                            .round()
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(NewCompetition), cx);
                             }),
                     ),
             )
-            .child(self.status_bar(cx))
             .children(self.context_menu_layer(cx))
     }
 }

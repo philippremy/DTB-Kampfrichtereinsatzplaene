@@ -165,6 +165,17 @@ pub fn chrome_fill(theme: &Theme, cx: &App) -> Hsla {
     chrome_like_fill(theme, cx)
 }
 
+/// Fill for the toolbar band that sits above the content pane. Same as
+/// [`chrome_fill`] except under the native backdrop, where the band is part of
+/// the content column and paints the opaque content colour — the system
+/// material stays visible only behind the sidebar.
+pub fn toolbar_fill(theme: &Theme, cx: &App) -> Hsla {
+    match effective(theme, cx) {
+        Effective::Native => content_fill(theme),
+        _ => chrome_like_fill(theme, cx),
+    }
+}
+
 /// Fill for the navigation sidebar.
 pub fn sidebar_fill(theme: &Theme, cx: &App) -> Hsla {
     chrome_like_fill(theme, cx)

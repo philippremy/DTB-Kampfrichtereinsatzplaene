@@ -3,6 +3,9 @@ tag = "de-DE"
 name = "Deutsch"
 
 [menu.file]
+"db-connecting" = "Datenbank wird verbunden …"
+"db-ready" = "Datenbank verbunden"
+"db-failed" = "Datenbankfehler"
 title = "Ablage"
 
 [menu.edit]
@@ -395,10 +398,6 @@ label = "Anmerkungen"
 "delete-confirm-detail" = "Die ausgewählten Wettkämpfe werden in den Papierkorb verschoben."
 "delete-confirm-delete-button" = "Löschen"
 "delete-confirm-cancel-button" = "Abbrechen"
-"select-button" = "Auswählen"
-"done-button" = "Fertig"
-"selected-count" = "{n} ausgewählt"
-"delete-button" = "Löschen"
 "competition-count_one" = "{n} Wettkampf"
 "competition-count_other" = "{n} Wettkämpfe"
 "empty-state" = "Noch keine Wettkämpfe"
@@ -476,6 +475,7 @@ lock = "Sperren (System)"
 "file::ImportCompetition" = "Wettkampf importieren …"
 "file::ExportAll" = "Gesamte Datenbank sichern …"
 "file::ShowTrash" = "Papierkorb anzeigen …"
+"file::DeleteCompetitions" = "Wettkämpfe löschen …"
 "file::CloseWindow" = "Fenster schließen"
 
 "edit::Undo" = "Rückgängig"

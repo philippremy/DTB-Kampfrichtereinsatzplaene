@@ -11,6 +11,16 @@ use gpui::{Menu, MenuItem, OsAction, SharedString};
 use crate::actions::{app, edit, file, help, window};
 use crate::i18n::{ActiveLocale, Locale};
 
+/// Connection state of the competition database, shown as an informational
+/// line in the File menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DbStatus {
+    #[default]
+    Connecting,
+    Ready,
+    Failed,
+}
+
 /// Everything [`build`] needs to decide labels and enabled state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MenuState {
@@ -29,6 +39,10 @@ pub struct MenuState {
     pub fullscreen: bool,
     /// The preview window is open.
     pub preview_open: bool,
+    /// Database connection state (the informational status line).
+    pub db_status: DbStatus,
+    /// Number of listed competitions (the informational status line).
+    pub competition_count: usize,
 }
 
 impl Default for MenuState {
@@ -41,6 +55,8 @@ impl Default for MenuState {
             can_redo: false,
             fullscreen: false,
             preview_open: false,
+            db_status: DbStatus::Connecting,
+            competition_count: 0,
         }
     }
 }
@@ -159,6 +175,12 @@ fn file_menu(state: MenuState, locale: &Locale) -> Menu {
             state,
             has_comp,
         ),
+        doc_item(
+            locale.t("actions.file::DeleteCompetitions"),
+            file::DeleteCompetitions,
+            state,
+            has_comp,
+        ),
         MenuItem::separator(),
         doc_item(
             locale.t("actions.file::ExportCompetition"),
@@ -185,8 +207,32 @@ fn file_menu(state: MenuState, locale: &Locale) -> Menu {
             true,
         ),
         MenuItem::separator(),
+        // Informational only: no handler ever exists for it, so it is greyed
+        // out everywhere (macOS by reachability, the in-app bar by `disabled`).
+        MenuItem::action(status_label(state, locale), file::DatabaseStatus).disabled(true),
+        MenuItem::separator(),
         MenuItem::action(locale.t("actions.file::CloseWindow"), file::CloseWindow),
     ])
+}
+
+/// "5 Wettkämpfe · Datenbank verbunden".
+fn status_label(state: MenuState, locale: &Locale) -> String {
+    let db = match state.db_status {
+        DbStatus::Connecting => locale.t("menu.file.db-connecting"),
+        DbStatus::Ready => locale.t("menu.file.db-ready"),
+        DbStatus::Failed => locale.t("menu.file.db-failed"),
+    };
+    match state.db_status {
+        DbStatus::Ready => format!(
+            "{} · {db}",
+            locale.t_plural(
+                "sidebar.competition-count",
+                state.competition_count as i64,
+                &[]
+            )
+        ),
+        _ => db.to_string(),
+    }
 }
 
 fn edit_menu(state: MenuState, locale: &Locale) -> Menu {

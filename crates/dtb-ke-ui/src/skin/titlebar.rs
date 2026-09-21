@@ -33,3 +33,23 @@ pub fn content_leading_inset(window: &mut Window) -> Pixels {
 pub fn owns_window_chrome(window: &Window) -> bool {
     crate::skin::decorations::is_client(window)
 }
+
+/// Height of the empty strip at the top of a full-height sidebar that keeps its
+/// content clear of the macOS traffic lights (`bar_height` = the skin's
+/// title-bar height, so the strip lines up with the toolbar beside it).
+/// Zero everywhere else — and in macOS full-screen, where the lights are gone.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn sidebar_top_inset(window: &Window, bar_height: Pixels) -> Pixels {
+    #[cfg(target_os = "macos")]
+    {
+        if window.is_fullscreen() {
+            px(0.)
+        } else {
+            bar_height
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        px(0.)
+    }
+}

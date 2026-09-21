@@ -26,6 +26,7 @@ pub struct Field {
     disabled: bool,
     invalid: bool,
     paints_background: bool,
+    pill: bool,
 }
 
 impl Field {
@@ -38,6 +39,7 @@ impl Field {
             disabled: false,
             invalid: false,
             paints_background: false,
+            pill: false,
         }
     }
 
@@ -63,6 +65,12 @@ impl Field {
         self
     }
 
+    /// Fully rounded ends — the capsule search field.
+    pub fn pill(mut self) -> Self {
+        self.pill = true;
+        self
+    }
+
     pub fn paints_background(mut self, yes: bool) -> Self {
         self.paints_background = yes;
         self
@@ -83,7 +91,8 @@ impl RenderOnce for Field {
             .gap(px(6.))
             .h(px(30.))
             .px(px(8.))
-            .rounded(theme.skin.radius_control_px())
+            .when(self.pill, |el| el.rounded_full().px(px(12.)))
+            .when(!self.pill, |el| el.rounded(theme.skin.radius_control_px()))
             .overflow_hidden()
             .border_1()
             .border_color(if self.invalid {

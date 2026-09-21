@@ -61,6 +61,11 @@ pub mod file {
             ExportAll,
             /// Open the trash window (soft-deleted competitions).
             ShowTrash,
+            /// Move the selected competitions to the trash (after a confirmation).
+            DeleteCompetitions,
+            /// Placeholder for the informational database-status menu line. It
+            /// has no handler on purpose, so the item is always greyed out.
+            DatabaseStatus,
             /// Close the focused window.
             CloseWindow,
         ]
