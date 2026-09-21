@@ -149,6 +149,25 @@ pub struct SkinMetrics {
     /// Alpha applied to the chrome (title bar / sidebar) fill when [`Self::material`]
     /// is translucent. `1.0` for opaque skins.
     pub material_opacity: f32,
+    /// Native glass surfaces (macOS 26+): how strongly the palette's `chrome`
+    /// colour tints the glass itself, `0.0..=1.0`. `0.0` = the untinted system
+    /// glass.
+    #[serde(default)]
+    pub glass_tint_opacity: f32,
+    /// Native glass surfaces: alpha of a `chrome`-coloured fill placed
+    /// *behind* the glass, so it samples something body-ful instead of the bare
+    /// desktop (Xcode's sidebar samples the window's opaque content). `0.0` =
+    /// none.
+    #[serde(default)]
+    pub glass_backing_opacity: f32,
+    /// Dark-appearance overrides for the two glass strengths above. Glass
+    /// lifts the brightness of whatever is behind it, so dark mode usually
+    /// needs a stronger fill to sit level with the rest of the dark UI. Unset
+    /// = same as light.
+    #[serde(default)]
+    pub glass_tint_opacity_dark: Option<f32>,
+    #[serde(default)]
+    pub glass_backing_opacity_dark: Option<f32>,
     /// Alpha for a plain-blur backdrop specifically — macOS's native blur, or
     /// Windows' Acrylic-blur-behind fallback when Mica isn't available (see
     /// `material::window_background`'s doc comment). A flat blur reads

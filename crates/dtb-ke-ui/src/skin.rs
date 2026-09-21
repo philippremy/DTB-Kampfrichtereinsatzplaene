@@ -8,6 +8,7 @@
 pub mod accent;
 pub mod backdrop;
 pub mod decorations;
+pub mod glass;
 pub mod menu;
 pub mod titlebar;
 pub mod window;

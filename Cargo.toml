@@ -71,7 +71,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     # resolution.
     "NSColor", "NSColorSpace", "NSAppearance", "objc2-core-foundation", "block2",
     # `skin/backdrop.rs`'s native window backdrop.
-    "NSVisualEffectView",
+    "NSVisualEffectView", "NSGlassEffectView", "NSBox",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSString", "NSURL", "NSArray", "NSObject", "NSGeometry",

@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
 use crate::components::button::{Button, ButtonTone};
+use crate::skin::glass::{self, GlassRole};
 use crate::skin::titlebar;
 use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
 use crate::components::field::Field;
@@ -472,10 +473,13 @@ impl Render for Sidebar {
             .child(Scrollbar::vertical(&self.list_scroll));
 
         div()
+            .relative()
             .flex()
             .flex_col()
             // Width is owned by the enclosing resizable panel in `AppShell`.
             .size_full()
+            // The native glass behind the sidebar (macOS 26+; a no-op elsewhere).
+            .child(glass::region("sidebar", GlassRole::Sidebar))
             .bg(material::sidebar_fill(theme, cx))
             .border_r_1()
             .border_color(c.border)

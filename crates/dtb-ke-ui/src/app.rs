@@ -34,7 +34,7 @@ use crate::menu::{self, DbStatus, MenuState};
 use crate::preview::{self, PreviewWindow};
 use crate::save::{self, ExportFormat, SaveChoice};
 use crate::sidebar::{SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_SNAP, SIDEBAR_WIDTH, Sidebar};
-use crate::skin::{decorations, menu as skin_menu, titlebar, window as skin_window};
+use crate::skin::{decorations, glass, menu as skin_menu, titlebar, window as skin_window};
 use crate::store::{self, AppStore};
 use crate::theme::{ActiveTheme, Appearance, Theme};
 use crate::toolbar::CompetitionToolbar;
@@ -952,6 +952,8 @@ impl Render for AppShell {
                 el.child(self.menu_bar_row(window, cx))
             })
             .child(self.body(window, content_fill, cx))
+            // Last child: flushes this frame's glass regions to the native backdrop.
+            .child(glass::end_frame())
             .children(self.updater_toast(cx));
 
         // Client-side decorations (Linux): wrap in the frame chrome + resize

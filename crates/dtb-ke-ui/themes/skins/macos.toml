@@ -5,6 +5,10 @@
 
 material           = "blurred"      # blurred | mica | mica-alt | opaque
 material-opacity   = 0.875          # chrome fill alpha when the window is translucent
+glass-tint-opacity    = 0.35    # macOS 26+: chrome tint on the native glass (0 = untinted)
+glass-backing-opacity = 0.75    # macOS 26+: chrome fill behind the glass, so it is not see-through
+glass-tint-opacity-dark    = 0.5    # dark appearance overrides: glass lifts brightness, so dark needs more
+glass-backing-opacity-dark = 0.92
 window-decorations = "server"       # server (OS frame) | client (CSD)
 menu-bar           = "native"        # native (OS menu bar) | in-app (drawn in the chrome)
 title-bar-height   = 52.0
