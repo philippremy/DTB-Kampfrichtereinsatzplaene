@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
 use crate::actions::window::ToggleSidebar;
-use crate::components::button::{Button, ButtonTone};
+use crate::components::button::Button;
 use crate::skin::glass::{self, GlassRole};
 use crate::skin::titlebar;
 use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
@@ -425,6 +425,49 @@ fn sidebar_row(
     }
 }
 
+/// The sidebar's filter field. On the glass tier it sits on a glass capsule of
+/// the same height as the "+" beside it (the field itself is bare); elsewhere
+/// it is the usual bordered, filled pill.
+fn search_capsule(
+    search: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui::AnyElement {
+    use crate::components::toolbar_group::Bump;
+
+    let native = glass::active();
+    let bump = Bump::new("sidebar-search", window, cx);
+    let field = Field::new("sidebar-search", search)
+        .leading_icon(Icon::Search)
+        .icon_scale(bump.scale)
+        .pill();
+    if native {
+        // The probe sits on this unpadded wrapper (see `glass::region`).
+        div()
+            .relative()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .h(px(crate::components::toolbar_group::GROUP_HEIGHT))
+            .rounded_full()
+            .on_mouse_down(MouseButton::Left, bump.on_press())
+            .child(glass::region_scaled(
+                "sidebar-search",
+                GlassRole::Capsule,
+                bump.scale,
+            ))
+            .child(div().flex_1().min_w_0().child(field.bare()))
+            .into_any_element()
+    } else {
+        div()
+            .flex_1()
+            .min_w_0()
+            .child(field.paints_background(true))
+            .into_any_element()
+    }
+}
+
 /// The small save-state marker at the end of the selected competition's row:
 /// a spinner while saving (or an edit is pending), a red "!" on failure, each
 /// with a tooltip — and nothing when all is well. The slot keeps its size
@@ -579,7 +622,7 @@ impl Render for Sidebar {
                         // the toolbar, so it's one glass view moving between them.
                         // The margin is *outside* the glass capsule.
                         .child(div().flex_none().mx(px(6.)).child(
-                            ToolbarGroup::new("toolbar-toggle").child(
+                            ToolbarGroup::new("toolbar-toggle").button(
                                 Button::icon("sidebar-toggle", Icon::PanelLeft)
                                     .oval()
                                     .tooltip(cx.t("toolbar.toggle-sidebar"))
@@ -624,21 +667,16 @@ impl Render for Sidebar {
                             window.blur(cx);
                         }
                     }))
+                    .child(search_capsule(&self.search, window, cx))
                     .child(
-                        div().flex_1().min_w_0().child(
-                            Field::new("sidebar-search", &self.search)
-                                .leading_icon(Icon::Search)
-                                .pill()
-                                .paints_background(true),
+                        ToolbarGroup::new("sidebar-add").button(
+                            Button::icon("new-competition", Icon::Plus)
+                                .round()
+                                .tooltip(cx.t("sidebar.new-competition-button"))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(NewCompetition), cx);
+                                }),
                         ),
-                    )
-                    .child(
-                        Button::icon("new-competition", Icon::Plus)
-                            .tone(ButtonTone::Secondary)
-                            .round()
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(NewCompetition), cx);
-                            }),
                     ),
             )
             .children(self.context_menu_layer(cx))

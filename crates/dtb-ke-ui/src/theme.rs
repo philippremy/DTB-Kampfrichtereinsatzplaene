@@ -24,7 +24,8 @@ pub use palette::{Palette, PaletteColors};
 // component layer) and the test module.
 #[allow(unused_imports)]
 pub use skin::{
-    FocusRing, MenuStyle, SelectionStyle, ShadowKind, Skin, SkinMetrics, WindowDecorations,
+    ControlShape, FocusRing, MenuStyle, SelectionStyle, ShadowKind, Skin, SkinMetrics,
+    WindowDecorations,
     WindowMaterial,
 };
 
@@ -352,6 +353,7 @@ mod tests {
         assert_eq!(mac.selection_style, SelectionStyle::GlassTint);
         assert_eq!(mac.focus_ring, FocusRing::Outline);
         assert_eq!(mac.menu_bar, MenuStyle::Native);
+        assert_eq!(mac.control_shape, ControlShape::Capsule);
 
         let win = SkinMetrics::parse(Skin::WinUi3.embedded_toml()).unwrap();
         assert_eq!(win.material, WindowMaterial::Mica);
@@ -364,6 +366,8 @@ mod tests {
         assert_eq!(linux.focus_ring, FocusRing::Outline);
         assert_eq!(linux.menu_bar, MenuStyle::Hamburger);
         assert!(linux.font_family().is_none());
+        assert_eq!(win.control_shape, ControlShape::Rounded);
+        assert_eq!(linux.control_shape, ControlShape::Rounded);
     }
 
     #[test]

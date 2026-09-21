@@ -76,7 +76,7 @@ impl Render for CompetitionToolbar {
         let theme = cx.theme();
         let c = &theme.color;
 
-        let row = div().flex().flex_1().items_center().gap(px(10.)).min_w_0();
+        let row = div().flex().flex_1().items_center().gap(px(10.)).min_w_0().ml_1();
 
         let Some(doc) = self.store.read(cx).selected_document().cloned() else {
             return row
@@ -89,11 +89,15 @@ impl Render for CompetitionToolbar {
                         .child(cx.t("toolbar.no-selection")),
                 )
                 .child(
-                    Button::new("new-competition", cx.t("toolbar.new-competition-button"))
-                        .tone(ButtonTone::Primary)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(NewCompetition), cx);
-                        }),
+                    // Same prominent glass capsule as the Export action.
+                    ToolbarGroup::new("toolbar-new").prominent().button(
+                        Button::new("new-competition", cx.t("toolbar.new-competition-button"))
+                            .tone(ButtonTone::Ghost)
+                            .foreground(c.primary_foreground)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(NewCompetition), cx);
+                            }),
+                    ),
                 );
         };
 
@@ -133,21 +137,21 @@ impl Render for CompetitionToolbar {
             )
             .child(
                 ToolbarGroup::new("toolbar-tables")
-                    .child(action(
+                    .button(action(
                         "toolbar-add-table",
                         Icon::Plus,
                         label("add-table"),
                         false,
                         || Box::new(AddJudgingTable),
                     ))
-                    .child(action(
+                    .button(action(
                         "toolbar-duplicate",
                         Icon::Copy,
                         label("duplicate"),
                         !has_table,
                         || Box::new(DuplicateJudgingTable),
                     ))
-                    .child(action(
+                    .button(action(
                         "toolbar-delete",
                         Icon::Trash,
                         label("delete"),
@@ -157,14 +161,14 @@ impl Render for CompetitionToolbar {
             )
             .child(
                 ToolbarGroup::new("toolbar-competition")
-                    .child(action(
+                    .button(action(
                         "toolbar-settings",
                         Icon::Settings,
                         label("settings"),
                         false,
                         || Box::new(CompetitionSettings),
                     ))
-                    .child(action(
+                    .button(action(
                         "toolbar-preview",
                         Icon::Preview,
                         label("preview"),
@@ -173,7 +177,7 @@ impl Render for CompetitionToolbar {
                     )),
             )
             .child(
-                ToolbarGroup::new("toolbar-export").prominent().child(
+                ToolbarGroup::new("toolbar-export").prominent().button(
                     action(
                         "toolbar-export",
                         Icon::Export,

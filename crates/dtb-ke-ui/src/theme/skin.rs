@@ -130,6 +130,17 @@ pub enum SelectionStyle {
     SolidSubtle,
 }
 
+/// The outline shape of labelled controls (buttons, segmented tracks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlShape {
+    /// Corners follow [`SkinMetrics::radius_control`].
+    #[default]
+    Rounded,
+    /// Fully rounded ends — Liquid Glass's capsule controls.
+    Capsule,
+}
+
 /// Elevation character.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -182,6 +193,9 @@ pub struct SkinMetrics {
     pub radius: f32,
     pub radius_lg: f32,
     pub radius_control: f32,
+    /// Outline shape of buttons and segmented controls. Unset = `rounded`.
+    #[serde(default)]
+    pub control_shape: ControlShape,
     pub focus_ring: FocusRing,
     pub selection_style: SelectionStyle,
     pub shadow: ShadowKind,
@@ -207,6 +221,15 @@ impl SkinMetrics {
     pub fn radius_control_px(&self) -> Pixels {
         px(self.radius_control)
     }
+    /// Corner radius for a labelled control of `height`: half the height for a
+    /// capsule skin, else [`Self::radius_control_px`].
+    pub fn control_radius_px(&self, height: Pixels) -> Pixels {
+        match self.control_shape {
+            ControlShape::Capsule => height / 2.0,
+            ControlShape::Rounded => self.radius_control_px(),
+        }
+    }
+
     pub fn title_bar_height_px(&self) -> Pixels {
         px(self.title_bar_height)
     }

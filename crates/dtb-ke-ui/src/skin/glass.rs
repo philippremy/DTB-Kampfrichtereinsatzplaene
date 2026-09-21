@@ -57,11 +57,13 @@ pub struct GlassRegion {
 pub enum GlassRole {
     /// The full-height navigation sidebar (edge-to-edge, square corners).
     Sidebar,
-    /// The toolbar band: no glass of its own, just the opaque content colour
-    /// *behind* the capsules that float on it. It exists because native views
-    /// sit under gpui — the band's gpui pixels must stay transparent for the
-    /// capsules to show, so the flat colour has to come from below too.
-    ToolbarBand,
+    /// The whole content column (toolbar band + detail): no glass of its own,
+    /// just the opaque content colour underneath. The band's gpui pixels must
+    /// stay transparent for the capsules to show, so its flat colour has to
+    /// come from below — and it spans the detail area too, so the sidebar's
+    /// glass, which bends light at its edge, always samples that one colour
+    /// instead of the bare desktop below the band.
+    ContentBacking,
     /// A group of toolbar controls in one capsule.
     Capsule,
     /// The one primary toolbar action — accent-tinted capsule.
@@ -71,7 +73,7 @@ pub enum GlassRole {
 impl GlassRole {
     fn style(self) -> Option<GlassStyle> {
         match self {
-            GlassRole::ToolbarBand => None,
+            GlassRole::ContentBacking => None,
             GlassRole::Sidebar | GlassRole::Capsule | GlassRole::CapsuleProminent => {
                 Some(GlassStyle::Regular)
             }
@@ -85,7 +87,7 @@ impl GlassRole {
     /// Capsules are fully rounded, whatever size they lay out to.
     fn corner_radius(self, bounds: Bounds<Pixels>) -> Pixels {
         match self {
-            GlassRole::Sidebar | GlassRole::ToolbarBand => px(0.),
+            GlassRole::Sidebar | GlassRole::ContentBacking => px(0.),
             GlassRole::Capsule | GlassRole::CapsuleProminent => {
                 bounds.size.width.min(bounds.size.height) / 2.0
             }
@@ -109,7 +111,7 @@ impl GlassRole {
         let none = Hsla { a: 0.0, ..chrome };
         match self {
             GlassRole::Sidebar => (Hsla { a: tint, ..chrome }, Hsla { a: backing, ..chrome }),
-            GlassRole::ToolbarBand => (
+            GlassRole::ContentBacking => (
                 none,
                 Hsla {
                     a: 1.0,
@@ -138,9 +140,27 @@ thread_local! {
 /// A zero-cost probe: place it (as a child) inside a `relative` container that
 /// should be a glass surface. `id` must be unique per window.
 pub fn region(id: &'static str, role: GlassRole) -> impl IntoElement {
+    region_scaled(id, role, 1.0)
+}
+
+/// [`region`] with the glass grown by `scale` about its centre — the press
+/// bump. Only the native frame changes; gpui's layout is untouched.
+pub fn region_scaled(id: &'static str, role: GlassRole, scale: f32) -> impl IntoElement {
     canvas(
         move |bounds, _window, cx| {
             if super::backdrop::glass_active() {
+                let bounds = if scale == 1.0 {
+                    bounds
+                } else {
+                    let (w, h) = (bounds.size.width * scale, bounds.size.height * scale);
+                    Bounds {
+                        origin: gpui::point(
+                            bounds.origin.x - (w - bounds.size.width) / 2.0,
+                            bounds.origin.y - (h - bounds.size.height) / 2.0,
+                        ),
+                        size: gpui::size(w, h),
+                    }
+                };
                 let (tint, backing) = role.colors(cx.theme());
                 FRAME.with(|f| {
                     f.borrow_mut().insert(

@@ -650,11 +650,6 @@ impl AppShell {
             // The glass tier has no divider: the band's flat colour and the
             // content's scroll-edge fade meet seamlessly.
             .when(!native, |el| el.border_b_1().border_color(border))
-            // Native backing behind the band (glass tier) — see
-            // `GlassRole::ToolbarBand`. The probe lives on this *unpadded*
-            // wrapper: an absolute child covers its parent's content box, so
-            // inside the padded row below it would skip the padding.
-            .child(glass::region("toolbar-band", GlassRole::ToolbarBand))
             .child(
                 div()
                     .flex()
@@ -666,7 +661,7 @@ impl AppShell {
                     .when(!sidebar_owns_toggle, |el| {
                         // The margin is *outside* the glass capsule.
                         el.child(div().flex_none().mx(px(6.)).child(
-                            ToolbarGroup::new("toolbar-toggle").child(
+                            ToolbarGroup::new("toolbar-toggle").button(
                                 Button::icon("toggle-sidebar", Icon::PanelLeft)
                                     .oval()
                                     .tooltip(cx.t("toolbar.toggle-sidebar"))
@@ -825,10 +820,14 @@ impl AppShell {
         // would paint over them — so the opaque content colour goes on the
         // detail area only. (Elsewhere the band paints its own fill.)
         let detail = div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
             .min_w(px(0.))
+            // Native backing for the whole column (glass tier), on this
+            // unpadded wrapper — see `GlassRole::ContentBacking`.
+            .child(glass::region("content-backing", GlassRole::ContentBacking))
             .child(self.toolbar_row(window, cx))
             .child(
                 div()
@@ -843,7 +842,7 @@ impl AppShell {
             return row.child(detail).into_any_element();
         }
 
-        let motion = cx.theme().skin.motion(Duration::from_millis(150));
+        let motion = cx.theme().skin.motion(Duration::from_millis(500));
         let sidebar = div()
             .size_full()
             .child(self.sidebar.clone())

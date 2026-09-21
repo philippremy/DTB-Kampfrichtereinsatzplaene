@@ -45,8 +45,16 @@ impl RenderOnce for Segmented {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let c = &theme.color;
-        let track_radius = theme.skin.radius_control_px();
-        let inner_radius = px((theme.skin.radius_control - 2.0).max(2.0));
+        // Track = 22 px segments + 2×2 px padding + 2×1 px border. A capsule
+        // skin rounds both fully; otherwise the thumb is concentric with the
+        // track (its radius minus the padding).
+        let track_radius = theme.skin.control_radius_px(px(28.));
+        let inner_radius = match theme.skin.control_shape {
+            crate::theme::ControlShape::Capsule => px(11.),
+            crate::theme::ControlShape::Rounded => {
+                px((theme.skin.radius_control - 2.0).max(2.0))
+            }
+        };
         let id = self.id.clone();
 
         div()

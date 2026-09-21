@@ -55,6 +55,7 @@ pub struct Button {
     disabled: bool,
     round: bool,
     oval: bool,
+    scale: f32,
     tooltip: Option<SharedString>,
     foreground: Option<Hsla>,
     on_click: Option<ClickHandler>,
@@ -71,6 +72,7 @@ impl Button {
             disabled: false,
             round: false,
             oval: false,
+            scale: 1.0,
             tooltip: None,
             foreground: None,
             on_click: None,
@@ -88,6 +90,7 @@ impl Button {
             disabled: false,
             round: false,
             oval: false,
+            scale: 1.0,
             tooltip: None,
             foreground: None,
             on_click: None,
@@ -124,6 +127,13 @@ impl Button {
     /// Overrides the label / icon colour (e.g. on an accent-filled surface).
     pub fn foreground(mut self, color: Hsla) -> Self {
         self.foreground = Some(color);
+        self
+    }
+
+    /// Scales the icon by `scale` about its centre (the button's own box stays
+    /// put) — the press bump of a [`crate::components::toolbar_group::ToolbarGroup`].
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
         self
     }
 
@@ -222,7 +232,9 @@ impl RenderOnce for Button {
             .gap(gap)
             .h(height)
             .when(self.round, |el| el.rounded_full())
-            .when(!self.round, |el| el.rounded(theme.skin.radius_control_px()))
+            .when(!self.round, |el| {
+                el.rounded(theme.skin.control_radius_px(height))
+            })
             .border_1()
             .border_color(border)
             .bg(fill)
@@ -249,11 +261,11 @@ impl RenderOnce for Button {
 
         el.when_some(self.leading, |el, icon| {
             el.child(
-                icon.size(match self.size {
-                    ButtonSize::Xsmall => px(11.),
-                    ButtonSize::Small => px(13.),
-                    ButtonSize::Medium => px(15.),
-                })
+                icon.size(px(match self.size {
+                    ButtonSize::Xsmall => 11.,
+                    ButtonSize::Small => 13.,
+                    ButtonSize::Medium => 15.,
+                } * self.scale))
                 .color(fg),
             )
         })

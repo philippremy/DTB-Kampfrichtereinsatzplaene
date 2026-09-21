@@ -27,6 +27,8 @@ pub struct Field {
     invalid: bool,
     paints_background: bool,
     pill: bool,
+    bare: bool,
+    icon_scale: f32,
 }
 
 impl Field {
@@ -40,6 +42,8 @@ impl Field {
             invalid: false,
             paints_background: false,
             pill: false,
+            bare: false,
+            icon_scale: 1.0,
         }
     }
 
@@ -71,6 +75,19 @@ impl Field {
         self
     }
 
+    /// Scales the leading icon (the press bump of a glass capsule around the field).
+    pub fn icon_scale(mut self, scale: f32) -> Self {
+        self.icon_scale = scale;
+        self
+    }
+
+    /// Draws no border, focus outline or fill — for a field sitting on a glass
+    /// capsule that provides the surface itself (the caret shows focus).
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
+        self
+    }
+
     pub fn paints_background(mut self, yes: bool) -> Self {
         self.paints_background = yes;
         self
@@ -97,6 +114,8 @@ impl RenderOnce for Field {
             .border_1()
             .border_color(if self.invalid {
                 c.warn
+            } else if self.bare {
+                gpui::transparent_black()
             } else {
                 field_border_color(focused, theme)
             })
@@ -108,7 +127,7 @@ impl RenderOnce for Field {
             .text_size(px(13.))
             .when(self.disabled, |el| el.opacity(0.5))
             .when_some(self.leading, |el, icon| {
-                el.child(icon.size(px(15.)).color(c.muted_foreground))
+                el.child(icon.size(px(15. * self.icon_scale)).color(c.muted_foreground))
             })
             .child(div().flex_1().min_w_0().child(Input::new(&self.state)))
             .when_some(self.trailing, |el, trailing| el.child(trailing))
