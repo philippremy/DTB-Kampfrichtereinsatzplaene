@@ -4,15 +4,23 @@
 //! When the active skin asks for a translucent window ([`WindowMaterial`]
 //! other than `Opaque`) and the running OS can actually render it, the chrome
 //! (title bar, sidebar) is painted at reduced opacity so the real backdrop
-//! shows through. The **content** area always stays fully opaque — judging
-//! tables must never sit on a moving backdrop. On Windows, whether it's
-//! *actually* translucent depends on the OS build — [`effective`] resolves
-//! that for real via [`crate::skin::window::windows_backdrop_support`] rather
-//! than trusting the skin's nominal material, so an older build falls all the
-//! way back to a plain opaque window instead of a half-drawn, hard-to-read
-//! one. The user's `Settings::reduce_transparency` overrides all of this to
-//! `Opaque` outright, same idea as the OS-level "reduce transparency"
-//! accessibility toggles this mirrors.
+//! shows through. The **content** area's own gpui fill always stays fully
+//! opaque — judging tables must never sit on a *moving* backdrop — except on
+//! the glass tier ([`crate::skin::glass`]), where [`content_fill`] paints
+//! nothing at all: the identical solid colour instead comes from the native
+//! `ContentBacking` region sitting beneath gpui, which is what lets a card's
+//! own native glass region ([`crate::skin::glass::GlassRole::Card`]) show
+//! through where a judging-table / spare-judges / remarks card actually sits.
+//! It's still a flat, static colour either way, never a blur — the
+//! "no moving backdrop under text" invariant holds regardless of which layer
+//! paints it. On Windows, whether it's *actually* translucent depends on the
+//! OS build — [`effective`] resolves that for real via
+//! [`crate::skin::window::windows_backdrop_support`] rather than trusting the
+//! skin's nominal material, so an older build falls all the way back to a
+//! plain opaque window instead of a half-drawn, hard-to-read one. The user's
+//! `Settings::reduce_transparency` overrides all of this to `Opaque` outright,
+//! same idea as the OS-level "reduce transparency" accessibility toggles this
+//! mirrors.
 //!
 //! Colours are still token-derived: the translucent fills are the palette's
 //! `chrome` role, at an alpha the active skin authors
@@ -185,7 +193,17 @@ pub fn sidebar_fill(theme: &Theme, cx: &App) -> Hsla {
     chrome_like_fill(theme, cx)
 }
 
-/// Fill for the content pane — always fully opaque.
+/// Fill for the content pane. On the glass tier this is transparent: the
+/// native `ContentBacking` region ([`crate::skin::glass::GlassRole::ContentBacking`])
+/// already paints the identical solid colour beneath gpui, and a gpui-painted
+/// copy in front of it would hide every card's own native glass region
+/// ([`crate::skin::glass::GlassRole::Card`]) — the whole point of which is to
+/// show through here. Everywhere else it's the plain opaque colour, painted
+/// by gpui as usual.
 pub fn content_fill(theme: &Theme) -> Hsla {
-    theme.color.background
+    if crate::skin::glass::active() {
+        gpui::transparent_black()
+    } else {
+        theme.color.background
+    }
 }

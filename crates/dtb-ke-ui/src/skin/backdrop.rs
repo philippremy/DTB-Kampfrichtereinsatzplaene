@@ -82,7 +82,7 @@ mod mac {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use gpui::Window;
+    use gpui::{Bounds, Pixels, SharedString, Window};
     use log::{debug, warn};
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
@@ -135,7 +135,12 @@ mod mac {
         glass: Retained<NSGlassEffectView>,
         /// Standalone glass sits in a clipping wrapper, so its drop shadow
         /// can't spill past the region into the transparent gpui area beside
-        /// it (the toolbar band) — where nothing would hide it.
+        /// it (the toolbar band) — where nothing would hide it. For a region
+        /// with [`GlassRegion::scroll_clip`] set, this wrapper is instead
+        /// sized to the scroll pane's own visible bounds and the glass is
+        /// positioned inside it relative to that pane — so the wrapper masks
+        /// the card the same way gpui's own `overflow_y_scroll` clips its
+        /// sibling gpui content.
         clip: Option<Retained<NSView>>,
         last: GlassRegion,
         /// Whether the views are currently shown (vs. hidden for an absent region).
@@ -154,7 +159,7 @@ mod mac {
         /// Sits *below* the container: every region's flat backing fill, so a
         /// backing (the toolbar band) can never cover another region's glass.
         backing_holder: Retained<NSView>,
-        views: HashMap<&'static str, GlassEntry>,
+        views: HashMap<SharedString, GlassEntry>,
     }
 
     enum Kind {
@@ -176,7 +181,15 @@ mod mac {
     }
 
     pub fn glass_active() -> bool {
-        STATE.with(|s| matches!(s.borrow().as_ref(), Some(State { kind: Kind::Glass(_), .. })))
+        STATE.with(|s| {
+            matches!(
+                s.borrow().as_ref(),
+                Some(State {
+                    kind: Kind::Glass(_),
+                    ..
+                })
+            )
+        })
     }
 
     pub fn install(window: &Window, mode: ThemeMode) {
@@ -195,7 +208,8 @@ mod mac {
         };
         // SAFETY: gpui documents the AppKit handle as a pointer to its own
         // (live) `NSView`; we're on the main thread and only retain it.
-        let Some(gpui_view) = (unsafe { Retained::retain(handle.ns_view.as_ptr().cast::<NSView>()) })
+        let Some(gpui_view) =
+            (unsafe { Retained::retain(handle.ns_view.as_ptr().cast::<NSView>()) })
         else {
             return;
         };
@@ -280,7 +294,7 @@ mod mac {
             }
             for (id, region) in regions {
                 if !host.views.contains_key(id) {
-                    let frame = ns_frame(region);
+                    let frame = ns_rect(region.bounds);
                     let backing = NSBox::initWithFrame(mtm.alloc(), frame);
                     backing.setBoxType(NSBoxType::Custom);
                     backing.setTitlePosition(NSTitlePosition::NoTitle);
@@ -292,20 +306,30 @@ mod mac {
                         host.holder.addSubview(&glass);
                         None
                     } else {
-                        let clip = NSView::initWithFrame(mtm.alloc(), frame);
+                        // Top-left origin, like `holder`/`direct_holder`/
+                        // `backing_holder` — required so a scroll-clipped
+                        // region's glass, positioned at a *non-zero* offset
+                        // inside this wrapper (see the `scroll_clip` branch
+                        // below), lands using the same coordinate space as
+                        // everywhere else instead of AppKit's default
+                        // bottom-left one. A plain (unflipped) `NSView` only
+                        // ever happened to look right before because the
+                        // glass used to fill it exactly (origin `(0, 0)`),
+                        // where flipped-vs-not makes no visible difference.
+                        let clip = FlippedView::new(mtm, frame).into_super();
                         clip.setClipsToBounds(true);
                         clip.addSubview(&glass);
                         host.direct_holder.addSubview(&clip);
                         Some(clip)
                     };
                     host.views.insert(
-                        id,
+                        id.clone(),
                         GlassEntry {
                             backing,
                             glass,
                             clip,
                             // Forces the first full apply below.
-                            last: *region,
+                            last: region.clone(),
                             // Not shown yet, so the first pass below applies it.
                             shown: false,
                         },
@@ -315,27 +339,79 @@ mod mac {
                 if entry.shown && entry.last == *region {
                     continue;
                 }
-                let frame = ns_frame(region);
-                let mask = edge_mask(region, size);
+                // The backing always sits at the region's own, unclipped
+                // window-relative frame — harmless even for a scroll-clipped
+                // card, whose backing is untinted (`a == 0`, see
+                // `GlassRole::colors`) and thus hidden below anyway.
+                let frame = ns_rect(region.bounds);
+                let backing_mask = edge_mask(region.bounds, size);
+                if entry.backing.frame() != frame {
+                    entry.backing.setFrame(frame);
+                }
+                if entry.backing.autoresizingMask() != backing_mask {
+                    entry.backing.setAutoresizingMask(backing_mask);
+                }
+
                 // The view that carries the region's frame: the clip wrapper for
                 // standalone glass, else the glass itself.
-                let root: &NSView = entry.clip.as_deref().unwrap_or(&entry.glass);
-                for view in [&*entry.backing as &NSView, root] {
-                    if view.frame() != frame {
-                        view.setFrame(frame);
-                    }
-                    if view.autoresizingMask() != mask {
-                        view.setAutoresizingMask(mask);
-                    }
-                }
                 if let Some(clip) = &entry.clip {
                     clip.setHidden(false);
-                    // Inside the wrapper the glass simply fills it.
-                    let inner = NSRect::new(NSPoint::new(0.0, 0.0), frame.size);
-                    if entry.glass.frame() != inner {
-                        entry.glass.setFrame(inner);
+                    match &region.scroll_clip {
+                        Some((_, viewport)) => {
+                            // The wrapper becomes the scroll pane's own
+                            // visible rect (shared by every card in the
+                            // group, not just this one), and the glass sits
+                            // inside it at the card's position *relative to
+                            // that pane* — so AppKit's own clipping hides
+                            // whatever scrolls past the pane's edges, the
+                            // same way gpui's `overflow_y_scroll` clips the
+                            // sibling gpui content.
+                            let clip_frame = ns_rect(*viewport);
+                            if clip.frame() != clip_frame {
+                                clip.setFrame(clip_frame);
+                            }
+                            let empty = NSAutoresizingMaskOptions::empty();
+                            if clip.autoresizingMask() != empty {
+                                clip.setAutoresizingMask(empty);
+                            }
+                            let inner = NSRect::new(
+                                NSPoint::new(
+                                    f64::from(f32::from(
+                                        region.bounds.origin.x - viewport.origin.x,
+                                    )),
+                                    f64::from(f32::from(
+                                        region.bounds.origin.y - viewport.origin.y,
+                                    )),
+                                ),
+                                frame.size,
+                            );
+                            if entry.glass.frame() != inner {
+                                entry.glass.setFrame(inner);
+                            }
+                            entry.glass.setAutoresizingMask(empty);
+                        }
+                        None => {
+                            if clip.frame() != frame {
+                                clip.setFrame(frame);
+                            }
+                            if clip.autoresizingMask() != backing_mask {
+                                clip.setAutoresizingMask(backing_mask);
+                            }
+                            // Inside the wrapper the glass simply fills it.
+                            let inner = NSRect::new(NSPoint::new(0.0, 0.0), frame.size);
+                            if entry.glass.frame() != inner {
+                                entry.glass.setFrame(inner);
+                            }
+                            entry.glass.setAutoresizingMask(fill_mask());
+                        }
                     }
-                    entry.glass.setAutoresizingMask(fill_mask());
+                } else {
+                    if entry.glass.frame() != frame {
+                        entry.glass.setFrame(frame);
+                    }
+                    if entry.glass.autoresizingMask() != backing_mask {
+                        entry.glass.setAutoresizingMask(backing_mask);
+                    }
                 }
                 entry.backing.setHidden(region.backing.a <= 0.0);
                 entry.backing.setFillColor(&ns_color(region.backing));
@@ -353,7 +429,7 @@ mod mac {
                         .then(|| ns_color(region.tint))
                         .as_deref(),
                 );
-                entry.last = *region;
+                entry.last = region.clone();
                 entry.shown = true;
             }
             end_no_actions();
@@ -362,8 +438,7 @@ mod mac {
 
     /// gpui's top-left-origin window space; the holder is flipped, so it maps
     /// straight across.
-    fn ns_frame(region: &GlassRegion) -> NSRect {
-        let b = region.bounds;
+    fn ns_rect(b: Bounds<Pixels>) -> NSRect {
         let f = |p: gpui::Pixels| f64::from(f32::from(p));
         NSRect::new(
             NSPoint::new(f(b.origin.x), f(b.origin.y)),
@@ -373,8 +448,7 @@ mod mac {
 
     /// A region that spans the window's full width and/or height keeps doing
     /// so while AppKit resizes the window, until gpui's next frame re-applies it.
-    fn edge_mask(region: &GlassRegion, window: NSSize) -> NSAutoresizingMaskOptions {
-        let b = region.bounds;
+    fn edge_mask(b: Bounds<Pixels>, window: NSSize) -> NSAutoresizingMaskOptions {
         let f = |p: gpui::Pixels| f64::from(f32::from(p));
         let mut mask = NSAutoresizingMaskOptions::empty();
         if f(b.origin.x) <= 0.5 && f(b.origin.x + b.size.width) >= window.width - 0.5 {
@@ -421,9 +495,15 @@ mod mac {
     }
 
     /// Builds the glass container (macOS 26+; `None` when the class is
-    /// missing). `NSGlassEffectContainerView` has no typed binding in
-    /// objc2-app-kit yet, so it goes through the runtime.
+    /// missing, or when `DTB_KE_NO_GLASS` is set — for testing the pre-26
+    /// vibrancy tier on a Tahoe+ machine without it, the same one `install`
+    /// falls back to here). `NSGlassEffectContainerView` has no typed
+    /// binding in objc2-app-kit yet, so it goes through the runtime.
     fn glass_host(mtm: MainThreadMarker, content: &NSView) -> Option<GlassHost> {
+        if std::env::var_os("DTB_KE_NO_GLASS").is_some() {
+            debug!("native backdrop: DTB_KE_NO_GLASS set, forcing the vibrancy tier");
+            return None;
+        }
         let class = AnyClass::get(c"NSGlassEffectContainerView")?;
         AnyClass::get(c"NSGlassEffectView")?;
         let frame = content.bounds();

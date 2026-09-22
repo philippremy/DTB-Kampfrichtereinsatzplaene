@@ -14,13 +14,33 @@
 //! * gpui must paint nothing opaque over a region (its fill is transparent
 //!   whenever the native backdrop is active, see [`crate::material`]);
 //! * the glass samples the window backdrop, not gpui content;
-//! * the native frame follows gpui layout, so keep regions to static chrome
-//!   (sidebar, toolbar capsules) — never per-row or per-card.
+//! * the native frame follows gpui layout, so a region's `id` must stay
+//!   stable across frames for as long as the surface it represents exists;
+//! * the probe itself pins to `(top: 0, left: 0)` of its `relative` container
+//!   explicitly (not just `.absolute().size_full()`) — gpui falls back to an
+//!   element's ordinary *flow* position on any axis with no inset set at all,
+//!   so an unpinned probe only happens to land at the container's origin
+//!   when it's the first child; placed after normal-flow siblings (as
+//!   [`region_in_viewport`] typically is, alongside a pane's real scrolled
+//!   content) it silently reports the wrong bounds instead.
+//!
+//! Static chrome (sidebar, toolbar capsules) uses [`region`]/[`region_scaled`]
+//! with a fixed `&'static str` id. Content inside a scrollable pane (the
+//! detail view's judging-table / spare-judges / remarks cards) uses
+//! [`region_in_viewport`] instead: gpui keeps laying out and prepainting
+//! scrolled-out content as usual (nothing here is virtualised), so a card's
+//! probe still fires every frame with its true — possibly off-screen —
+//! window-relative bounds; what changes is that its native views are clipped
+//! to the enclosing pane's own visible bounds (the `viewport` argument)
+//! rather than floating freely, so a card scrolled under the toolbar band or
+//! past the bottom edge is actually hidden instead of drawing over other
+//! chrome. See [`GlassRegion::scroll_clip`] and [`super::backdrop`]'s
+//! handling of it.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use gpui::{Bounds, Hsla, IntoElement, Pixels, Styled, canvas, px};
+use gpui::{Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, canvas, px};
 
 use crate::theme::{ActiveTheme, Appearance, Theme};
 
@@ -34,7 +54,7 @@ pub enum GlassStyle {
 }
 
 /// One glass surface for the current frame.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct GlassRegion {
     /// Window-relative bounds, top-left origin (gpui's space).
     pub bounds: Bounds<Pixels>,
@@ -49,6 +69,12 @@ pub struct GlassRegion {
     /// render together) or stands alone. Large surfaces stand alone: merged
     /// into the container they enlarged the capsules' shadows.
     pub contained: bool,
+    /// This region lives inside a scrollable pane: `(group id, the pane's
+    /// current window-relative visible bounds)`. Every region sharing a
+    /// group id is clipped to that same rect instead of its own frame — see
+    /// [`region_in_viewport`] and the module doc comment. `None` for the
+    /// ordinary, freely-floating chrome regions.
+    pub scroll_clip: Option<(SharedString, Bounds<Pixels>)>,
 }
 
 /// What a surface *is*; maps to a style + shape so views don't pick raw
@@ -68,29 +94,36 @@ pub enum GlassRole {
     Capsule,
     /// The one primary toolbar action — accent-tinted capsule.
     CapsuleProminent,
+    /// A detail-view card (judging table, spare judges, remarks) — a
+    /// standalone floating glass panel, always used with
+    /// [`region_in_viewport`] so it's clipped to its scroll pane.
+    Card,
 }
 
 impl GlassRole {
     fn style(self) -> Option<GlassStyle> {
         match self {
             GlassRole::ContentBacking => None,
-            GlassRole::Sidebar | GlassRole::Capsule | GlassRole::CapsuleProminent => {
-                Some(GlassStyle::Regular)
-            }
+            GlassRole::Sidebar
+            | GlassRole::Capsule
+            | GlassRole::CapsuleProminent
+            | GlassRole::Card => Some(GlassStyle::Regular),
         }
     }
 
     fn contained(self) -> bool {
-        !matches!(self, GlassRole::Sidebar)
+        !matches!(self, GlassRole::Sidebar | GlassRole::Card)
     }
 
-    /// Capsules are fully rounded, whatever size they lay out to.
-    fn corner_radius(self, bounds: Bounds<Pixels>) -> Pixels {
+    /// Capsules are fully rounded, whatever size they lay out to; a card
+    /// keeps the skin's ordinary large-radius corner.
+    fn corner_radius(self, bounds: Bounds<Pixels>, theme: &Theme) -> Pixels {
         match self {
             GlassRole::Sidebar | GlassRole::ContentBacking => px(0.),
             GlassRole::Capsule | GlassRole::CapsuleProminent => {
                 bounds.size.width.min(bounds.size.height) / 2.0
             }
+            GlassRole::Card => theme.skin.radius_lg_px(),
         }
     }
 
@@ -110,7 +143,13 @@ impl GlassRole {
         };
         let none = Hsla { a: 0.0, ..chrome };
         match self {
-            GlassRole::Sidebar => (Hsla { a: tint, ..chrome }, Hsla { a: backing, ..chrome }),
+            GlassRole::Sidebar => (
+                Hsla { a: tint, ..chrome },
+                Hsla {
+                    a: backing,
+                    ..chrome
+                },
+            ),
             GlassRole::ContentBacking => (
                 none,
                 Hsla {
@@ -118,7 +157,10 @@ impl GlassRole {
                     ..theme.color.background
                 },
             ),
-            GlassRole::Capsule => (none, none),
+            // The card's own glass material carries enough visual weight on
+            // its own — no extra tint/backing, same call as the plain
+            // toolbar capsule.
+            GlassRole::Capsule | GlassRole::Card => (none, none),
             GlassRole::CapsuleProminent => (
                 Hsla {
                     a: 0.9,
@@ -130,7 +172,7 @@ impl GlassRole {
     }
 }
 
-type Frame = BTreeMap<&'static str, GlassRegion>;
+type Frame = BTreeMap<SharedString, GlassRegion>;
 
 thread_local! {
     /// Regions recorded so far in the frame being prepainted.
@@ -138,14 +180,17 @@ thread_local! {
 }
 
 /// A zero-cost probe: place it (as a child) inside a `relative` container that
-/// should be a glass surface. `id` must be unique per window.
-pub fn region(id: &'static str, role: GlassRole) -> impl IntoElement {
+/// should be a glass surface. `id` must be unique per window and, for a
+/// surface that comes and goes across frames, stable for as long as that
+/// surface logically exists (its identity, not its current visibility).
+pub fn region(id: impl Into<SharedString>, role: GlassRole) -> impl IntoElement {
     region_scaled(id, role, 1.0)
 }
 
 /// [`region`] with the glass grown by `scale` about its centre — the press
 /// bump. Only the native frame changes; gpui's layout is untouched.
-pub fn region_scaled(id: &'static str, role: GlassRole, scale: f32) -> impl IntoElement {
+pub fn region_scaled(id: impl Into<SharedString>, role: GlassRole, scale: f32) -> impl IntoElement {
+    let id = id.into();
     canvas(
         move |bounds, _window, cx| {
             if super::backdrop::glass_active() {
@@ -164,14 +209,15 @@ pub fn region_scaled(id: &'static str, role: GlassRole, scale: f32) -> impl Into
                 let (tint, backing) = role.colors(cx.theme());
                 FRAME.with(|f| {
                     f.borrow_mut().insert(
-                        id,
+                        id.clone(),
                         GlassRegion {
                             bounds,
                             style: role.style(),
-                            corner_radius: role.corner_radius(bounds),
+                            corner_radius: role.corner_radius(bounds, cx.theme()),
                             tint,
                             backing,
                             contained: role.contained(),
+                            scroll_clip: None,
                         },
                     );
                 });
@@ -180,8 +226,69 @@ pub fn region_scaled(id: &'static str, role: GlassRole, scale: f32) -> impl Into
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
+
+/// [`region`] for a surface inside a scrollable pane. `viewport` is that
+/// pane's own current window-relative bounds (its visible clip rect); every
+/// region sharing `group` is clipped to it, so scrolled-out content is
+/// actually hidden rather than drawn over neighbouring chrome. See the
+/// module doc comment.
+///
+/// `tint_override` replaces `role`'s own resting tint for this one instance
+/// — `None` keeps the role default (untinted, for a plain [`GlassRole::Card`]).
+/// A card that needs to read as selected or conflicted passes `Some(..)`
+/// instead of drawing an opaque gpui fill over the glass, which would defeat
+/// the point of it being glass.
+///
+/// gpui keeps prepainting scrolled-out content as usual here (nothing is
+/// virtualised), so this probe fires every frame with the card's true
+/// bounds — including while it's off-screen — exactly like [`region`]; the
+/// only difference is the clip rect handed to the native backdrop.
+pub fn region_in_viewport(
+    id: impl Into<SharedString>,
+    role: GlassRole,
+    viewport: Bounds<Pixels>,
+    group: impl Into<SharedString>,
+    tint_override: Option<Hsla>,
+) -> impl IntoElement {
+    let id = id.into();
+    let group = group.into();
+    canvas(
+        move |bounds, _window, cx| {
+            if super::backdrop::glass_active() {
+                let (role_tint, backing) = role.colors(cx.theme());
+                let tint = tint_override.unwrap_or(role_tint);
+                FRAME.with(|f| {
+                    f.borrow_mut().insert(
+                        id.clone(),
+                        GlassRegion {
+                            bounds,
+                            style: role.style(),
+                            corner_radius: role.corner_radius(bounds, cx.theme()),
+                            tint,
+                            backing,
+                            contained: role.contained(),
+                            scroll_clip: Some((group.clone(), viewport)),
+                        },
+                    );
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// The shared [`region_in_viewport`] group id for the detail view's own
+/// scroll pane — judging-table, spare-judges and remarks cards all clip to
+/// it.
+pub const DETAIL_SCROLL_GROUP: &str = "detail-scroll";
 
 /// Paint this **last** in the window root: its prepaint runs after every
 /// [`region`] probe, so it sees the complete set for the frame, applies it to
@@ -208,4 +315,13 @@ pub(super) type Regions = Frame;
 /// transparent surface (the native glass shows through) and their token fill.
 pub fn active() -> bool {
     super::backdrop::glass_active()
+}
+
+/// The macOS skin, but the glass tier *isn't* in effect right now (pre-Tahoe,
+/// `DTB_KE_NO_GLASS`, or Reduce Transparency) — as opposed to Windows/Linux,
+/// which have their own distinct non-glass look that a macOS-specific
+/// fallback treatment must not touch. `false` off macOS and whenever
+/// [`active`] is `true`.
+pub fn mac_fallback() -> bool {
+    super::backdrop::available() && !active()
 }

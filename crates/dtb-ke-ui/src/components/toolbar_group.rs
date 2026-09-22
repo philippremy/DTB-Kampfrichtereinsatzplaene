@@ -49,6 +49,7 @@ enum Item {
 pub struct ToolbarGroup {
     id: &'static str,
     prominent: bool,
+    chromeless: bool,
     items: Vec<Item>,
 }
 
@@ -58,6 +59,7 @@ impl ToolbarGroup {
         Self {
             id,
             prominent: false,
+            chromeless: false,
             items: Vec::new(),
         }
     }
@@ -65,6 +67,19 @@ impl ToolbarGroup {
     /// The accent-tinted capsule for the toolbar's primary action.
     pub fn prominent(mut self) -> Self {
         self.prominent = true;
+        self
+    }
+
+    /// A single standalone button (not a *group* of related actions, which
+    /// still wants a capsule to visually tie them together) — on the macOS
+    /// fallback tier ([`glass::mac_fallback`]) this draws no capsule chrome
+    /// at rest at all, relying entirely on the button's own `Ghost`-tone
+    /// hover for feedback, matching a plain unified-toolbar button. No
+    /// effect on the glass tier (still real glass) or on Windows/Linux
+    /// (unaffected — they have their own, deliberately different, non-glass
+    /// look).
+    pub fn chromeless(mut self) -> Self {
+        self.chromeless = true;
         self
     }
 
@@ -168,12 +183,16 @@ impl RenderOnce for ToolbarGroup {
                 el.child(glass::region_scaled(self.id, role, scale))
             })
             .when(!native, |el| {
-                let (fill, border) = if self.prominent {
-                    (c.primary, c.primary)
+                if self.chromeless && glass::mac_fallback() {
+                    el
                 } else {
-                    (c.surface, c.border)
-                };
-                el.bg(fill).border_1().border_color(border).shadow_xs()
+                    let (fill, border) = if self.prominent {
+                        (c.primary, c.primary)
+                    } else {
+                        (c.surface, c.border)
+                    };
+                    el.bg(fill).border_1().border_color(border).shadow_xs()
+                }
             })
             .child(
                 div()

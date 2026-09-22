@@ -460,10 +460,13 @@ fn search_capsule(
             .child(div().flex_1().min_w_0().child(field.bare()))
             .into_any_element()
     } else {
+        // The macOS fallback tier draws no fill (just the field's own
+        // outline, already drawn unconditionally) — Windows/Linux keep the
+        // filled pill, their own distinct non-glass look.
         div()
             .flex_1()
             .min_w_0()
-            .child(field.paints_background(true))
+            .child(field.paints_background(!glass::mac_fallback()))
             .into_any_element()
     }
 }
@@ -622,7 +625,7 @@ impl Render for Sidebar {
                         // the toolbar, so it's one glass view moving between them.
                         // The margin is *outside* the glass capsule.
                         .child(div().flex_none().mx(px(6.)).child(
-                            ToolbarGroup::new("toolbar-toggle").button(
+                            ToolbarGroup::new("toolbar-toggle").chromeless().button(
                                 Button::icon("sidebar-toggle", Icon::PanelLeft)
                                     .oval()
                                     .tooltip(cx.t("toolbar.toggle-sidebar"))
@@ -669,7 +672,7 @@ impl Render for Sidebar {
                     }))
                     .child(search_capsule(&self.search, window, cx))
                     .child(
-                        ToolbarGroup::new("sidebar-add").button(
+                        ToolbarGroup::new("sidebar-add").chromeless().button(
                             Button::icon("new-competition", Icon::Plus)
                                 .round()
                                 .tooltip(cx.t("sidebar.new-competition-button"))

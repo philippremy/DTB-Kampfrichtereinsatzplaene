@@ -27,8 +27,9 @@ use crate::components::field::Field;
 use crate::components::icon::Icon;
 use crate::i18n::ActiveLocale;
 use crate::model::roles::{self, Discipline};
+use crate::skin::glass::{self, GlassRole};
 use crate::store::JudgingTableEditor;
-use crate::theme::ActiveTheme;
+use crate::theme::{ActiveTheme, Appearance};
 
 pub type SelectHandler = Rc<dyn Fn(&mut App)>;
 /// Invoked from the card's delete button (or context menu); `DetailView` runs
@@ -176,6 +177,12 @@ pub struct JudgingTableCard {
     /// `cx.has_active_drag()` at render time since nothing ever clears it
     /// back to `false` directly.
     dragging: bool,
+    /// The detail scroll pane's own current window-relative visible bounds —
+    /// a shared `Rc<Cell>` owned by `DetailView` and handed to every card, so
+    /// each card's native glass region (see `render`) can clip itself to the
+    /// pane exactly like gpui's own `overflow_y_scroll` clips the card's
+    /// gpui content. `None` before the pane's own probe has painted once.
+    viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
     on_select: SelectHandler,
     on_delete: DeleteHandler,
     on_duplicate: DuplicateHandler,
@@ -186,6 +193,7 @@ impl JudgingTableCard {
     pub fn new(
         editor: Entity<JudgingTableEditor>,
         handlers: CardHandlers,
+        viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -217,6 +225,7 @@ impl JudgingTableCard {
             flip: Rc::new(Cell::new((px(0.), 0))),
             context_menu: None,
             dragging: false,
+            viewport,
             on_select,
             on_delete,
             on_duplicate,
@@ -490,6 +499,12 @@ impl JudgingTableCard {
     }
 }
 
+/// A stable, per-table native glass region id — `editor_id` never changes for
+/// as long as this judging table exists (see `JudgingTableCard::editor_id`).
+fn glass_id(editor_id: EntityId) -> SharedString {
+    SharedString::from(format!("table-card-{editor_id:?}"))
+}
+
 /// One `InputState` per judge slot of `kind`, seeded from its current value.
 fn build_slots(
     kind: &dtb_ke_types::JudgingTableKindDTO,
@@ -585,28 +600,89 @@ impl Render for JudgingTableCard {
                 .absolute()
                 .size_full()
             })
-            .child(
+            .child({
+                // On the glass tier (not while this card is the drag
+                // source — that placeholder stays a plain flat box, see
+                // below) the card is real Liquid Glass: a `GlassRole::Card`
+                // region clipped to the detail scroll pane, in place of the
+                // resting-state gpui border + fill. Selection / conflict /
+                // drag state still needs to read visually, so it's drawn as
+                // a thin ring *over* the glass rather than folded into the
+                // native surface itself.
+                let native = glass::active();
+                let viewport = self.viewport.get();
+                let show_glass = native && !is_dragging && viewport.is_some();
+                let state_ring = if is_dragging {
+                    Some((true, c.line_strong))
+                } else if conflicted {
+                    Some((false, c.warn))
+                } else if selected {
+                    Some((false, c.primary))
+                } else {
+                    None
+                };
+                // Tints the glass itself instead of a gpui fill drawn over
+                // it (which would just hide the material) — both colours
+                // match the fallback tier's own `c.warn` border / `c.accent_soft`
+                // fill, just softer (the fallback fill is opaque; a glass
+                // tint this strong would read as a flat wash and defeat the
+                // point of it being glass).
+                let card_tint = if conflicted {
+                    let alpha = match theme.appearance {
+                        Appearance::Light => 0.16,
+                        Appearance::Dark => 0.22,
+                    };
+                    Some(gpui::Hsla { a: alpha, ..c.warn })
+                } else if selected {
+                    let alpha = match theme.appearance {
+                        Appearance::Light => 0.14,
+                        Appearance::Dark => 0.20,
+                    };
+                    Some(gpui::Hsla { a: alpha, ..c.primary })
+                } else {
+                    None
+                };
+
                 div()
                     .id(("table-card", editor_id))
                     .relative()
                     .flex()
                     .flex_col()
-                    .gap(px(10.))
-                    .p(px(12.))
                     .rounded(theme.skin.radius_lg_px())
-                    .border_1()
-                    .when(is_dragging, |el| el.border_dashed())
-                    .border_color(if is_dragging {
-                        c.line_strong
-                    } else if conflicted {
-                        c.warn
-                    } else if selected {
-                        c.primary
-                    } else {
-                        c.border
+                    .when(show_glass, |el| {
+                        el.child(glass::region_in_viewport(
+                            glass_id(editor_id),
+                            GlassRole::Card,
+                            viewport.expect("checked by show_glass"),
+                            glass::DETAIL_SCROLL_GROUP,
+                            card_tint,
+                        ))
                     })
-                    .bg(if is_dragging { c.background } else { c.surface })
-                    .when(selected && !is_dragging, |el| el.bg(c.accent_soft))
+                    .when(!show_glass, |el| {
+                        el.border_1()
+                            .when(is_dragging, |el| el.border_dashed())
+                            .border_color(if is_dragging {
+                                c.line_strong
+                            } else if conflicted {
+                                c.warn
+                            } else if selected {
+                                c.primary
+                            } else {
+                                c.border
+                            })
+                            .bg(if is_dragging {
+                                c.background
+                            } else if selected {
+                                c.accent_soft
+                            } else {
+                                c.surface
+                            })
+                    })
+                    .when_some(state_ring.filter(|_| show_glass), |el, (dashed, color)| {
+                        el.border_1()
+                            .when(dashed, |el| el.border_dashed())
+                            .border_color(color)
+                    })
                     // Select on a click on the card itself — not one that landed in (and
                     // focused) one of its text fields. A plain closure, *not*
                     // `cx.listener`: `on_select` calls back into `DetailView::select_table`
@@ -655,6 +731,7 @@ impl Render for JudgingTableCard {
                             .flex()
                             .flex_col()
                             .gap(px(10.))
+                            .p(px(12.))
                             .when(is_dragging, |el| el.invisible())
                             .child(
                                 div()
@@ -761,7 +838,7 @@ impl Render for JudgingTableCard {
                         SharedString::from(format!("table-flip-{editor_id:?}-{flip_generation}")),
                         Animation::new(motion).with_easing(ease_out_quint()),
                         move |el, delta| el.top(flip_offset * (1.0 - delta)),
-                    ),
-            )
+                    )
+            })
     }
 }

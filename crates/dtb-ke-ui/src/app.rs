@@ -661,7 +661,7 @@ impl AppShell {
                     .when(!sidebar_owns_toggle, |el| {
                         // The margin is *outside* the glass capsule.
                         el.child(div().flex_none().mx(px(6.)).child(
-                            ToolbarGroup::new("toolbar-toggle").button(
+                            ToolbarGroup::new("toolbar-toggle").chromeless().button(
                                 Button::icon("toggle-sidebar", Icon::PanelLeft)
                                     .oval()
                                     .tooltip(cx.t("toolbar.toggle-sidebar"))

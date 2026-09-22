@@ -39,6 +39,7 @@ use gpui_base::{
 };
 
 use crate::components::field::Field;
+use crate::components::glass_card::glass_card;
 use crate::i18n::ActiveLocale;
 use crate::model::{Paragraph, RichText, Run};
 use crate::store::RemarksEditor;
@@ -75,11 +76,18 @@ pub struct RemarksSection {
     /// Absolute bounds of the color trigger, captured during prepaint so the
     /// popover can float above the detail scroll container.
     color_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The detail scroll pane's own visible bounds, shared with `DetailView`
+    /// and every other card — see `crate::detail::judging_table::JudgingTableCard::viewport`.
+    viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subs: Vec<Subscription>,
 }
 
 impl RemarksSection {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let placeholder = cx.t("detail.remarks.placeholder");
         let input = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -140,6 +148,7 @@ impl RemarksSection {
             color_open: false,
             color_target: None,
             color_bounds: Rc::new(Cell::new(None)),
+            viewport,
             _subs: subs,
         }
     }
@@ -470,58 +479,73 @@ impl Render for RemarksSection {
                 .child(glyph)
         };
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .p(px(20.))
-            .border_t_1()
-            .border_color(c.border)
-            .child(super::field_label(cx.t("detail.remarks.label"), &c))
+        // No `.mb(..)` here — this is the last thing in the scroll pane, and
+        // a trailing margin on the *last* child isn't reliably picked up by
+        // the scroll extent (it visually touched the window's bottom edge).
+        // The bottom gutter instead comes from `#detail-scroll`'s own
+        // `.pb(..)`, which unambiguously counts toward scrollable content
+        // size — see `DetailView::render`.
+        glass_card("remarks-card", self.viewport.get(), cx)
+            .mx(px(20.))
             .child(
                 div()
+                    .id("remarks-section")
                     .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(style_button(
-                        cx.t("detail.remarks.bold-glyph"),
-                        "fmt-bold",
-                        current.bold,
-                        Self::toggle_bold,
-                        |el| el.font_weight(FontWeight::BOLD),
-                        cx,
-                    ))
-                    .child(style_button(
-                        cx.t("detail.remarks.italic-glyph"),
-                        "fmt-italic",
-                        current.italic,
-                        Self::toggle_italic,
-                        |el| el.italic(),
-                        cx,
-                    ))
-                    .child(style_button(
-                        cx.t("detail.remarks.underline-glyph"),
-                        "fmt-underline",
-                        current.underline,
-                        Self::toggle_underline,
-                        |el| el.underline(),
-                        cx,
-                    ))
-                    .child(self.color_button(&c, radius, enabled, current.color.as_deref(), cx)),
-            )
-            .child(
-                div()
-                    .id("remarks-editor-scroll")
-                    .h(editor_height)
-                    .overflow_y_scroll()
-                    .rounded(radius)
-                    .border_1()
-                    .border_color(c.border)
-                    .bg(c.surface)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .text_size(px(13.))
-                    .child(Editor::new(&self.input)),
+                    .flex_col()
+                    .gap(px(6.))
+                    .p(px(20.))
+                    .child(super::field_label(cx.t("detail.remarks.label"), &c))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(style_button(
+                                cx.t("detail.remarks.bold-glyph"),
+                                "fmt-bold",
+                                current.bold,
+                                Self::toggle_bold,
+                                |el| el.font_weight(FontWeight::BOLD),
+                                cx,
+                            ))
+                            .child(style_button(
+                                cx.t("detail.remarks.italic-glyph"),
+                                "fmt-italic",
+                                current.italic,
+                                Self::toggle_italic,
+                                |el| el.italic(),
+                                cx,
+                            ))
+                            .child(style_button(
+                                cx.t("detail.remarks.underline-glyph"),
+                                "fmt-underline",
+                                current.underline,
+                                Self::toggle_underline,
+                                |el| el.underline(),
+                                cx,
+                            ))
+                            .child(self.color_button(
+                                &c,
+                                radius,
+                                enabled,
+                                current.color.as_deref(),
+                                cx,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("remarks-editor-scroll")
+                            .h(editor_height)
+                            .overflow_y_scroll()
+                            .rounded(radius)
+                            .border_1()
+                            .border_color(c.border)
+                            .bg(c.surface)
+                            .px(px(8.))
+                            .py(px(6.))
+                            .text_size(px(13.))
+                            .child(Editor::new(&self.input)),
+                    ),
             )
     }
 }

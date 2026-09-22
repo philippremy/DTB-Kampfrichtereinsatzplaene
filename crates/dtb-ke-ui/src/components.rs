@@ -11,6 +11,7 @@ pub mod context_menu;
 pub mod field;
 pub mod focus;
 pub mod gallery;
+pub mod glass_card;
 pub mod icon;
 pub mod kbd;
 pub mod menu_bar;

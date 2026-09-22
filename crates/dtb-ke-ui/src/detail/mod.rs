@@ -16,13 +16,14 @@ mod remarks;
 mod spare_judges;
 mod table_wizard;
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, App, AppContext, Context, DragMoveEvent, Entity, EntityId,
+    Animation, AnimationExt, App, AppContext, Bounds, Context, DragMoveEvent, Entity, EntityId,
     InteractiveElement, IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, canvas, div,
     ease_out_quint, px,
 };
 use gpui_base::Scrollbar;
@@ -73,6 +74,14 @@ pub struct DetailView {
     /// Scroll position of the content pane, so a re-render keeps it.
     scroll: ScrollHandle,
 
+    /// The `#detail-scroll` pane's own current window-relative visible
+    /// bounds, captured by a `canvas` probe in `Render` — shared with every
+    /// card (judging table / spare judges / remarks) so their native glass
+    /// regions can clip themselves to it on the glass tier (see
+    /// `crate::skin::glass::region_in_viewport`). `None` until the pane has
+    /// painted once.
+    card_viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
+
     /// While a reordering drag is in progress: the order the cards would
     /// land in if dropped right now (computed live purely from cursor
     /// position — see [`Self::update_drag_preview`]), purely a rendering
@@ -93,8 +102,9 @@ pub struct DetailView {
 
 impl DetailView {
     pub fn new(store: Entity<AppStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let spare = cx.new(|cx| SpareJudgesSection::new(window, cx));
-        let remarks = cx.new(|cx| RemarksSection::new(window, cx));
+        let card_viewport: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::new(Cell::new(None));
+        let spare = cx.new(|cx| SpareJudgesSection::new(card_viewport.clone(), window, cx));
+        let remarks = cx.new(|cx| RemarksSection::new(card_viewport.clone(), window, cx));
 
         let on_created: table_wizard::Created = {
             let weak = cx.weak_entity();
@@ -152,6 +162,7 @@ impl DetailView {
             meta_dialog,
             conflicts: PhaseConflicts::default(),
             scroll: ScrollHandle::new(),
+            card_viewport,
             drag_preview: None,
             _subs: subs,
             _round_sub: Vec::new(),
@@ -341,7 +352,12 @@ impl DetailView {
         let Some(preview) = self.drag_preview.take() else {
             return;
         };
-        let real: Vec<EntityId> = round.read(cx).tables().iter().map(|t| t.entity_id()).collect();
+        let real: Vec<EntityId> = round
+            .read(cx)
+            .tables()
+            .iter()
+            .map(|t| t.entity_id())
+            .collect();
         let (Some(from), Some(to)) = (
             real.iter().position(|id| *id == dragged),
             preview.iter().position(|id| *id == dragged),
@@ -494,6 +510,7 @@ impl DetailView {
             return;
         };
 
+        let card_viewport = self.card_viewport.clone();
         for editor in round.read(cx).tables().to_vec() {
             let id = editor.entity_id();
             let on_select: SelectHandler = {
@@ -524,6 +541,7 @@ impl DetailView {
                         on_delete,
                         on_duplicate,
                     },
+                    card_viewport.clone(),
                     window,
                     cx,
                 )
@@ -641,8 +659,7 @@ impl DetailView {
                             // `.p(px(20.))` above — the first card starts 20px
                             // below this container's own (padding-included)
                             // top edge, which is what `event.bounds` reports.
-                            let cursor_y =
-                                event.event.position.y - event.bounds.origin.y - px(20.);
+                            let cursor_y = event.event.position.y - event.bounds.origin.y - px(20.);
                             this.update_drag_preview(dragged, cursor_y, cx);
                         },
                     ))
@@ -712,6 +729,12 @@ impl Render for DetailView {
                             .size_full()
                             .flex()
                             .flex_col()
+                            // Bottom gutter below the remarks card — its own
+                            // `.mb(..)` isn't reliable for the *last* child
+                            // of a scroll pane (see `remarks.rs`); this is,
+                            // since it's unambiguously part of the
+                            // scrollable content's own box.
+                            .pb(px(20.))
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll)
                             .child(
@@ -747,7 +770,42 @@ impl Render for DetailView {
                     // above instead of being cut off by it. It sits over the
                     // scroll area's top edge and doesn't take input.
                     .child(scroll_edge_fade(cx.theme().color.background))
-                    .child(Scrollbar::vertical(&self.scroll)),
+                    .child(Scrollbar::vertical(&self.scroll))
+                    .child({
+                        // A sibling of `#detail-scroll`, not a descendant —
+                        // `#detail-scroll` fills this wrapper exactly
+                        // (`size_full`), so their bounds are identical, but
+                        // sitting outside the scrolled subtree means this
+                        // probe always reports the pane's fixed viewport
+                        // box, never a position shifted by the current
+                        // scroll offset (unlike a card's own bounds probe,
+                        // which is *supposed* to move with scroll). Every
+                        // card clips its native glass region to this rect —
+                        // see `card_viewport` / `GlassRole::Card`.
+                        //
+                        // `.top_0().left_0()` are load-bearing, not
+                        // decorative: with no inset pinned at all, gpui
+                        // falls back to this element's ordinary *flow*
+                        // position, and it isn't the first child here (it
+                        // comes after `#detail-scroll` itself, the fade, and
+                        // the scrollbar) — unpinned, it reported the pane's
+                        // *bottom* edge as its bounds instead of the whole
+                        // pane.
+                        let capture = self.card_viewport.clone();
+                        canvas(
+                            move |bounds, window, _cx| {
+                                if capture.get() != Some(bounds) {
+                                    capture.set(Some(bounds));
+                                    window.request_animation_frame();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                    }),
             )
             .child(self.wizard.clone())
             .child(self.meta_dialog.clone())
