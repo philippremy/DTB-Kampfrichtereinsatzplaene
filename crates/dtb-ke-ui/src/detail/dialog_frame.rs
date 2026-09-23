@@ -1,6 +1,6 @@
-//! Shared chrome for our modal dialogs (rendered inside a `gpui_base::Dialog`).
+//! Shared chrome for our modal dialogs (rendered inside a `gpui_kit::base::Dialog`).
 
-use gpui::{App, ClickEvent, Context, Div, InteractiveElement, Pixels, Styled, Window, div, px};
+use gpui_kit::{App, ClickEvent, Context, Div, InteractiveElement, Pixels, Styled, Window, div, px};
 
 use crate::theme::Theme;
 
@@ -25,7 +25,7 @@ pub fn scrim(theme: &Theme) -> Div {
 /// A styled dialog panel — a surface card `width` wide, laid out as a column.
 ///
 /// `.occlude()` stops mouse events inside the panel from reaching the
-/// `gpui_base::Dialog` backdrop (whose `on_any_mouse_down` dismisses the dialog
+/// `gpui_kit::base::Dialog` backdrop (whose `on_any_mouse_down` dismisses the dialog
 /// when its hitbox is the front-most one under the cursor).
 pub fn dialog_panel(theme: &Theme, width: Pixels) -> Div {
     div()

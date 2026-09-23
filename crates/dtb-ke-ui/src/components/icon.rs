@@ -5,7 +5,7 @@
 //! the current `text_color` fills the shape). Default size 16px, default colour
 //! `theme.color.foreground`.
 
-use gpui::{App, Hsla, IntoElement, Pixels, RenderOnce, Styled, Window, px, svg};
+use gpui_kit::{App, Hsla, IntoElement, Pixels, RenderOnce, Styled, Window, px, svg};
 
 use crate::theme::ActiveTheme;
 

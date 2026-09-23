@@ -19,7 +19,7 @@
 
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     App, Bounds, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
     RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px,

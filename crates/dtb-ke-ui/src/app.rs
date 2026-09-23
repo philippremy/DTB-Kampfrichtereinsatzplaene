@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use dtb_ke_export::Exporter;
 use futures::channel::oneshot;
-use gpui::{
+use gpui_kit::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, ClickEvent, Context, Entity,
     FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions,
     PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
     WindowControlArea, WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
 };
-use gpui_base::{ResizableState, h_resizable, resizable_panel};
+use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -88,7 +88,7 @@ pub struct AppShell {
     focus_handle: FocusHandle,
     sidebar_collapsed: bool,
     /// Current / last-good sidebar width; restored when it is re-opened.
-    sidebar_width: gpui::Pixels,
+    sidebar_width: gpui_kit::Pixels,
     /// Drives the `[sidebar | detail]` split drag.
     resizable_state: Entity<ResizableState>,
     /// CSD only: a left-button press landed on the title bar; the next move
@@ -118,10 +118,10 @@ pub struct AppShell {
     updater: Entity<Updater>,
     _updater_sub: Subscription,
     /// The startup delay + periodic recheck loop.
-    _updater_loop: gpui::Task<()>,
+    _updater_loop: gpui_kit::Task<()>,
     /// The startup delay + periodic recheck loop for `AppStore::maybe_backup`
     /// — same shape as `_updater_loop`, see its construction below.
-    _backup_loop: gpui::Task<()>,
+    _backup_loop: gpui_kit::Task<()>,
 }
 
 impl AppShell {
@@ -279,7 +279,7 @@ impl Drop for AppShell {
 
 impl AppShell {
     /// The corner update toast, `deferred` so it floats over everything.
-    fn updater_toast(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    fn updater_toast(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         if !updater::available() || !self.updater.read(cx).toast_visible() {
             return None;
         }
@@ -314,8 +314,8 @@ impl AppShell {
             .on_notes(open_notes);
 
         Some(
-            gpui::deferred(toast)
-                .with_priority(gpui_base::POPUP_PRIORITY)
+            gpui_kit::deferred(toast)
+                .with_priority(gpui_kit::base::POPUP_PRIORITY)
                 .into_any_element(),
         )
     }
@@ -600,8 +600,8 @@ impl AppShell {
                         &cx.t("app.import-overwrite-confirm"),
                         Some(&detail),
                         &[
-                            gpui::PromptButton::new(cx.t("app.import-overwrite-button")),
-                            gpui::PromptButton::new(cx.t("app.import-overwrite-cancel-button")),
+                            gpui_kit::PromptButton::new(cx.t("app.import-overwrite-button")),
+                            gpui_kit::PromptButton::new(cx.t("app.import-overwrite-cancel-button")),
                         ],
                         cx,
                     )
@@ -695,7 +695,7 @@ impl AppShell {
                     if danger {
                         el.bg(c.critical).text_color(c.destructive_foreground)
                     } else {
-                        el.bg(gpui::Hsla {
+                        el.bg(gpui_kit::Hsla {
                             a: 0.10,
                             ..c.foreground
                         })
@@ -809,7 +809,7 @@ impl AppShell {
     fn body(
         &mut self,
         window: &mut Window,
-        content_fill: gpui::Hsla,
+        content_fill: gpui_kit::Hsla,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let row = div().flex().flex_1().min_h(px(0.));
@@ -997,7 +997,7 @@ impl Render for AppShell {
 }
 
 /// Show a modal warning from an async context.
-fn alert(cx: &mut gpui::AsyncWindowContext, message: &str) {
+fn alert(cx: &mut gpui_kit::AsyncWindowContext, message: &str) {
     warn!("alert shown to the user: {message}");
     let message = message.to_owned();
     if cx
@@ -1012,7 +1012,7 @@ fn alert(cx: &mut gpui::AsyncWindowContext, message: &str) {
 }
 
 /// [`alert`], resolving `key` through the active [`crate::i18n::Locale`] first.
-fn alert_t(cx: &mut gpui::AsyncWindowContext, key: &str) {
+fn alert_t(cx: &mut gpui_kit::AsyncWindowContext, key: &str) {
     let message = cx
         .update(|_, cx| cx.t(key).to_string())
         .unwrap_or_else(|_| key.to_owned());
@@ -1021,7 +1021,7 @@ fn alert_t(cx: &mut gpui::AsyncWindowContext, key: &str) {
 
 /// [`alert`], resolving `key` + `args` through the active [`crate::i18n::Locale`]
 /// first (see [`crate::i18n::ActiveLocale::t_fmt`]).
-fn alert_t_fmt(cx: &mut gpui::AsyncWindowContext, key: &str, args: &[(&str, &str)]) {
+fn alert_t_fmt(cx: &mut gpui_kit::AsyncWindowContext, key: &str, args: &[(&str, &str)]) {
     let message = cx
         .update(|_, cx| cx.t_fmt(key, args))
         .unwrap_or_else(|_| key.to_owned());
@@ -1041,7 +1041,7 @@ enum WriteError {
 }
 
 impl WriteError {
-    fn detail(&self, cx: &mut gpui::AsyncWindowContext) -> String {
+    fn detail(&self, cx: &mut gpui_kit::AsyncWindowContext) -> String {
         match self {
             Self::Io(e) => cx
                 .update(|_, cx| cx.t_fmt("app.export-write-failed", &[("detail", e)]))

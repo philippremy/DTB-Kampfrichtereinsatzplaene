@@ -40,8 +40,12 @@ getrandom = { version = "0.3" }
 lettre = { version = "0.11", default-features = false, features = [
     "builder", "smtp-transport", "rustls-tls", "hostname",
 ] }
-gpui = { git = "https://github.com/zed-industries/zed.git" }
-gpui-base = { git = "https://github.com/longbridge/gpui-component.git" }
+# One dependency for the whole GPUI stack — bundles gpui, gpui-base (as
+# `gpui_kit::base`) and gpui_platform (as `gpui_kit::platform`) so no crate in
+# the workspace depends on gpui/gpui-base/gpui_platform directly any more.
+# `component` (gpui-component) and `assets` are on by default upstream; we
+# roll our own components/assets, so both are turned off.
+gpui-kit = { version = "0.6", default-features = false }
 image = { version = "0.25", default-features = false }
 # Embeds the .ico + VERSIONINFO into the Windows .exe (`dtb-ke-ui/build.rs`).
 # Same crate gpui uses for its own resources. It selects the resource compiler
@@ -100,7 +104,6 @@ windows = { version = "0.61", features = [
     "Win32_System_Registry",
 ] }
 windows-core = { version = "0.61.2" }
-gpui_platform = { git = "https://github.com/zed-industries/zed.git" }
 libc = { version = "0.2" }
 log = { version = "0.4" }
 # Mach FFI for the crash handler + its helper (macOS only).
@@ -144,11 +147,11 @@ strip = "symbols" # Still strip the whole binary, debug info and symbols stay in
 # The render / event / layout path must be optimized for speed or the UI is
 # incredibly slow — pin it back to 3 against the `opt-level = "z"` default above.
 [profile.release.package]
-gpui = { opt-level = 3 }
-gpui_macros = { opt-level = 3 }
-gpui_platform = { opt-level = 3 }
-gpui_apple = { opt-level = 3 }
-gpui_macos = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-macros = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+gpui-pre-apple = { opt-level = 3 }
+gpui-pre-macos = { opt-level = 3 }
 gpui-base = { opt-level = 3 }
 taffy = { opt-level = 3 }
 dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview

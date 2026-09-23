@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui::{App, Global, SharedString};
+use gpui_kit::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
 
 use crate::filesystem::FilesystemHelper;
@@ -96,7 +96,7 @@ impl UpdateChannel {
     pub const ALL: [Self; 2] = [Self::Stable, Self::Tip];
 
     /// A translated label for the picker.
-    pub fn label(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+    pub fn label(self, locale: &crate::i18n::Locale) -> gpui_kit::SharedString {
         use crate::i18n::ActiveLocale;
         let key = match self {
             Self::Stable => "settings.general.channel-stable",
@@ -106,7 +106,7 @@ impl UpdateChannel {
     }
 
     /// A short translated explanation for the settings window.
-    pub fn description(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+    pub fn description(self, locale: &crate::i18n::Locale) -> gpui_kit::SharedString {
         use crate::i18n::ActiveLocale;
         let key = match self {
             Self::Stable => "settings.general.channel-stable-description",

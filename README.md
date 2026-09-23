@@ -106,9 +106,10 @@ On **Linux** the updater only opens the download page; please replace the packag
 ### Prerequisites (all platforms)
 
 - **Rust**
-- **Git** — several dependencies (`gpui`, `gpui-base`) are git checkouts; the first build fetches
-  and compiles a large tree (gpui, aws-lc, turso, font-kit, the Typst compiler, …). Expect a
-  long first build and a few GB of `target/`.
+- **Git** — to clone the repository.
+- The first build fetches and compiles a large dependency tree (`gpui-kit` — bundling gpui
+  and gpui-base — aws-lc, turso, font-kit, the Typst compiler, …). Expect a long first build and
+  a few GB of `target/`.
 - A **C/C++ compiler** and **CMake** — `aws-lc-sys` / `ring` (TLS for the updater and the
   crash-report mail transport) build native code. On Windows x86, **NASM** as well.
 

@@ -2,12 +2,12 @@
 
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     Render, StatefulInteractiveElement, Styled, Window, div, px,
 };
-use gpui_base::Dialog;
-use gpui_base::input::{Input, InputState};
+use gpui_kit::base::Dialog;
+use gpui_kit::base::input::{Input, InputState};
 
 use crate::components::button::{Button, ButtonTone};
 use crate::detail::dialog_frame::{dialog_panel, dismiss_handler, scrim};

@@ -6,7 +6,7 @@
 //! "windows"))]` with a fallback for every other OS, so callers never need
 //! `#[cfg]` — the same convention as [`super::window::windows_backdrop_support`].
 
-use gpui::{App, Hsla};
+use gpui_kit::{App, Hsla};
 
 use crate::theme::Appearance;
 
@@ -59,7 +59,7 @@ mod macos {
 
     use block2::{RcBlock, StackBlock};
     use futures::StreamExt;
-    use gpui::{App, Hsla, Rgba};
+    use gpui_kit::{App, Hsla, Rgba};
     use objc2::MainThreadMarker;
     use objc2::rc::Retained;
     use objc2::runtime::{NSObjectProtocol, ProtocolObject};
@@ -149,7 +149,7 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod windows {
     use futures::StreamExt;
-    use gpui::{App, Hsla, Rgba};
+    use gpui_kit::{App, Hsla, Rgba};
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_DWORD, REG_NOTIFY_CHANGE_LAST_SET,

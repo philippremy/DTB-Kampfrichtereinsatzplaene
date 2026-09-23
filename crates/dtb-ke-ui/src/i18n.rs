@@ -19,7 +19,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use gpui::{App, Global, SharedString};
+use gpui_kit::{App, Global, SharedString};
 
 /// The catalog every other resolved locale is overlaid onto, and the final
 /// fallback when nothing else matches. Must always have an entry in

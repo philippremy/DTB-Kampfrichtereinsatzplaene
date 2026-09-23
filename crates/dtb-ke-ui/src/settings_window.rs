@@ -16,13 +16,13 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Keystroke, MouseButton, ParentElement, Pixels, Render, ScrollHandle, SharedString,
     Size, StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
     WindowKind, WindowOptions, anchored, canvas, deferred, div, point, prelude::FluentBuilder, px,
 };
-use gpui_base::Scrollbar;
+use gpui_kit::base::Scrollbar;
 
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
@@ -308,7 +308,7 @@ impl SettingsWindow {
                     .rounded(cx.theme().skin.radius_control_px())
                     .text_size(px(13.5))
                     .when(selected, |el| {
-                        el.bg(gpui::Hsla {
+                        el.bg(gpui_kit::Hsla {
                             a: 0.14,
                             ..c.primary
                         })
@@ -362,7 +362,7 @@ impl SettingsWindow {
                             .child(
                                 div()
                                     .text_size(px(19.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .child(self.tab.label(cx.global::<crate::i18n::Locale>())),
                             )
                             .child(body),
@@ -508,7 +508,7 @@ impl SettingsWindow {
             })
     }
 
-    fn theme_switch(&self, current: ThemeMode, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn theme_switch(&self, current: ThemeMode, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let locale = cx.global::<crate::i18n::Locale>().clone();
@@ -563,7 +563,7 @@ impl SettingsWindow {
         &self,
         current: crate::settings::UpdateChannel,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         use crate::settings::UpdateChannel;
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
@@ -623,7 +623,7 @@ impl SettingsWindow {
     /// plus a leading "System" option; adding a shipped catalog needs no
     /// change here. Same popover convention as
     /// `detail::meta_dialog::MetaDialog::org_selector`.
-    fn language_switch(&self, current: Option<String>, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn language_switch(&self, current: Option<String>, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         use crate::i18n::Locale;
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
@@ -696,10 +696,10 @@ impl SettingsWindow {
             }
 
             // Same priority convention as `MetaDialog::org_selector` — above
-            // a `gpui_base::Dialog` (this window has none, but keeps every
+            // a `gpui_kit::base::Dialog` (this window has none, but keeps every
             // popover in the app consistent).
             deferred(anchored().position(anchor).snap_to_window().child(col))
-                .with_priority(gpui_base::POPUP_PRIORITY)
+                .with_priority(gpui_kit::base::POPUP_PRIORITY)
         });
 
         let capture = self.language_bounds.clone();
@@ -762,7 +762,7 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn autosave_switch(&self, current: AutosaveDelay, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn autosave_switch(&self, current: AutosaveDelay, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let short = |d: AutosaveDelay, cx: &Context<Self>| {
@@ -850,7 +850,7 @@ impl SettingsWindow {
             ))
     }
 
-    fn loglevel_switch(&self, current: LogLevel, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn loglevel_switch(&self, current: LogLevel, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let locale = cx.global::<crate::i18n::Locale>().clone();
@@ -899,7 +899,7 @@ impl SettingsWindow {
         let c = cx.theme().color;
 
         let locale = cx.global::<crate::i18n::Locale>().clone();
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
         for (action, label) in keymap::configurable(&locale) {
             rows.push(self.binding_row(action, label.to_string(), cx));
         }
@@ -967,7 +967,7 @@ impl SettingsWindow {
         action: &'static str,
         label: String,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let c = cx.theme().color;
         let recording = self.recording == Some(action);
         let pending = self.pending.as_ref().filter(|p| p.action == action);
@@ -1148,7 +1148,7 @@ fn section_label(
         .mt(px(18.))
         .mb(px(2.))
         .text_size(px(11.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
         .text_color(c.muted_foreground)
         .child(text.to_uppercase())
 }
@@ -1174,7 +1174,7 @@ fn setting_row(
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     c: &crate::theme::PaletteColors,
-    control: gpui::AnyElement,
+    control: gpui_kit::AnyElement,
 ) -> impl IntoElement {
     let title = title.into();
     let description = description.into();

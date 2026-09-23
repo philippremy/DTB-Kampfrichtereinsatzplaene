@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     AnyElement, App, FontWeight, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
@@ -187,7 +187,7 @@ impl UpdaterToast {
     fn card(
         &self,
         c: crate::theme::PaletteColors,
-        radius: gpui::Pixels,
+        radius: gpui_kit::Pixels,
         cx: &App,
     ) -> impl IntoElement {
         let body: AnyElement = match &self.state {
@@ -226,7 +226,7 @@ impl UpdaterToast {
             .child(body)
     }
 
-    fn card_title(&self, cx: &App) -> gpui::SharedString {
+    fn card_title(&self, cx: &App) -> gpui_kit::SharedString {
         let key = match &self.state {
             State::Restart(_) => "updater.title-restart",
             State::Failed(_) => "updater.title-failed",
@@ -386,7 +386,7 @@ impl UpdaterToast {
                         el.child(
                             div()
                                 .h_full()
-                                .w(gpui::relative(f))
+                                .w(gpui_kit::relative(f))
                                 .rounded_full()
                                 .bg(c.primary),
                         )
@@ -460,7 +460,7 @@ enum PillTone {
 }
 
 fn detail_row(
-    label: impl Into<gpui::SharedString>,
+    label: impl Into<gpui_kit::SharedString>,
     value: &str,
     c: crate::theme::PaletteColors,
 ) -> impl IntoElement {

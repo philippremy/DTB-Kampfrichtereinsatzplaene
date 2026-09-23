@@ -4,7 +4,7 @@
 //! caller: [`Checkbox::on_change`] reports the *next* value and the caller
 //! re-renders it through [`Checkbox::new`].
 
-use gpui::{
+use gpui_kit::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };

@@ -9,7 +9,7 @@
 //!
 //! [`Theme::install`] resolves the pair for the current [`Skin`] and
 //! [`Appearance`], installs it as a gpui global (read through [`ActiveTheme`]),
-//! and mirrors the colours into `gpui_base::Theme` so the behaviour-layer
+//! and mirrors the colours into `gpui_kit::base::Theme` so the behaviour-layer
 //! primitives from `gpui-base` match.
 //!
 //! Debug builds re-read the TOML from the source tree so the design can be
@@ -31,7 +31,7 @@ pub use skin::{
 
 use std::borrow::Cow;
 
-use gpui::{App, Global, WindowAppearance};
+use gpui_kit::{App, Global, WindowAppearance};
 use serde::{Deserialize, Serialize};
 
 const PALETTE_DTB_EMBEDDED: &str = include_str!("../themes/palettes/dtb.toml");
@@ -82,7 +82,7 @@ impl ThemeMode {
     }
 
     /// A translated label for the toggle.
-    pub fn label(self, locale: &crate::i18n::Locale) -> gpui::SharedString {
+    pub fn label(self, locale: &crate::i18n::Locale) -> gpui_kit::SharedString {
         use crate::i18n::ActiveLocale;
         let key = match self {
             ThemeMode::System => "settings.general.theme-system",
@@ -215,13 +215,13 @@ impl Theme {
         })
     }
 
-    /// Mirror the resolved colours and radii into `gpui_base::Theme` so the
+    /// Mirror the resolved colours and radii into `gpui_kit::base::Theme` so the
     /// `gpui-base` behaviour primitives (Input, Scrollbar, …) match our look.
     fn bridge_to_base(&self, cx: &mut App) {
-        use gpui_base::ThemeAppearance;
+        use gpui_kit::base::ThemeAppearance;
 
         let c = &self.color;
-        let base = gpui_base::Theme::global_mut(cx);
+        let base = gpui_kit::base::Theme::global_mut(cx);
 
         base.appearance = match self.appearance {
             Appearance::Light => ThemeAppearance::Light,
@@ -248,7 +248,7 @@ impl Theme {
         colors.border = c.border;
         colors.input = c.border;
         colors.ring = c.ring;
-        colors.selection = gpui::Hsla {
+        colors.selection = gpui_kit::Hsla {
             a: 0.24,
             ..c.primary
         };
@@ -264,8 +264,8 @@ impl Theme {
         // `clamp_thumb_radius` caps an oversized request to that) — the
         // modern native look on macOS, Windows 11, and GNOME alike.
         let thumb_radius = self.skin.radius_control_px();
-        base.scrollbar = gpui_base::ScrollbarTheme::new().with_styles(
-            gpui_base::ScrollbarStyles::default()
+        base.scrollbar = gpui_kit::base::ScrollbarTheme::new().with_styles(
+            gpui_kit::base::ScrollbarStyles::default()
                 .thumb(|t| t.radius(thumb_radius))
                 .thumb_hover(|t| t.radius(thumb_radius))
                 .thumb_active(|t| t.radius(thumb_radius)),
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn appearance_from_window_appearance() {
-        use gpui::WindowAppearance;
+        use gpui_kit::WindowAppearance;
         assert_eq!(
             Appearance::from(WindowAppearance::VibrantLight),
             Appearance::Light

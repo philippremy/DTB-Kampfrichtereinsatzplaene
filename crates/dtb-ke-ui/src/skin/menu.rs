@@ -10,7 +10,7 @@
 //!   same [`crate::menu::build`] output. We still hand gpui the model so the
 //!   Windows jump list / dock menu can reuse it later.
 
-use gpui::App;
+use gpui_kit::App;
 
 use crate::i18n::Locale;
 use crate::menu::{self, MenuState};

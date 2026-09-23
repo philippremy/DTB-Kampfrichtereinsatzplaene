@@ -9,16 +9,16 @@
 //!
 //! ## Applying changes
 //!
-//! gpui's [`Keymap`](gpui::Keymap) has no "remove one binding" operation, and
-//! [`App::clear_key_bindings`](gpui::App::clear_key_bindings) would also drop the
+//! gpui's [`Keymap`](gpui_kit::Keymap) has no "remove one binding" operation, and
+//! [`App::clear_key_bindings`](gpui_kit::App::clear_key_bindings) would also drop the
 //! bindings `gpui-base` installs for its text editor. So [`rebind`] *appends*: a
-//! targeted [`Unbind`](gpui::Unbind) for the previously effective keystroke,
+//! targeted [`Unbind`](gpui_kit::Unbind) for the previously effective keystroke,
 //! then the new binding. [`install`] (startup) builds the whole set once.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     Action, App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate, Keystroke, Unbind,
 };
 
@@ -254,7 +254,7 @@ pub type Overrides = BTreeMap<String, String>;
 
 /// The configurable rows, in table order, paired with their translated menu
 /// label. Powers the settings window's key-binding list.
-pub fn configurable(locale: &crate::i18n::Locale) -> Vec<(&'static str, gpui::SharedString)> {
+pub fn configurable(locale: &crate::i18n::Locale) -> Vec<(&'static str, gpui_kit::SharedString)> {
     defaults()
         .into_iter()
         .filter(|row| row.configurable)
@@ -263,7 +263,7 @@ pub fn configurable(locale: &crate::i18n::Locale) -> Vec<(&'static str, gpui::Sh
             (
                 name,
                 crate::menu::label_for(name, locale)
-                    .unwrap_or_else(|| gpui::SharedString::from(name)),
+                    .unwrap_or_else(|| gpui_kit::SharedString::from(name)),
             )
         })
         .collect()
@@ -271,7 +271,7 @@ pub fn configurable(locale: &crate::i18n::Locale) -> Vec<(&'static str, gpui::Sh
 
 /// Parse a whole space-separated keystroke sequence, discarding `key_char`
 /// (which varies by keyboard layout and must not affect equality).
-fn parse_sequence(keystroke: &str) -> Option<Vec<(gpui::Modifiers, String)>> {
+fn parse_sequence(keystroke: &str) -> Option<Vec<(gpui_kit::Modifiers, String)>> {
     let chords: Vec<_> = keystroke.split_whitespace().collect();
     if chords.is_empty() {
         return None;
@@ -384,7 +384,7 @@ pub fn conflict(
         };
         if same_keystroke(candidate, &effective) {
             let label = crate::menu::label_for(name, locale)
-                .unwrap_or_else(|| gpui::SharedString::from(name))
+                .unwrap_or_else(|| gpui_kit::SharedString::from(name))
                 .to_string();
             return Some(Conflict::Command(label));
         }

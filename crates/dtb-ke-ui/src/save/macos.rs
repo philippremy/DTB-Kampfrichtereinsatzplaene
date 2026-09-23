@@ -21,7 +21,7 @@ use std::rc::Rc;
 use block2::RcBlock;
 use dtb_ke_export::{DocxExport, PdfExport, PdfStandard, pdf_standard_conflicts};
 use futures::channel::oneshot;
-use gpui::App;
+use gpui_kit::App;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send, sel};

@@ -17,14 +17,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use gpui::{
+use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, FocusHandle, Focusable,
     HighlightStyle, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, ParentElement,
     Render, ScrollHandle, ScrollStrategy, SharedString, Size, StatefulInteractiveElement, Styled,
     StyledText, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowKind,
     WindowOptions, div, prelude::FluentBuilder, px, uniform_list,
 };
-use gpui_base::Scrollbar;
+use gpui_kit::base::Scrollbar;
 
 use crate::components::icon::Icon;
 use crate::components::toggle::Toggle;
@@ -241,7 +241,7 @@ impl LogsWindow {
                     .flex()
                     .items_center()
                     .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                     .text_color(c.muted_foreground)
                     .child(cx.t("logs.files-section")),
             )
@@ -271,14 +271,14 @@ impl LogsWindow {
                                     .py(px(7.))
                                     .rounded(cx.theme().skin.radius_control_px())
                                     .when(selected, |el| {
-                                        el.bg(gpui::Hsla {
+                                        el.bg(gpui_kit::Hsla {
                                             a: 0.14,
                                             ..c.primary
                                         })
                                     })
                                     .when(!selected, |el| {
                                         el.cursor_pointer().hover(|el| {
-                                            el.bg(gpui::Hsla {
+                                            el.bg(gpui_kit::Hsla {
                                                 a: 0.06,
                                                 ..c.foreground
                                             })
@@ -372,7 +372,7 @@ impl LogsWindow {
             )
     }
 
-    fn detail_body(&self, c: &PaletteColors, cx: &Context<Self>) -> gpui::AnyElement {
+    fn detail_body(&self, c: &PaletteColors, cx: &Context<Self>) -> gpui_kit::AnyElement {
         match &self.content {
             Content::None => body_frame(placeholder(cx.t("logs.no-file-selected"), c)),
             Content::Error(err) => body_frame(placeholder(err.clone(), c)),
@@ -412,7 +412,7 @@ impl LogsWindow {
 }
 
 /// Wrap a small non-list body so it fills the pane.
-fn body_frame(child: gpui::AnyElement) -> gpui::AnyElement {
+fn body_frame(child: gpui_kit::AnyElement) -> gpui_kit::AnyElement {
     div().flex_1().min_h(px(0.)).child(child).into_any_element()
 }
 
@@ -470,7 +470,7 @@ impl Focusable for LogsWindow {
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-fn placeholder(text: impl Into<SharedString>, c: &PaletteColors) -> gpui::AnyElement {
+fn placeholder(text: impl Into<SharedString>, c: &PaletteColors) -> gpui_kit::AnyElement {
     div()
         .p(px(24.))
         .text_size(px(13.))
@@ -482,7 +482,7 @@ fn placeholder(text: impl Into<SharedString>, c: &PaletteColors) -> gpui::AnyEle
 /// One log line as a `uniform_list` row — plain, or with per-field colour
 /// highlights matching `dtb_ke_log`'s stderr scheme (timecode / thread /
 /// subsystem dimmed, level letter coloured, an error / warning message tinted).
-fn log_line_el(line: &str, colorize: bool, c: &PaletteColors) -> gpui::AnyElement {
+fn log_line_el(line: &str, colorize: bool, c: &PaletteColors) -> gpui_kit::AnyElement {
     let row = div().whitespace_nowrap().min_h(px(15.));
     let owned = SharedString::from(line.to_string());
 

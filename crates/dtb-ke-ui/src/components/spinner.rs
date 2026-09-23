@@ -1,12 +1,12 @@
 //! A small indeterminate loading spinner — a rotating 3/4 arc.
 //!
 //! Rendered as a tinted SVG mask (like [`Icon`](super::icon::Icon)); the
-//! rotation goes through `gpui::with_animation`, which snaps to a static ring
+//! rotation goes through `gpui_kit::with_animation`, which snaps to a static ring
 //! when `App::reduce_motion` is set.
 
 use std::time::Duration;
 
-use gpui::{
+use gpui_kit::{
     Animation, AnimationExt, App, Hsla, IntoElement, Pixels, RenderOnce, Styled, Transformation,
     Window, percentage, px, svg,
 };

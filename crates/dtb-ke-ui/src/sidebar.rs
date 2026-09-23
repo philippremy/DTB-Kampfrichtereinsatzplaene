@@ -10,15 +10,15 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui::FontWeight;
-use gpui::{
+use gpui_kit::FontWeight;
+use gpui_kit::{
     App, AppContext, ClickEvent, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Size,
     StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
     size,
 };
-use gpui_base::input::{InputEvent, InputState};
-use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::base::input::{InputEvent, InputState};
+use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use uuid::Uuid;
 
 use crate::actions::file::NewCompetition;
@@ -70,7 +70,7 @@ pub struct Sidebar {
     /// the window-absolute point (the right-click) to anchor the popover at.
     context_menu: Option<(Uuid, Point<Pixels>)>,
     /// The selected document whose save state the row indicator shows.
-    watched_doc: Option<gpui::EntityId>,
+    watched_doc: Option<gpui_kit::EntityId>,
     doc_sub: Option<Subscription>,
     on_export: CompetitionAction,
     on_settings: CompetitionAction,
@@ -168,7 +168,7 @@ impl Sidebar {
 
     /// Apply a click on a competition row, honouring Cmd/Ctrl (toggle) and
     /// Shift (range).
-    fn click_row(&mut self, id: Uuid, modifiers: gpui::Modifiers, cx: &mut Context<Self>) {
+    fn click_row(&mut self, id: Uuid, modifiers: gpui_kit::Modifiers, cx: &mut Context<Self>) {
         if modifiers.shift {
             let visible = self.visible_ids(cx);
             let from = self.anchor.and_then(|a| visible.iter().position(|v| *v == a));
@@ -244,8 +244,8 @@ impl Sidebar {
             &message,
             Some(&detail),
             &[
-                gpui::PromptButton::new(delete_label),
-                gpui::PromptButton::new(cancel_label),
+                gpui_kit::PromptButton::new(delete_label),
+                gpui_kit::PromptButton::new(cancel_label),
             ],
             cx,
         );
@@ -282,7 +282,7 @@ impl Sidebar {
 
     /// The floating action menu for one competition row, anchored at the
     /// right-click's position — `None` unless it is currently open.
-    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         let (id, position) = self.context_menu?;
         let weak = cx.weak_entity();
 
@@ -355,10 +355,10 @@ fn sidebar_row(
     row: &Row,
     c: crate::theme::PaletteColors,
     radius: Pixels,
-    sel_fill: gpui::Hsla,
-    sel_fg: gpui::Hsla,
+    sel_fill: gpui_kit::Hsla,
+    sel_fg: gpui_kit::Hsla,
     cx: &mut Context<Sidebar>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     match row {
         Row::Year(year) => div()
             .h(px(if idx == 0 { SB_YEAR_H_FIRST } else { SB_YEAR_H }))
@@ -432,7 +432,7 @@ fn search_capsule(
     search: &Entity<InputState>,
     window: &mut Window,
     cx: &mut App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     use crate::components::toolbar_group::Bump;
 
     let native = glass::active();
@@ -479,7 +479,7 @@ fn save_indicator(
     this: &Sidebar,
     c: crate::theme::PaletteColors,
     cx: &mut Context<Sidebar>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     use crate::components::spinner::Spinner;
     use crate::components::tooltip::text_tooltip;
     use crate::store::SaveState;
@@ -499,7 +499,7 @@ fn save_indicator(
             .justify_center()
             .size(px(16.))
     };
-    let (tooltip, content): (gpui::SharedString, gpui::AnyElement) = match state {
+    let (tooltip, content): (gpui_kit::SharedString, gpui_kit::AnyElement) = match state {
         SaveState::Saved => return slot().into_any_element(),
         SaveState::Dirty => (
             cx.t("toolbar.save-state-dirty"),

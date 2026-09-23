@@ -58,7 +58,7 @@ fn yes_no(b: bool, locale: &crate::i18n::Locale) -> String {
 }
 
 /// The metadata rows for the Build-Info window, label + value, in a fixed order.
-pub fn rows(locale: &crate::i18n::Locale) -> Vec<(gpui::SharedString, String)> {
+pub fn rows(locale: &crate::i18n::Locale) -> Vec<(gpui_kit::SharedString, String)> {
     use crate::i18n::ActiveLocale;
     vec![
         (locale.t("about.info-app-version"), APP_VERSION.to_string()),

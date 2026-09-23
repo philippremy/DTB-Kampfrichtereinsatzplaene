@@ -5,11 +5,11 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
     ParentElement, Pixels, Render, Styled, Subscription, Window, div, px,
 };
-use gpui_base::input::{InputEvent, InputState};
+use gpui_kit::base::input::{InputEvent, InputState};
 
 use crate::components::button::Button;
 use crate::components::field::Field;

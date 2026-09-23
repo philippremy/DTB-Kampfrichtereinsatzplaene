@@ -1,6 +1,6 @@
 //! Skin-specific treatments for control state (focus, selection).
 
-use gpui::{Div, Hsla, Styled, div, px};
+use gpui_kit::{Div, Hsla, Styled, div, px};
 
 use crate::theme::{Appearance, FocusRing, SelectionStyle, Theme};
 

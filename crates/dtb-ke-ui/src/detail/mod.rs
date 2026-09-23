@@ -20,13 +20,13 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::{
+use gpui_kit::{
     Animation, AnimationExt, App, AppContext, Bounds, Context, DragMoveEvent, Entity, EntityId,
     InteractiveElement, IntoElement, ParentElement, Pixels, PromptLevel, Render, ScrollHandle,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Window, canvas, div,
     ease_out_quint, px,
 };
-use gpui_base::Scrollbar;
+use gpui_kit::base::Scrollbar;
 use uuid::Uuid;
 
 use crate::components::segmented::Segmented;
@@ -317,8 +317,8 @@ impl DetailView {
             &cx.t("detail.delete-table-confirm"),
             Some(&detail),
             &[
-                gpui::PromptButton::new(cx.t("detail.delete-table-delete-button")),
-                gpui::PromptButton::new(cx.t("detail.delete-table-cancel-button")),
+                gpui_kit::PromptButton::new(cx.t("detail.delete-table-delete-button")),
+                gpui_kit::PromptButton::new(cx.t("detail.delete-table-cancel-button")),
             ],
             cx,
         );
@@ -611,11 +611,11 @@ impl DetailView {
                 .rounded(cx.theme().skin.radius_px())
                 .border_1()
                 .border_color(c.warn)
-                .bg(gpui::Hsla { a: 0.10, ..c.warn })
+                .bg(gpui_kit::Hsla { a: 0.10, ..c.warn })
                 .text_size(px(11.5))
                 .child(
                     div()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .child(cx.t_plural("detail.conflicts", self.conflicts.len() as i64, &[])),
                 )
                 .children(self.conflicts.iter().map(|conflict| {
@@ -814,7 +814,7 @@ impl Render for DetailView {
     }
 }
 
-pub(super) fn field_label(text: impl Into<SharedString>, c: &PaletteColors) -> gpui::Div {
+pub(super) fn field_label(text: impl Into<SharedString>, c: &PaletteColors) -> gpui_kit::Div {
     let text = text.into();
     div()
         .text_size(px(9.5))
@@ -825,16 +825,16 @@ pub(super) fn field_label(text: impl Into<SharedString>, c: &PaletteColors) -> g
 /// A short gradient from `fill` (opaque) to transparent, pinned to the top of a
 /// `relative` scroll container — the scroll-edge effect for content scrolling
 /// under the toolbar band. `fill` must match the band's backing colour.
-fn scroll_edge_fade(fill: gpui::Hsla) -> impl IntoElement {
+fn scroll_edge_fade(fill: gpui_kit::Hsla) -> impl IntoElement {
     div()
         .absolute()
         .top_0()
         .left_0()
         .right_0()
         .h(px(18.))
-        .bg(gpui::linear_gradient(
+        .bg(gpui_kit::linear_gradient(
             180.,
-            gpui::linear_color_stop(fill, 0.),
-            gpui::linear_color_stop(gpui::Hsla { a: 0.0, ..fill }, 1.),
+            gpui_kit::linear_color_stop(fill, 0.),
+            gpui_kit::linear_color_stop(gpui_kit::Hsla { a: 0.0, ..fill }, 1.),
         ))
 }

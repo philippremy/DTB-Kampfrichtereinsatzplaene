@@ -1,7 +1,7 @@
 //! Which platform visual language to present, and the structural metrics that
 //! go with it (colours live in the palette, see [`super::palette`]).
 
-use gpui::{Pixels, SharedString, px};
+use gpui_kit::{Pixels, SharedString, px};
 use serde::Deserialize;
 
 use super::ThemeError;
@@ -152,7 +152,7 @@ pub enum ShadowKind {
 
 /// Structural metrics for one platform skin, deserialised from a skin TOML.
 ///
-/// `*_px` accessors wrap the raw `f32` in `gpui::Pixels`.
+/// `*_px` accessors wrap the raw `f32` in `gpui_kit::Pixels`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SkinMetrics {

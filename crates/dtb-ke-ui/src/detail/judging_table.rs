@@ -12,14 +12,14 @@ use std::rc::Rc;
 
 use std::time::Duration;
 
-use gpui::{
+use gpui_kit::{
     Animation, AnimationExt, App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
     EntityId, Focusable as _, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window, anchored, canvas, deferred, div, ease_out_quint, point,
     prelude::FluentBuilder, px,
 };
-use gpui_base::input::{InputEvent, InputState};
+use gpui_kit::base::input::{InputEvent, InputState};
 
 use crate::components::button::Button;
 use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
@@ -395,7 +395,7 @@ impl JudgingTableCard {
                 }
                 // Above the scroll container (and any dialog) — see `meta_dialog`.
                 deferred(anchored().position(anchor).snap_to_window().child(col))
-                    .with_priority(gpui_base::POPUP_PRIORITY)
+                    .with_priority(gpui_kit::base::POPUP_PRIORITY)
             });
 
         let capture = self.discipline_bounds.clone();
@@ -465,7 +465,7 @@ impl JudgingTableCard {
 
     /// The card's right-click context menu (delete / duplicate) — `None`
     /// unless it is currently open.
-    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    fn context_menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         let position = self.context_menu?;
         let weak = cx.weak_entity();
 
@@ -652,13 +652,13 @@ impl Render for JudgingTableCard {
                         Appearance::Light => 0.30,
                         Appearance::Dark => 0.38,
                     };
-                    Some(gpui::Hsla { a: alpha, ..c.warn })
+                    Some(gpui_kit::Hsla { a: alpha, ..c.warn })
                 } else if selected {
                     let alpha = match theme.appearance {
                         Appearance::Light => 0.30,
                         Appearance::Dark => 0.38,
                     };
-                    Some(gpui::Hsla { a: alpha, ..c.primary })
+                    Some(gpui_kit::Hsla { a: alpha, ..c.primary })
                 } else {
                     None
                 };

@@ -6,15 +6,15 @@ use std::rc::Rc;
 
 use chrono::{NaiveDate, NaiveTime, Weekday};
 use dtb_ke_types::{MeetingTimeDTO, OrganizationDTO};
-use gpui::{
+use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Window, anchored, canvas, deferred, div,
     point, prelude::FluentBuilder, px,
 };
-use gpui_base::Dialog;
-use gpui_base::input::{InputEvent, InputState};
-use gpui_base::{Calendar, CalendarEvent, CalendarItemKind, CalendarState, DatePicker};
+use gpui_kit::base::Dialog;
+use gpui_kit::base::input::{InputEvent, InputState};
+use gpui_kit::base::{Calendar, CalendarEvent, CalendarItemKind, CalendarState, DatePicker};
 
 use crate::components::button::{Button, ButtonTone};
 use crate::components::field::Field;
@@ -52,7 +52,7 @@ pub struct MetaDialog {
     /// a `canvas` probe — not an entity update, which would dead-lock) so the
     /// deferred popover can anchor to it.
     org_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// Focus handle for the date-picker trigger — `gpui_base::DatePicker`'s own
+    /// Focus handle for the date-picker trigger — `gpui_kit::base::DatePicker`'s own
     /// root, separate from the dialog's own `focus` so tab order/ARIA state
     /// (`role(ComboBox)`, `aria_expanded`) is scoped to just this control.
     date_focus: FocusHandle,
@@ -287,8 +287,8 @@ impl MetaDialog {
             &cx.t("detail.meta.delete-confirm"),
             Some(&detail),
             &[
-                gpui::PromptButton::new(cx.t("detail.meta.delete-button")),
-                gpui::PromptButton::new(cx.t("detail.meta.delete-cancel-button")),
+                gpui_kit::PromptButton::new(cx.t("detail.meta.delete-button")),
+                gpui_kit::PromptButton::new(cx.t("detail.meta.delete-cancel-button")),
             ],
             cx,
         );
@@ -412,11 +412,11 @@ impl MetaDialog {
                 );
             }
             // `paint_deferred_draws` paints deferred layers in a flat priority
-            // sort, and `gpui_base::Dialog` sits at `10 + layer`; `POPUP_PRIORITY`
+            // sort, and `gpui_kit::base::Dialog` sits at `10 + layer`; `POPUP_PRIORITY`
             // (100) is gpui-base's convention for "above a dialog". Without this
             // the dialog panel paints over the popover and it's invisible.
             deferred(anchored().position(anchor).snap_to_window().child(col))
-                .with_priority(gpui_base::POPUP_PRIORITY)
+                .with_priority(gpui_kit::base::POPUP_PRIORITY)
         });
 
         let capture = self.org_bounds.clone();
@@ -476,7 +476,7 @@ impl MetaDialog {
             .children(list)
     }
 
-    /// The date field: a `gpui_base::DatePicker`/`Calendar` pair (behaviour +
+    /// The date field: a `gpui_kit::base::DatePicker`/`Calendar` pair (behaviour +
     /// structure) with our own trigger + popover chrome layered on top —
     /// same canvas-probe + `deferred(anchored())` + `POPUP_PRIORITY`
     /// convention as `org_selector` above, so it floats above the dialog
@@ -524,7 +524,7 @@ impl MetaDialog {
             // `Dialog` paints at priority 10, so anything meant to float
             // above it needs `POPUP_PRIORITY` (100).
             deferred(anchored().position(anchor).snap_to_window().child(panel))
-                .with_priority(gpui_base::POPUP_PRIORITY)
+                .with_priority(gpui_kit::base::POPUP_PRIORITY)
         });
 
         let capture = self.date_bounds.clone();
@@ -738,7 +738,7 @@ impl Render for MetaDialog {
         };
 
         let toggle = |id: &'static str,
-                      label: gpui::SharedString,
+                      label: gpui_kit::SharedString,
                       split: bool,
                       active: bool,
                       cx: &mut Context<Self>| {
@@ -901,11 +901,11 @@ impl Render for MetaDialog {
 }
 
 fn labelled_time(
-    label: impl Into<gpui::SharedString>,
+    label: impl Into<gpui_kit::SharedString>,
     input: &Entity<InputState>,
     c: &crate::theme::PaletteColors,
-    radius: gpui::Pixels,
-) -> gpui::Div {
+    radius: gpui_kit::Pixels,
+) -> gpui_kit::Div {
     div()
         .flex()
         .flex_col()
@@ -923,7 +923,7 @@ fn labelled_time(
                 .border_color(c.border)
                 .bg(c.surface)
                 .text_size(px(13.))
-                .child(gpui_base::input::Input::new(input)),
+                .child(gpui_kit::base::input::Input::new(input)),
         )
 }
 

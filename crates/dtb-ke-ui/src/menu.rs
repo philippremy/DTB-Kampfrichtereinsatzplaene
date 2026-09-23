@@ -6,7 +6,7 @@
 //! these into a native `NSMenu`; Windows and Linux will draw their own bar from
 //! the same model in later phases.
 
-use gpui::{Menu, MenuItem, OsAction, SharedString};
+use gpui_kit::{Menu, MenuItem, OsAction, SharedString};
 
 use crate::actions::{app, edit, file, help, window};
 use crate::i18n::{ActiveLocale, Locale};
@@ -104,7 +104,7 @@ pub fn build(state: MenuState, locale: &Locale) -> Vec<Menu> {
 /// A document-scoped item: enabled only in a document window and when `available`.
 fn doc_item(
     label: impl Into<SharedString>,
-    action: impl gpui::Action,
+    action: impl gpui_kit::Action,
     state: MenuState,
     available: bool,
 ) -> MenuItem {
@@ -131,7 +131,7 @@ fn app_menu(state: MenuState, locale: &Locale) -> Menu {
         items.push(MenuItem::separator());
         items.push(MenuItem::os_submenu(
             locale.t("menu.app.services"),
-            gpui::SystemMenuType::Services,
+            gpui_kit::SystemMenuType::Services,
         ));
     }
 

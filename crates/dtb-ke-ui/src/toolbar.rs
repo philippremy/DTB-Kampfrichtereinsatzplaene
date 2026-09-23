@@ -6,7 +6,7 @@
 //! [`crate::app::AppShell`].
 
 use dtb_ke_types::MeetingTimeDTO;
-use gpui::{
+use gpui_kit::{
     Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Subscription, Window,
     div, px,
 };
@@ -119,7 +119,7 @@ impl Render for CompetitionToolbar {
                     .child(
                         div()
                             .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .truncate()
                             .child(meta.name.clone()),
                     )
@@ -196,9 +196,9 @@ impl Render for CompetitionToolbar {
 fn action(
     id: &'static str,
     icon: Icon,
-    label: gpui::SharedString,
+    label: gpui_kit::SharedString,
     disabled: bool,
-    action: impl Fn() -> Box<dyn gpui::Action> + 'static,
+    action: impl Fn() -> Box<dyn gpui_kit::Action> + 'static,
 ) -> Button {
     Button::icon(id, icon)
         .oval()

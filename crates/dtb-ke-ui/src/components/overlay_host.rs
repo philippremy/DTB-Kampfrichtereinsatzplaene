@@ -4,7 +4,7 @@
 //! the app view. Later phases add the overlay layers (notifications, dialogs,
 //! menu popovers) on top of the same wrapper.
 
-use gpui::{AnyView, Context, IntoElement, ParentElement, Render, Styled, Window, div};
+use gpui_kit::{AnyView, Context, IntoElement, ParentElement, Render, Styled, Window, div};
 
 use crate::theme::ActiveTheme;
 

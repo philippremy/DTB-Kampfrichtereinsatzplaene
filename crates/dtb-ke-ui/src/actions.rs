@@ -1,4 +1,4 @@
-//! Every application command, expressed as a gpui [`Action`](gpui::Action).
+//! Every application command, expressed as a gpui [`Action`](gpui_kit::Action).
 //!
 //! The actions are grouped into modules by the menu they live in. Their default
 //! key bindings — and which of them the user may re-bind — are owned by
@@ -9,7 +9,7 @@
 //! table, so renaming a struct or its namespace is a breaking change to a user's
 //! saved overrides.
 
-use gpui::{App, actions};
+use gpui_kit::{App, actions};
 
 use crate::filesystem::FilesystemHelper;
 

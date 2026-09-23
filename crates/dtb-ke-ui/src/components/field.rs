@@ -1,17 +1,17 @@
 //! A single-line text field.
 //!
-//! The text-editing engine is `gpui_base::input::InputState` (cursor, selection,
+//! The text-editing engine is `gpui_kit::base::input::InputState` (cursor, selection,
 //! clipboard, undo, IME); this component owns only the frame — border, fill,
 //! radius, focus treatment, optional leading icon and trailing element.
 //!
 //! The owning view creates and holds the `Entity<InputState>` (it needs a
 //! `Window`), then renders `Field::new(id, &state)`.
 
-use gpui::{
+use gpui_kit::{
     AnyElement, App, ElementId, Entity, Focusable as _, Hsla, InteractiveElement, IntoElement,
     ParentElement, RenderOnce, Styled, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_base::input::{Input, InputState};
+use gpui_kit::base::input::{Input, InputState};
 
 use crate::components::focus::{field_border_color, focus_underline};
 use crate::components::icon::Icon;
@@ -128,11 +128,11 @@ impl RenderOnce for Field {
             .border_color(if self.invalid {
                 c.warn
             } else if self.bare {
-                gpui::transparent_black()
+                gpui_kit::transparent_black()
             } else {
                 field_border_color(focused, self.accent, theme)
             })
-            .when(self.invalid, |el| el.bg(gpui::Hsla { a: 0.10, ..c.warn }))
+            .when(self.invalid, |el| el.bg(gpui_kit::Hsla { a: 0.10, ..c.warn }))
             .when(!self.invalid && self.paints_background, |el| {
                 el.bg(c.surface)
             })

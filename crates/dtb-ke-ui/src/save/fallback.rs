@@ -5,7 +5,7 @@
 
 use dtb_ke_export::{PdfExport, PdfStandard, pdf_standard_conflicts};
 use futures::channel::oneshot;
-use gpui::{
+use gpui_kit::{
     App, AppContext, Bounds, Context, FocusHandle, FontWeight, Hsla, InteractiveElement,
     IntoElement, ParentElement, Render, Size, StatefulInteractiveElement, Styled, TitlebarOptions,
     Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder, px,
@@ -21,7 +21,7 @@ use crate::save::{
 };
 use crate::theme::ActiveTheme;
 
-fn field_label(text: impl Into<gpui::SharedString>, c: Hsla) -> gpui::Div {
+fn field_label(text: impl Into<gpui_kit::SharedString>, c: Hsla) -> gpui_kit::Div {
     let text = text.into();
     div()
         .text_size(px(10.))
@@ -32,11 +32,11 @@ fn field_label(text: impl Into<gpui::SharedString>, c: Hsla) -> gpui::Div {
 
 /// A checkbox row (visual only; the caller wraps it in a clickable element).
 fn checkbox_row(
-    label: impl Into<gpui::SharedString>,
+    label: impl Into<gpui_kit::SharedString>,
     checked: bool,
     c: Hsla,
     on: Hsla,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     div()
         .flex()
         .items_center()
@@ -54,7 +54,7 @@ fn checkbox_row(
                 .justify_center()
                 .when(checked, |el| el.bg(on))
                 .when(checked, |el| {
-                    el.child(Icon::Check.size(px(11.)).color(gpui::white()))
+                    el.child(Icon::Check.size(px(11.)).color(gpui_kit::white()))
                 }),
         )
         .child(div().text_size(px(12.5)).child(label.into()))
@@ -235,7 +235,7 @@ impl Render for SaveOptions {
                     .child(
                         div()
                             .text_size(px(15.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(cx.t_fmt("save.export-title", &[("name", self.name.trim())])),
                     )
                     .child(field_label(cx.t("save.format-label"), c.muted_foreground))

@@ -16,13 +16,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use gpui::{
+use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, Render, Size, StatefulInteractiveElement,
     Styled, TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div,
     prelude::FluentBuilder, px,
 };
-use gpui_base::input::{InputState, Textarea, TextareaState};
+use gpui_kit::base::input::{InputState, Textarea, TextareaState};
 
 use crate::actions::REPOSITORY_URL;
 use crate::build_info;
@@ -42,7 +42,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn title(self, locale: &Locale) -> gpui::SharedString {
+    fn title(self, locale: &Locale) -> gpui_kit::SharedString {
         let key = match self {
             Kind::Bug => "feedback.title-bug",
             Kind::Feature => "feedback.title-feature",
@@ -61,7 +61,7 @@ impl Kind {
         }
     }
 
-    fn intro(self, locale: &Locale) -> gpui::SharedString {
+    fn intro(self, locale: &Locale) -> gpui_kit::SharedString {
         let key = match self {
             Kind::Bug => "feedback.intro-bug",
             Kind::Feature => "feedback.intro-feature",
@@ -69,7 +69,7 @@ impl Kind {
         locale.t(key)
     }
 
-    fn summary_placeholder(self, locale: &Locale) -> gpui::SharedString {
+    fn summary_placeholder(self, locale: &Locale) -> gpui_kit::SharedString {
         let key = match self {
             Kind::Bug => "feedback.summary-placeholder-bug",
             Kind::Feature => "feedback.summary-placeholder-feature",
@@ -77,7 +77,7 @@ impl Kind {
         locale.t(key)
     }
 
-    fn description_placeholder(self, locale: &Locale) -> gpui::SharedString {
+    fn description_placeholder(self, locale: &Locale) -> gpui_kit::SharedString {
         let key = match self {
             Kind::Bug => "feedback.description-placeholder-bug",
             Kind::Feature => "feedback.description-placeholder-feature",
@@ -90,7 +90,7 @@ impl Kind {
         matches!(self, Kind::Bug)
     }
 
-    fn size(self) -> Size<gpui::Pixels> {
+    fn size(self) -> Size<gpui_kit::Pixels> {
         Size::new(px(520.), px(560.))
     }
 }
@@ -339,7 +339,7 @@ impl Render for FeedbackWindow {
 impl FeedbackWindow {
     fn form(
         &self,
-        radius: gpui::Pixels,
+        radius: gpui_kit::Pixels,
         c: crate::theme::PaletteColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -503,7 +503,7 @@ impl FeedbackWindow {
 }
 
 fn field_label(
-    text: impl Into<gpui::SharedString>,
+    text: impl Into<gpui_kit::SharedString>,
     c: crate::theme::PaletteColors,
 ) -> impl IntoElement {
     div()

@@ -22,7 +22,7 @@
 //! unpinned and it follows the OS. Only the main window has a backdrop. Off
 //! macOS every fn is a no-op.
 
-use gpui::Window;
+use gpui_kit::Window;
 
 use crate::theme::ThemeMode;
 
@@ -82,7 +82,7 @@ mod mac {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use gpui::{Bounds, Pixels, SharedString, Window};
+    use gpui_kit::{Bounds, Pixels, SharedString, Window};
     use log::{debug, warn};
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
@@ -450,7 +450,7 @@ mod mac {
     /// gpui's top-left-origin window space; the holder is flipped, so it maps
     /// straight across.
     fn ns_rect(b: Bounds<Pixels>) -> NSRect {
-        let f = |p: gpui::Pixels| f64::from(f32::from(p));
+        let f = |p: gpui_kit::Pixels| f64::from(f32::from(p));
         NSRect::new(
             NSPoint::new(f(b.origin.x), f(b.origin.y)),
             NSSize::new(f(b.size.width), f(b.size.height)),
@@ -460,7 +460,7 @@ mod mac {
     /// A region that spans the window's full width and/or height keeps doing
     /// so while AppKit resizes the window, until gpui's next frame re-applies it.
     fn edge_mask(b: Bounds<Pixels>, window: NSSize) -> NSAutoresizingMaskOptions {
-        let f = |p: gpui::Pixels| f64::from(f32::from(p));
+        let f = |p: gpui_kit::Pixels| f64::from(f32::from(p));
         let mut mask = NSAutoresizingMaskOptions::empty();
         if f(b.origin.x) <= 0.5 && f(b.origin.x + b.size.width) >= window.width - 0.5 {
             mask |= NSAutoresizingMaskOptions::ViewWidthSizable;
@@ -471,8 +471,8 @@ mod mac {
         mask
     }
 
-    fn ns_color(c: gpui::Hsla) -> Retained<NSColor> {
-        let rgba = gpui::Rgba::from(c);
+    fn ns_color(c: gpui_kit::Hsla) -> Retained<NSColor> {
+        let rgba = gpui_kit::Rgba::from(c);
         NSColor::colorWithSRGBRed_green_blue_alpha(
             f64::from(rgba.r),
             f64::from(rgba.g),

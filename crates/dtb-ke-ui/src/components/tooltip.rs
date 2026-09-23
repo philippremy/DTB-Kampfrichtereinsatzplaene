@@ -1,6 +1,6 @@
 //! A small text tooltip for icon-only controls.
 
-use gpui::{
+use gpui_kit::{
     AnyView, App, AppContext, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
     px,
 };
@@ -11,7 +11,7 @@ use crate::theme::ActiveTheme;
 pub struct TextTooltip(SharedString);
 
 impl Render for TextTooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         div()
             .px(px(8.))

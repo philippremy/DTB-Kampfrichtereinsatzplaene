@@ -24,16 +24,16 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     AbsoluteLength, AppContext, Bounds, Context, Entity, FontStyle, FontWeight, HighlightStyle,
     Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Render, Rgba,
     StatefulInteractiveElement, Styled, Subscription, UnderlineStyle, Window, anchored, canvas,
     deferred, div, hsla, linear_color_stop, linear_gradient, point, prelude::FluentBuilder, px,
     relative,
 };
-use gpui_base::input::{Editor, EditorState, InputEvent, TextDecoration};
-use gpui_base::slider::SliderState;
-use gpui_base::{
+use gpui_kit::base::input::{Editor, EditorState, InputEvent, TextDecoration};
+use gpui_kit::base::slider::SliderState;
+use gpui_kit::base::{
     ColorPickerEvent, ColorPickerState, ColorSwatch, Slider, SliderIndicator, SliderThumb,
     SliderTrack,
 };
@@ -54,7 +54,7 @@ pub struct RemarksSection {
     /// The single decoration collection this section owns; rebuilt wholesale
     /// from `styles` on every change. `None` only before the first render
     /// (creating it needs `&mut Context<EditorState>`, wired up in `new`).
-    decorations: gpui_base::input::TextDecorationCollection,
+    decorations: gpui_kit::base::input::TextDecorationCollection,
     /// One entry per `char` of the editor's current text — the authoritative
     /// formatting state. Kept in lock-step with `last_text`.
     styles: Vec<CharStyle>,
@@ -448,11 +448,11 @@ impl Render for RemarksSection {
 
         let current = self.current_style(cx);
 
-        let style_button = |glyph: gpui::SharedString,
+        let style_button = |glyph: gpui_kit::SharedString,
                             id: &'static str,
                             active: bool,
                             on_click: fn(&mut Self, &mut Window, &mut Context<Self>),
-                            map: fn(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+                            map: fn(gpui_kit::Stateful<gpui_kit::Div>) -> gpui_kit::Stateful<gpui_kit::Div>,
                             cx: &mut Context<Self>| {
             div()
                 .id(id)
@@ -578,7 +578,7 @@ impl RemarksSection {
                     .snap_to_window()
                     .child(self.color_panel(c, radius, cx)),
             )
-            .with_priority(gpui_base::POPUP_PRIORITY)
+            .with_priority(gpui_kit::base::POPUP_PRIORITY)
         });
 
         div()
@@ -766,9 +766,9 @@ fn slider_thumb(state: &Entity<SliderState>, percentage: f32) -> impl IntoElemen
         .ml(px(-THUMB / 2.))
         .size(px(THUMB))
         .rounded_full()
-        .bg(gpui::white())
+        .bg(gpui_kit::white())
         .border_2()
-        .border_color(gpui::black().opacity(0.35))
+        .border_color(gpui_kit::black().opacity(0.35))
         .shadow_sm()
 }
 

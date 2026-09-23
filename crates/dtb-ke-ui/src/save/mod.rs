@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use dtb_ke_export::{DocxExport, PdfExport, PdfStandard, PdfStandardConflict};
 use futures::channel::oneshot;
-use gpui::{App, SharedString};
+use gpui_kit::{App, SharedString};
 
 use crate::i18n::{ActiveLocale, Locale};
 

@@ -20,14 +20,14 @@
     allow(dead_code)
 )]
 
-use gpui::Subscription;
-use gpui::{
+use gpui_kit::Subscription;
+use gpui_kit::{
     App, AppContext, Bounds, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollHandle, Size, StatefulInteractiveElement, Styled,
     TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder,
     px,
 };
-use gpui_base::Scrollbar;
+use gpui_kit::base::Scrollbar;
 
 use dtb_ke_crash::report;
 
@@ -250,7 +250,7 @@ pub fn run() -> i32 {
     // internally, so anything after `application().run()` (and any exit code we'd
     // return) is unreachable — and `exit(0)` would read as `SENT`, silently
     // discarding every dump.
-    gpui_platform::application().run(move |cx: &mut App| {
+    gpui_kit::platform::application().run(move |cx: &mut App| {
         // macOS: don't show a second dock icon for the reporter.
         #[cfg(target_os = "macos")]
         {
@@ -260,7 +260,7 @@ pub fn run() -> i32 {
                 .expect("on_finish_launching always runs on the Main Thread");
             NSApp(mtm).setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
-        gpui_base::init(cx);
+        gpui_kit::base::init(cx);
         Theme::install(
             ThemeMode::System,
             Appearance::from(cx.window_appearance()),
@@ -863,7 +863,7 @@ impl ReportWindow {
         checked: bool,
         which: Attach,
         busy: bool,
-        weak: &gpui::WeakEntity<Self>,
+        weak: &gpui_kit::WeakEntity<Self>,
         muted: Hsla,
     ) -> impl IntoElement {
         // The **whole row** is the click target — the `Checkbox` is visual only
@@ -890,7 +890,7 @@ enum Attach {
 }
 
 /// Toggle one of the attach checkboxes (unless a send is in flight).
-fn flip(weak: &gpui::WeakEntity<ReportWindow>, which: Attach, cx: &mut App) {
+fn flip(weak: &gpui_kit::WeakEntity<ReportWindow>, which: Attach, cx: &mut App) {
     weak.update(cx, |this, cx| {
         if this.state.busy() {
             return;

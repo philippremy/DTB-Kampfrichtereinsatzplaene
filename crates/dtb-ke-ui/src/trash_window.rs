@@ -8,13 +8,13 @@
 
 use std::cell::RefCell;
 
-use gpui::{
+use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, PromptLevel, Render, ScrollHandle,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window,
     WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder, px,
 };
-use gpui_base::Scrollbar;
+use gpui_kit::base::Scrollbar;
 use uuid::Uuid;
 
 use crate::components::icon::Icon;
@@ -106,8 +106,8 @@ impl TrashWindow {
             &title,
             Some(&detail),
             &[
-                gpui::PromptButton::new(delete_label),
-                gpui::PromptButton::new(cancel_label),
+                gpui_kit::PromptButton::new(delete_label),
+                gpui_kit::PromptButton::new(cancel_label),
             ],
             cx,
         );
@@ -138,8 +138,8 @@ impl TrashWindow {
             &title,
             Some(&detail),
             &[
-                gpui::PromptButton::new(empty_label),
-                gpui::PromptButton::new(cancel_label),
+                gpui_kit::PromptButton::new(empty_label),
+                gpui_kit::PromptButton::new(cancel_label),
             ],
             cx,
         );
@@ -226,7 +226,7 @@ impl TrashWindow {
                     .cursor_pointer()
                     .text_color(c.critical)
                     .hover(|el| {
-                        el.bg(gpui::Hsla {
+                        el.bg(gpui_kit::Hsla {
                             a: 0.12,
                             ..c.critical
                         })
@@ -312,7 +312,7 @@ impl Focusable for TrashWindow {
     }
 }
 
-fn empty_state(text: impl Into<SharedString>, c: &PaletteColors) -> gpui::AnyElement {
+fn empty_state(text: impl Into<SharedString>, c: &PaletteColors) -> gpui_kit::AnyElement {
     div()
         .flex_1()
         .flex()

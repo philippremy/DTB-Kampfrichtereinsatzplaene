@@ -7,7 +7,7 @@
 //! corners + hairline border, and edge / corner resize hit-testing that drives
 //! `window.start_window_resize`.
 
-use gpui::{
+use gpui_kit::{
     App, Bounds, CursorStyle, Decorations, Global, HitboxBehavior, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, Point, ResizeEdge, Size, Styled, Tiling, Window,
     WindowDecorations, canvas, div, point, prelude::FluentBuilder, px, size, transparent_black,

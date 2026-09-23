@@ -1,6 +1,6 @@
 //! Title-bar geometry that depends on the OS window frame.
 
-use gpui::{Pixels, Window, px};
+use gpui_kit::{Pixels, Window, px};
 
 /// Left inset the title-bar content needs so it clears the OS window controls.
 ///

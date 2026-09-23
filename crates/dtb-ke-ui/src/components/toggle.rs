@@ -3,7 +3,7 @@
 //! The checked value is owned by the caller: [`Toggle::on_change`] reports the
 //! *next* value and the caller must render it back through [`Toggle::new`].
 
-use gpui::{
+use gpui_kit::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };

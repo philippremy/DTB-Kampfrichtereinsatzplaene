@@ -1,6 +1,6 @@
 //! Window construction, derived from the active skin.
 
-use gpui::{App, Bounds, Size, TitlebarOptions, WindowBounds, WindowOptions, point, px};
+use gpui_kit::{App, Bounds, Size, TitlebarOptions, WindowBounds, WindowOptions, point, px};
 
 use crate::material;
 use crate::skin::decorations;

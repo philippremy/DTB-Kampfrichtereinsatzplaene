@@ -5,7 +5,7 @@
 //! elsewhere they are words joined with `+` (`Ctrl+Shift+A`). A chord *sequence*
 //! (`⌃X ⌃S`) shows one block per chord with a thin gap.
 
-use gpui::{
+use gpui_kit::{
     App, IntoElement, Keystroke, ParentElement, RenderOnce, SharedString, Styled, Window, div,
     prelude::FluentBuilder, px,
 };

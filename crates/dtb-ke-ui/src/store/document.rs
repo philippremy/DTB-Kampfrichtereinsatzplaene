@@ -3,7 +3,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 use dtb_ke_persist as persist;
 use dtb_ke_types::{CompetitionDTO, JudgingTableKindDTO, MeetingTimeDTO, OrganizationDTO};
-use gpui::{App, AppContext, Context, Entity, EventEmitter, Subscription, Task};
+use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, Subscription, Task};
 use log::{debug, error, trace};
 use turso::Connection;
 use uuid::Uuid;

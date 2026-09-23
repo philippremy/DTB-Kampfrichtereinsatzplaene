@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use gpui::{
+use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Pixels, Point, Styled, Window, anchored, deferred, div, prelude::FluentBuilder, px,
 };
@@ -24,7 +24,7 @@ pub type ContextMenuHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 #[derive(Clone)]
 pub struct ContextMenuItem {
     id: &'static str,
-    label: gpui::SharedString,
+    label: gpui_kit::SharedString,
     icon: Icon,
     danger: bool,
     /// Draws a divider above this row — for setting a destructive action
@@ -36,7 +36,7 @@ pub struct ContextMenuItem {
 impl ContextMenuItem {
     pub fn new(
         id: &'static str,
-        label: impl Into<gpui::SharedString>,
+        label: impl Into<gpui_kit::SharedString>,
         icon: Icon,
         on_click: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
@@ -137,6 +137,6 @@ pub fn context_menu(
     }
 
     deferred(anchored().position(anchor).snap_to_window().child(col))
-        .with_priority(gpui_base::POPUP_PRIORITY)
+        .with_priority(gpui_kit::base::POPUP_PRIORITY)
         .into_any_element()
 }

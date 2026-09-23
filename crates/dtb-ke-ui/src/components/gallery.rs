@@ -2,11 +2,11 @@
 //!
 //! `DTB_KE_GALLERY=1 cargo run -p dtb-ke-ui` opens this instead of the app.
 
-use gpui::{
+use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Size, Styled,
     TitlebarOptions, Window, WindowBounds, WindowOptions, div, px,
 };
-use gpui_base::input::InputState;
+use gpui_kit::base::input::InputState;
 
 use crate::components::button::{Button, ButtonTone};
 use crate::components::chip::{Chip, ChipTone};
@@ -44,7 +44,7 @@ impl Render for Gallery {
                 .text_color(muted)
                 .child(text.to_uppercase())
         };
-        let section = |title: &str, row: gpui::AnyElement| {
+        let section = |title: &str, row: gpui_kit::AnyElement| {
             div()
                 .flex()
                 .flex_col()

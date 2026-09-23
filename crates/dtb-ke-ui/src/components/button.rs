@@ -1,6 +1,6 @@
 //! A button: label and/or icon, four tones, two sizes.
 
-use gpui::{
+use gpui_kit::{
     App, ClickEvent, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     Rgba, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
     px, transparent_black,

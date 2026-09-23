@@ -3,7 +3,7 @@
 //! A separate window that re-renders the selected competition to page bitmaps
 //! whenever it (or the selection) changes, debounced. The render runs on the
 //! background executor via a shared [`Exporter`]. Pages are drawn with
-//! `gpui_base::v_virtual_list` (only the visible ones are laid out); a
+//! `gpui_kit::base::v_virtual_list` (only the visible ones are laid out); a
 //! view-owned `VirtualListScrollHandle` keeps the scroll position across
 //! re-renders so visual proofing stays put.
 
@@ -12,12 +12,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_export::{Exporter, PreviewOptions};
-use gpui::{
+use gpui_kit::{
     App, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, RenderImage, Size, Styled,
     Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img,
     prelude::FluentBuilder, px, size, white,
 };
-use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use image::{Frame, RgbaImage};
 use log::{debug, trace, warn};
 use uuid::Uuid;
@@ -193,7 +193,7 @@ impl PreviewWindow {
     }
 }
 
-impl gpui::Render for PreviewWindow {
+impl gpui_kit::Render for PreviewWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
         let failed = matches!(self.status, Status::Failed(_));

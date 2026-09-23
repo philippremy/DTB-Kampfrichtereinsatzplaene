@@ -1,7 +1,7 @@
 //! A small non-interactive pill: discipline tags, the save-state indicator, the
 //! meeting-time chip, conflict counts.
 
-use gpui::{
+use gpui_kit::{
     App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
     prelude::FluentBuilder, px,
 };

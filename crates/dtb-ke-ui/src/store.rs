@@ -26,7 +26,7 @@ use std::time::Duration;
 use chrono::{Local, NaiveTime, Utc};
 use dtb_ke_persist::{self as persist, CompetitionSummary, Db, TrashedCompetition};
 use dtb_ke_types::{CompetitionDTO, MeetingTimeDTO, OrganizationDTO};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
+use gpui_kit::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use log::{debug, error, info, trace, warn};
 use uuid::Uuid;
 

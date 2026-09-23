@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use gpui::{
+use gpui_kit::{
     Action, Animation, AnimationExt, Context, Div, InteractiveElement, IntoElement, Menu,
     MouseButton, OwnedMenu, OwnedMenuItem, ParentElement, Pixels, Render, Stateful,
     StatefulInteractiveElement, Styled, Window, deferred, div, ease_out_quint,
@@ -289,7 +289,7 @@ impl MenuBar {
                             .when(is_open, |el| el.bg(c.accent_soft).text_color(c.primary))
                             .when(!is_open, |el| {
                                 el.hover(|el| {
-                                    el.bg(gpui::Hsla {
+                                    el.bg(gpui_kit::Hsla {
                                         a: 0.10,
                                         ..c.foreground
                                     })

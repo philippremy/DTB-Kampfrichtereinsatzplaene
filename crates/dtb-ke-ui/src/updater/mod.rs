@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use gpui::{Context, EventEmitter, Task};
+use gpui_kit::{Context, EventEmitter, Task};
 use serde::Deserialize;
 
 use crate::build_info;

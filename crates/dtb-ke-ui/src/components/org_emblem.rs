@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use dtb_ke_types::OrganizationDTO;
-use gpui::{
+use gpui_kit::{
     App, Hsla, Image, ImageFormat, IntoElement, ParentElement, Pixels, RenderOnce, Rgba, Styled,
     Window, div, img, px,
 };
@@ -71,7 +71,7 @@ impl RenderOnce for OrgEmblem {
             .bg(theme.color.emblem_plate)
             .text_color(theme.color.emblem_ink)
             .text_size(self.height * 0.42)
-            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
             .child(monogram(&self.org))
             .into_any_element()
     }

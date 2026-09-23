@@ -15,8 +15,8 @@
 use std::f32::consts::PI;
 use std::time::{Duration, Instant};
 
-use gpui::prelude::FluentBuilder;
-use gpui::{
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::{
     AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement, RenderOnce, Styled,
     Window, div, px,
 };
@@ -104,14 +104,14 @@ impl ParentElement for ToolbarGroup {
 /// [`Self::on_press`] to the capsule's box. On any tier without native glass
 /// the scale is always `1.0` and pressing does nothing.
 pub struct Bump {
-    state: gpui::Entity<PressState>,
+    state: gpui_kit::Entity<PressState>,
     native: bool,
     /// The current scale factor: `1.0` at rest.
     pub scale: f32,
 }
 
 impl Bump {
-    pub fn new(id: &'static str, window: &mut Window, cx: &mut gpui::App) -> Self {
+    pub fn new(id: &'static str, window: &mut Window, cx: &mut gpui_kit::App) -> Self {
         let state = window.use_keyed_state(id, cx, |_, _| PressState::default());
         let native = glass::active();
         let scale = match state.read(cx).at {
@@ -133,7 +133,7 @@ impl Bump {
     }
 
     /// A mouse-down listener that starts the bump.
-    pub fn on_press(&self) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static {
+    pub fn on_press(&self) -> impl Fn(&gpui_kit::MouseDownEvent, &mut Window, &mut gpui_kit::App) + 'static {
         let state = self.state.clone();
         let native = self.native;
         move |_, _, cx| {
@@ -158,7 +158,7 @@ fn bump_scale(elapsed: Duration, total: Duration) -> f32 {
 }
 
 impl RenderOnce for ToolbarGroup {
-    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
         let bump = Bump::new(self.id, window, cx);
         let theme = cx.theme();
         let c = &theme.color;

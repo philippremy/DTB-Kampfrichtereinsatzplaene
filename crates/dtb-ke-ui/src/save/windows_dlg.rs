@@ -52,7 +52,7 @@ use std::path::PathBuf;
 
 use dtb_ke_export::{DocxExport, PdfExport, PdfStandard, pdf_standard_conflicts};
 use futures::channel::oneshot;
-use gpui::App;
+use gpui_kit::App;
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{

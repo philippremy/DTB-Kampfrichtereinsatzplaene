@@ -40,7 +40,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use gpui::{Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, canvas, px};
+use gpui_kit::{Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, canvas, px};
 
 use crate::theme::{ActiveTheme, Appearance, Theme};
 
@@ -249,11 +249,11 @@ fn scale_about_center(bounds: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
     }
     let (w, h) = (bounds.size.width * scale, bounds.size.height * scale);
     Bounds {
-        origin: gpui::point(
+        origin: gpui_kit::point(
             bounds.origin.x - (w - bounds.size.width) / 2.0,
             bounds.origin.y - (h - bounds.size.height) / 2.0,
         ),
-        size: gpui::size(w, h),
+        size: gpui_kit::size(w, h),
     }
 }
 

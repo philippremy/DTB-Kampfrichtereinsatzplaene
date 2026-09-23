@@ -10,13 +10,13 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use gpui::{
+use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
     ImageFormat, InteractiveElement, IntoElement, ParentElement, Pixels, Render, ScrollHandle,
     SharedString, Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds,
     WindowKind, WindowOptions, div, img, prelude::FluentBuilder, px, size,
 };
-use gpui_base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 
 use crate::build_info::{self, D};
 use crate::components::{Button, ButtonTone};
@@ -44,7 +44,7 @@ impl Kind {
         locale.t(key)
     }
 
-    fn size(self) -> Size<gpui::Pixels> {
+    fn size(self) -> Size<gpui_kit::Pixels> {
         match self {
             Kind::About => Size::new(px(600.), px(260.)),
             Kind::Acknowledgements => Size::new(px(620.), px(680.)),
@@ -188,7 +188,7 @@ impl Render for AboutWindow {
                         div()
                             .w_full()
                             .text_size(px(26.))
-                            .font_weight(gpui::FontWeight::BOLD)
+                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .child(APP_NAME),
                     )
                     .child(
@@ -542,7 +542,7 @@ fn reflow_license(src: &str) -> Vec<LicenseBlock> {
     blocks
 }
 
-fn license_block_el(b: &LicenseBlock, c: &crate::theme::PaletteColors) -> gpui::Div {
+fn license_block_el(b: &LicenseBlock, c: &crate::theme::PaletteColors) -> gpui_kit::Div {
     match b {
         LicenseBlock::Heading(t) => div()
             .w_full()
@@ -578,7 +578,7 @@ fn dep_row(
     let dep: &D = &build_info::DEPENDENCIES[ix];
     let license = build_info::dep_license(dep);
 
-    let toggle = move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+    let toggle = move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
         entity.update(cx, |this, cx| {
             {
                 let mut e = this.expanded.borrow_mut();

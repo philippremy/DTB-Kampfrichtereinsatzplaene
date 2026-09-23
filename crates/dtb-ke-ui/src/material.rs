@@ -26,7 +26,7 @@
 //! `chrome` role, at an alpha the active skin authors
 //! ([`crate::theme::SkinMetrics::material_opacity_for`]).
 
-use gpui::{App, Hsla, WindowBackgroundAppearance};
+use gpui_kit::{App, Hsla, WindowBackgroundAppearance};
 
 use crate::settings::Settings;
 use crate::skin::window::WindowsBackdropSupport;
@@ -132,7 +132,7 @@ pub fn apply_background_to_all_windows(cx: &mut App) {
 
 /// Installs or removes the main window's native backdrop to match
 /// [`effective`] — a no-op off macOS, where nothing resolves to `Native`.
-pub fn sync_native_backdrop(window: &gpui::Window, cx: &App) {
+pub fn sync_native_backdrop(window: &gpui_kit::Window, cx: &App) {
     if effective(cx.theme(), cx) == Effective::Native {
         crate::skin::backdrop::install(window, cx.theme().mode);
     } else {
@@ -148,7 +148,7 @@ fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 /// is visible), the opaque background otherwise.
 pub fn root_fill(theme: &Theme, cx: &App) -> Hsla {
     if is_translucent(theme, cx) {
-        gpui::transparent_black()
+        gpui_kit::transparent_black()
     } else {
         theme.color.background
     }
@@ -161,7 +161,7 @@ fn chrome_like_fill(theme: &Theme, cx: &App) -> Hsla {
     match effective(theme, cx) {
         Effective::Opaque => theme.color.chrome,
         Effective::Blurred => with_alpha(theme.color.chrome, theme.skin.material_opacity_for(true)),
-        Effective::Native => gpui::transparent_black(),
+        Effective::Native => gpui_kit::transparent_black(),
         Effective::Mica | Effective::MicaAlt => {
             with_alpha(theme.color.chrome, theme.skin.material_opacity_for(false))
         }
@@ -182,7 +182,7 @@ pub fn toolbar_fill(theme: &Theme, cx: &App) -> Hsla {
         // On the glass tier the band stays transparent: its flat colour (and
         // the capsules) come from native views underneath. Before macOS 26 the
         // band is simply part of the opaque content column.
-        Effective::Native if crate::skin::glass::active() => gpui::transparent_black(),
+        Effective::Native if crate::skin::glass::active() => gpui_kit::transparent_black(),
         Effective::Native => content_fill(theme),
         _ => chrome_like_fill(theme, cx),
     }
@@ -202,7 +202,7 @@ pub fn sidebar_fill(theme: &Theme, cx: &App) -> Hsla {
 /// by gpui as usual.
 pub fn content_fill(theme: &Theme) -> Hsla {
     if crate::skin::glass::active() {
-        gpui::transparent_black()
+        gpui_kit::transparent_black()
     } else {
         theme.color.background
     }

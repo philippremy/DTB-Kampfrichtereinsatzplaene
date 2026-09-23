@@ -12,7 +12,7 @@
 //! (`.mx(..)`/`.mb(..)`) directly on it, and put the section's own
 //! id/padding/interactive content in a child div.
 
-use gpui::{
+use gpui_kit::{
     App, Bounds, Div, ParentElement, Pixels, SharedString, Styled, div, prelude::FluentBuilder,
 };
 

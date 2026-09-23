@@ -1,7 +1,7 @@
 //! Named colour schemes: a set of semantic roles, each with a light and a dark
 //! value, authored as hex strings in TOML.
 
-use gpui::{Hsla, Rgba};
+use gpui_kit::{Hsla, Rgba};
 use serde::Deserialize;
 
 use super::{Appearance, ThemeError};

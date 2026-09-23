@@ -2,7 +2,7 @@
 //! optional label. Used for the empty spare-judge field, the responsible-person
 //! field, and the "new judging table" card.
 
-use gpui::{
+use gpui_kit::{
     App, ClickEvent, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement,
     RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px,
