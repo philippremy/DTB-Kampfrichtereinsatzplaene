@@ -11,11 +11,21 @@ use crate::theme::{Appearance, FocusRing, SelectionStyle, Theme};
 ///   colour on focus.
 /// * `Underline` (WinUI 3) — the border stays subtle; focus shows a bottom bar
 ///   instead (see [`focus_underline`]).
+///
+/// Unfocused uses `line_strong`, not `border` — most fields (judging-table
+/// cards, the sidebar search field, meta-dialog rows) draw no `.bg()` of
+/// their own, so this outline is the only thing separating the field from
+/// whatever sits behind it. On the glass tier that's a translucent
+/// `NSGlassEffectView` with no app-controlled backing colour, not the flat
+/// `surface` fill `border`'s contrast was tuned against — `line_strong`
+/// ("heavier rules, control outlines" per the palette) is the same token
+/// `checkbox.rs`/`template_tile.rs` already use for a control outline on a
+/// card/glass surface.
 pub fn field_border_color(focused: bool, theme: &Theme) -> Hsla {
     if focused && matches!(theme.skin.focus_ring, FocusRing::Outline) {
         theme.color.ring
     } else {
-        theme.color.border
+        theme.color.line_strong
     }
 }
 

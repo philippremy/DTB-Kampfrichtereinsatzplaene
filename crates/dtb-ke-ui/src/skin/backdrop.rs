@@ -558,7 +558,11 @@ mod mac {
         };
         match &state.kind {
             Kind::Vibrancy(view) => view.setAppearance(appearance.as_deref()),
-            Kind::Glass(host) => host.container.setAppearance(appearance.as_deref()),
+            Kind::Glass(host) => {
+                host.container.setAppearance(appearance.as_deref());
+                host.direct_holder.setAppearance(appearance.as_deref());
+                host.backing_holder.setAppearance(appearance.as_deref());
+            }
         }
     }
 }
