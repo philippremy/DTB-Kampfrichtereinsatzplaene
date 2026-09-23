@@ -8,7 +8,7 @@
 //! `Window`), then renders `Field::new(id, &state)`.
 
 use gpui::{
-    AnyElement, App, ElementId, Entity, Focusable as _, InteractiveElement, IntoElement,
+    AnyElement, App, ElementId, Entity, Focusable as _, Hsla, InteractiveElement, IntoElement,
     ParentElement, RenderOnce, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_base::input::{Input, InputState};
@@ -25,6 +25,7 @@ pub struct Field {
     trailing: Option<AnyElement>,
     disabled: bool,
     invalid: bool,
+    accent: Option<Hsla>,
     paints_background: bool,
     pill: bool,
     bare: bool,
@@ -40,6 +41,7 @@ impl Field {
             trailing: None,
             disabled: false,
             invalid: false,
+            accent: None,
             paints_background: false,
             pill: false,
             bare: false,
@@ -66,6 +68,17 @@ impl Field {
     /// two positions) — draws a `warn`-coloured outline.
     pub fn invalid(mut self, invalid: bool) -> Self {
         self.invalid = invalid;
+        self
+    }
+
+    /// Replaces the unfocused border colour — a judging-table card passes
+    /// its own selected/conflicted accent so every field inside it stays
+    /// legible against the card's colour-tinted glass overlay, not just the
+    /// one field [`Self::invalid`] already outlines. Loses to `invalid`
+    /// (still the stronger, more specific signal) and to an active focus
+    /// ring; see [`field_border_color`].
+    pub fn accent(mut self, accent: Option<Hsla>) -> Self {
+        self.accent = accent;
         self
     }
 
@@ -117,7 +130,7 @@ impl RenderOnce for Field {
             } else if self.bare {
                 gpui::transparent_black()
             } else {
-                field_border_color(focused, theme)
+                field_border_color(focused, self.accent, theme)
             })
             .when(self.invalid, |el| el.bg(gpui::Hsla { a: 0.10, ..c.warn }))
             .when(!self.invalid && self.paints_background, |el| {

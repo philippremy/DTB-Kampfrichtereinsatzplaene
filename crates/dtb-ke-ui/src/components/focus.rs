@@ -21,9 +21,18 @@ use crate::theme::{Appearance, FocusRing, SelectionStyle, Theme};
 /// ("heavier rules, control outlines" per the palette) is the same token
 /// `checkbox.rs`/`template_tile.rs` already use for a control outline on a
 /// card/glass surface.
-pub fn field_border_color(focused: bool, theme: &Theme) -> Hsla {
+///
+/// `accent`, when set, replaces `line_strong` for the unfocused case — a
+/// judging-table card passes its own selected/conflicted colour so every
+/// field inside it (not just the one actually in conflict, which
+/// `Field::invalid` already outlines) stays legible against the card's own
+/// accent-tinted glass overlay. Focus still wins: an actively-edited field
+/// shows the ordinary ring, not the card's accent.
+pub fn field_border_color(focused: bool, accent: Option<Hsla>, theme: &Theme) -> Hsla {
     if focused && matches!(theme.skin.focus_ring, FocusRing::Outline) {
         theme.color.ring
+    } else if let Some(accent) = accent {
+        accent
     } else {
         theme.color.line_strong
     }

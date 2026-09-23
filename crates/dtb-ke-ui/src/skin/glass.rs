@@ -121,6 +121,17 @@ pub enum GlassRole {
     /// top layer above the merged container (see [`super::backdrop`]'s
     /// `top_holder`).
     SelectionThumb,
+    /// A colour-tinted overlay on top of a [`GlassRole::Card`] — a selected
+    /// or conflicted judging-table card's accent panel. Always paired with
+    /// [`region_in_viewport`]'s `tint_override` (there's no single fixed
+    /// accent colour to default to — `warn` for a conflict, `primary` for a
+    /// selection) and rendered a few points smaller than the card underneath
+    /// it, so a sliver of the plain card glass stays visible as a frame —
+    /// the same construction as [`GlassRole::SelectionThumb`] over
+    /// [`GlassRole::Track`], and for the same reason: merged with the (also
+    /// untinted) card beneath it, a strong tint would blend into a flat wash
+    /// instead of reading as its own accent-coloured glass.
+    CardOverlay,
 }
 
 impl GlassRole {
@@ -132,25 +143,30 @@ impl GlassRole {
             | GlassRole::CapsuleProminent
             | GlassRole::Card
             | GlassRole::SelectionThumb
-            | GlassRole::Track => Some(GlassStyle::Regular),
+            | GlassRole::Track
+            | GlassRole::CardOverlay => Some(GlassStyle::Regular),
         }
     }
 
     fn contained(self) -> bool {
         !matches!(
             self,
-            GlassRole::Sidebar | GlassRole::Card | GlassRole::SelectionThumb | GlassRole::Track
+            GlassRole::Sidebar
+                | GlassRole::Card
+                | GlassRole::SelectionThumb
+                | GlassRole::Track
+                | GlassRole::CardOverlay
         )
     }
 
     /// A standalone region that must render above the merged container
     /// instead of below it — see [`GlassRole::SelectionThumb`].
     fn top(self) -> bool {
-        matches!(self, GlassRole::SelectionThumb)
+        matches!(self, GlassRole::SelectionThumb | GlassRole::CardOverlay)
     }
 
     /// Capsules are fully rounded, whatever size they lay out to; a card
-    /// keeps the skin's ordinary large-radius corner.
+    /// (and its overlay) keeps the skin's ordinary large-radius corner.
     fn corner_radius(self, bounds: Bounds<Pixels>, theme: &Theme) -> Pixels {
         match self {
             GlassRole::Sidebar | GlassRole::ContentBacking => px(0.),
@@ -159,6 +175,7 @@ impl GlassRole {
             | GlassRole::SelectionThumb
             | GlassRole::Track => bounds.size.width.min(bounds.size.height) / 2.0,
             GlassRole::Card => theme.skin.radius_lg_px(),
+            GlassRole::CardOverlay => theme.skin.radius_lg_px() - px(6.),
         }
     }
 
@@ -195,7 +212,9 @@ impl GlassRole {
             // The card's own glass material carries enough visual weight on
             // its own — no extra tint/backing, same call as the plain
             // toolbar capsule.
-            GlassRole::Capsule | GlassRole::Card | GlassRole::Track => (none, none),
+            GlassRole::Capsule | GlassRole::Card | GlassRole::Track | GlassRole::CardOverlay => {
+                (none, none)
+            }
             GlassRole::CapsuleProminent | GlassRole::SelectionThumb => (
                 Hsla {
                     a: 0.9,

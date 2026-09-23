@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
-    EntityId, Focusable as _, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    EntityId, Focusable as _, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window, anchored, canvas, deferred, div, ease_out_quint, point,
     prelude::FluentBuilder, px,
@@ -24,6 +24,7 @@ use gpui_base::input::{InputEvent, InputState};
 use crate::components::button::Button;
 use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, context_menu};
 use crate::components::field::Field;
+use crate::components::focus::field_border_color;
 use crate::components::icon::Icon;
 use crate::i18n::ActiveLocale;
 use crate::model::roles::{self, Discipline};
@@ -345,7 +346,11 @@ impl JudgingTableCard {
     /// The discipline pill in the card header — a trigger that opens a popover
     /// list of every discipline. Painted via `deferred` at the trigger's
     /// absolute position so it floats above the detail scroll container.
-    fn discipline_selector(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn discipline_selector(
+        &self,
+        accent: Option<Hsla>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
         let open = self.discipline_open;
@@ -425,11 +430,11 @@ impl JudgingTableCard {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .h(px(24.))
+                    .h(px(30.))
                     .px(px(8.))
                     .rounded(radius)
                     .border_1()
-                    .border_color(if open { c.primary } else { c.border })
+                    .border_color(field_border_color(open, accent, cx.theme()))
                     .bg(c.accent_soft)
                     .text_color(c.primary)
                     .text_size(px(11.))
@@ -505,6 +510,12 @@ fn glass_id(editor_id: EntityId) -> SharedString {
     SharedString::from(format!("table-card-{editor_id:?}"))
 }
 
+/// The id of that same card's [`GlassRole::CardOverlay`] — the selected/
+/// conflicted accent panel layered above it.
+fn overlay_glass_id(editor_id: EntityId) -> SharedString {
+    SharedString::from(format!("table-card-{editor_id:?}-overlay"))
+}
+
 /// One `InputState` per judge slot of `kind`, seeded from its current value.
 fn build_slots(
     kind: &dtb_ke_types::JudgingTableKindDTO,
@@ -529,7 +540,26 @@ fn any_focused(inputs: &[Entity<InputState>], window: &Window, cx: &App) -> bool
 
 impl Render for JudgingTableCard {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let discipline_selector = self.discipline_selector(cx);
+        let selected = self.selected;
+        let conflicted = !self.conflict_roles.is_empty();
+        // The card's own selected/conflicted colour, reused below for every
+        // field's (and the discipline selector's) outline and role label —
+        // not just the one field `Field::invalid` already outlines — so they
+        // stay legible against the card's colour-tinted glass overlay (or,
+        // on the fallback tier, its tinted `bg`). A scoped, owned copy of
+        // `theme.color` (not `let theme = cx.theme()`'s live reference) so
+        // it's ready before `discipline_selector` needs its own `&mut cx`.
+        let accent = {
+            let color = cx.theme().color;
+            if conflicted {
+                Some(color.warn)
+            } else if selected {
+                Some(color.primary)
+            } else {
+                None
+            }
+        };
+        let discipline_selector = self.discipline_selector(accent, cx);
         let context_menu_layer = self.context_menu_layer(cx);
         let theme = cx.theme();
         let c = &theme.color;
@@ -540,8 +570,6 @@ impl Render for JudgingTableCard {
         } else {
             table.label.clone().into()
         };
-        let selected = self.selected;
-        let conflicted = !self.conflict_roles.is_empty();
         // `self.dragging` is only ever *set*, never explicitly cleared (there's
         // no "drag ended" hook to clear it from — see `on_drag_move` below), so
         // it can go stale after a drag finishes. `cx.has_active_drag()` is the
@@ -605,38 +633,30 @@ impl Render for JudgingTableCard {
                 // source — that placeholder stays a plain flat box, see
                 // below) the card is real Liquid Glass: a `GlassRole::Card`
                 // region clipped to the detail scroll pane, in place of the
-                // resting-state gpui border + fill. Selection / conflict /
-                // drag state still needs to read visually, so it's drawn as
-                // a thin ring *over* the glass rather than folded into the
-                // native surface itself.
+                // resting-state gpui border + fill. Selection / conflict
+                // state is a second, accent-tinted `GlassRole::CardOverlay`
+                // region layered above it and inset a few points on every
+                // side — not a tint on the card's own glass (merging a
+                // strongly-tinted region with the overlapping neutral one
+                // underneath blends into a flat, muddy wash instead of
+                // reading as its own accent-coloured glass, see
+                // `GlassRole::CardOverlay`'s doc comment) and not a ring
+                // border either — the inset itself, leaving a sliver of the
+                // plain card glass visible as a frame, is what reads as
+                // "selected"/"conflicted" here.
                 let native = glass::active();
                 let viewport = self.viewport.get();
                 let show_glass = native && !is_dragging && viewport.is_some();
-                let state_ring = if is_dragging {
-                    Some((true, c.line_strong))
-                } else if conflicted {
-                    Some((false, c.warn))
-                } else if selected {
-                    Some((false, c.primary))
-                } else {
-                    None
-                };
-                // Tints the glass itself instead of a gpui fill drawn over
-                // it (which would just hide the material) — both colours
-                // match the fallback tier's own `c.warn` border / `c.accent_soft`
-                // fill, just softer (the fallback fill is opaque; a glass
-                // tint this strong would read as a flat wash and defeat the
-                // point of it being glass).
-                let card_tint = if conflicted {
+                let overlay_tint = if conflicted {
                     let alpha = match theme.appearance {
-                        Appearance::Light => 0.16,
-                        Appearance::Dark => 0.22,
+                        Appearance::Light => 0.30,
+                        Appearance::Dark => 0.38,
                     };
                     Some(gpui::Hsla { a: alpha, ..c.warn })
                 } else if selected {
                     let alpha = match theme.appearance {
-                        Appearance::Light => 0.14,
-                        Appearance::Dark => 0.20,
+                        Appearance::Light => 0.30,
+                        Appearance::Dark => 0.38,
                     };
                     Some(gpui::Hsla { a: alpha, ..c.primary })
                 } else {
@@ -655,7 +675,7 @@ impl Render for JudgingTableCard {
                             GlassRole::Card,
                             viewport.expect("checked by show_glass"),
                             glass::DETAIL_SCROLL_GROUP,
-                            card_tint,
+                            None,
                         ))
                     })
                     .when(!show_glass, |el| {
@@ -678,10 +698,16 @@ impl Render for JudgingTableCard {
                                 c.surface
                             })
                     })
-                    .when_some(state_ring.filter(|_| show_glass), |el, (dashed, color)| {
-                        el.border_1()
-                            .when(dashed, |el| el.border_dashed())
-                            .border_color(color)
+                    .when_some(overlay_tint.filter(|_| show_glass), |el, tint| {
+                        el.child(
+                            div().absolute().inset(px(6.)).child(glass::region_in_viewport(
+                                overlay_glass_id(editor_id),
+                                GlassRole::CardOverlay,
+                                viewport.expect("checked by show_glass"),
+                                glass::DETAIL_SCROLL_GROUP,
+                                Some(tint),
+                            )),
+                        )
                     })
                     // Select on a click on the card itself — not one that landed in (and
                     // focused) one of its text fields. A plain closure, *not*
@@ -790,9 +816,10 @@ impl Render for JudgingTableCard {
                                             }),
                                     )
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .child(Field::new("table-label", &self.label_input)),
+                                        div().flex_1().child(
+                                            Field::new("table-label", &self.label_input)
+                                                .accent(accent),
+                                        ),
                                     )
                                     .child(discipline_selector)
                                     .child(
@@ -813,12 +840,13 @@ impl Render for JudgingTableCard {
                                         .child(
                                             div()
                                                 .text_size(px(9.))
-                                                .text_color(c.muted_foreground)
+                                                .text_color(accent.unwrap_or(c.muted_foreground))
                                                 .child(*label),
                                         )
                                         .child(
                                             Field::new(*label, input)
-                                                .invalid(self.conflict_roles.contains(label)),
+                                                .invalid(self.conflict_roles.contains(label))
+                                                .accent(accent),
                                         )
                                 }),
                             )),
