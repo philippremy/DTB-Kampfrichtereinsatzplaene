@@ -27,9 +27,8 @@ use std::rc::Rc;
 use gpui_kit::{
     AbsoluteLength, AppContext, Bounds, Context, Entity, FontStyle, FontWeight, HighlightStyle,
     Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Render, Rgba,
-    StatefulInteractiveElement, Styled, Subscription, UnderlineStyle, Window, anchored, canvas,
-    deferred, div, hsla, linear_color_stop, linear_gradient, point, prelude::FluentBuilder, px,
-    relative,
+    StatefulInteractiveElement, Styled, Subscription, UnderlineStyle, Window, div, hsla,
+    linear_color_stop, linear_gradient, prelude::FluentBuilder, px, relative,
 };
 use gpui_kit::base::input::{Editor, EditorState, InputEvent, TextDecoration};
 use gpui_kit::base::slider::SliderState;
@@ -40,6 +39,7 @@ use gpui_kit::base::{
 
 use crate::components::field::Field;
 use crate::components::glass_card::glass_card;
+use crate::components::popover::PopoverAnchor;
 use crate::i18n::ActiveLocale;
 use crate::model::{Paragraph, RichText, Run};
 use crate::store::RemarksEditor;
@@ -75,7 +75,7 @@ pub struct RemarksSection {
     color_target: Option<Range<usize>>,
     /// Absolute bounds of the color trigger, captured during prepaint so the
     /// popover can float above the detail scroll container.
-    color_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    color_bounds: PopoverAnchor,
     /// The detail scroll pane's own visible bounds, shared with `DetailView`
     /// and every other card — see `crate::detail::judging_table::JudgingTableCard::viewport`.
     viewport: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -147,7 +147,7 @@ impl RemarksSection {
             color_picker,
             color_open: false,
             color_target: None,
-            color_bounds: Rc::new(Cell::new(None)),
+            color_bounds: PopoverAnchor::new(),
             viewport,
             _subs: subs,
         }
@@ -563,42 +563,25 @@ impl RemarksSection {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let open = self.color_open;
-        let capture = self.color_bounds.clone();
         // The actual current colour — parsed from the selection's (or the
         // caret's pending) style, falling back to the foreground the text
         // would otherwise render in, same as the popover's own preview
         // swatch (`color_panel`'s `displayed.unwrap_or(c.foreground)`).
         let swatch_color = current_color.and_then(parse_hex).unwrap_or(c.foreground);
 
-        let popover = open.then(|| self.color_bounds.get()).flatten().map(|b| {
-            let anchor = point(b.origin.x, b.origin.y + b.size.height + px(4.));
-            deferred(
-                anchored()
-                    .position(anchor)
-                    .snap_to_window()
-                    .child(self.color_panel(c, radius, cx)),
-            )
-            .with_priority(gpui_kit::base::POPUP_PRIORITY)
-        });
+        let popover = open
+            .then(|| {
+                self.color_bounds
+                    .float_below(px(4.), self.color_panel(c, radius, cx))
+            })
+            .flatten();
 
         div()
             .id("remarks-color")
             .relative()
             .flex()
             .flex_col()
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        if capture.get() != Some(bounds) {
-                            capture.set(Some(bounds));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.color_bounds.probe())
             .child(
                 div()
                     .id("remarks-color-trigger")
@@ -629,7 +612,7 @@ impl RemarksSection {
                     .child(
                         div()
                             .size(px(14.))
-                            .rounded(px(3.))
+                            .rounded(radius.min(px(3.)))
                             .border_1()
                             .border_color(c.border)
                             .bg(swatch_color),
@@ -663,7 +646,7 @@ impl RemarksSection {
                     ColorSwatch::new(("remarks-swatch", index), color)
                         .selected(displayed == Some(color))
                         .size(px(20.))
-                        .rounded(px(4.))
+                        .rounded(radius.min(px(4.)))
                         .bg(color)
                         .border_1()
                         .border_color(c.border)
@@ -729,7 +712,7 @@ impl RemarksSection {
                         div()
                             .flex_none()
                             .size(px(24.))
-                            .rounded(px(5.))
+                            .rounded(radius.min(px(5.)))
                             .border_1()
                             .border_color(c.border)
                             .bg(displayed.unwrap_or(c.foreground)),
@@ -757,6 +740,10 @@ fn rgb_u32(value: u32) -> Hsla {
 }
 
 const THUMB: f32 = 14.;
+/// Height of a hue/saturation/lightness slider's track. Its rounded ends use
+/// half of this (a true pill cap), never an independent literal, so the two
+/// can't drift out of sync.
+const TRACK_H: f32 = 8.;
 
 fn slider_thumb(state: &Entity<SliderState>, percentage: f32) -> impl IntoElement {
     SliderThumb::new(state)
@@ -791,7 +778,7 @@ fn hue_slider(state: &Entity<SliderState>, cx: &Context<RemarksSection>) -> impl
                     .top(px(5.))
                     .left_0()
                     .w_full()
-                    .h(px(8.))
+                    .h(px(TRACK_H))
                     .flex()
                     .children((0..SEGMENTS).map(|i| {
                         let h0 = i as f32 / SEGMENTS as f32;
@@ -802,8 +789,8 @@ fn hue_slider(state: &Entity<SliderState>, cx: &Context<RemarksSection>) -> impl
                         div()
                             .flex_1()
                             .h_full()
-                            .when(i == 0, |el| el.rounded_l(px(4.)))
-                            .when(i == SEGMENTS - 1, |el| el.rounded_r(px(4.)))
+                            .when(i == 0, |el| el.rounded_l(px(TRACK_H / 2.)))
+                            .when(i == SEGMENTS - 1, |el| el.rounded_r(px(TRACK_H / 2.)))
                             .bg(linear_gradient(
                                 90.,
                                 linear_color_stop(hsla(h0, 1., 0.5, 1.), 0.),
@@ -832,8 +819,8 @@ fn saturation_slider(
                     .top(px(5.))
                     .left_0()
                     .w_full()
-                    .h(px(8.))
-                    .rounded(px(4.))
+                    .h(px(TRACK_H))
+                    .rounded(px(TRACK_H / 2.))
                     .bg(linear_gradient(
                         90.,
                         linear_color_stop(hsla(hue, 0., 0.5, 1.), 0.),
@@ -862,30 +849,26 @@ fn lightness_slider(
                     .top(px(5.))
                     .left_0()
                     .w_full()
-                    .h(px(8.))
+                    .h(px(TRACK_H))
                     .flex()
                     .child(
                         div()
                             .flex_1()
                             .h_full()
-                            .rounded_l(px(4.))
+                            .rounded_l(px(TRACK_H / 2.))
                             .bg(linear_gradient(
                                 90.,
                                 linear_color_stop(hsla(0., 0., 0., 1.), 0.),
                                 linear_color_stop(hsla(hue, sat, 0.5, 1.), 1.),
                             )),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .rounded_r(px(4.))
-                            .bg(linear_gradient(
-                                90.,
-                                linear_color_stop(hsla(hue, sat, 0.5, 1.), 0.),
-                                linear_color_stop(hsla(0., 0., 1., 1.), 1.),
-                            )),
-                    ),
+                    .child(div().flex_1().h_full().rounded_r(px(TRACK_H / 2.)).bg(
+                        linear_gradient(
+                            90.,
+                            linear_color_stop(hsla(hue, sat, 0.5, 1.), 0.),
+                            linear_color_stop(hsla(0., 0., 1., 1.), 1.),
+                        ),
+                    )),
             )
             .child(slider_thumb(state, percentage)),
     )

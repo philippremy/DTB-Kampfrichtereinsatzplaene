@@ -13,19 +13,19 @@
 //!   [`App::intercept_keystrokes`]; the capture is checked against the other
 //!   commands and a list of reserved OS shortcuts before it can be applied.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::cell::RefCell;
 
 use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Keystroke, MouseButton, ParentElement, Pixels, Render, ScrollHandle, SharedString,
-    Size, StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
-    WindowKind, WindowOptions, anchored, canvas, deferred, div, point, prelude::FluentBuilder, px,
+    IntoElement, Keystroke, MouseButton, ParentElement, Render, ScrollHandle, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
+    WindowKind, WindowOptions, div, point, prelude::FluentBuilder, px,
 };
 use gpui_kit::base::Scrollbar;
 
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
+use crate::components::popover::PopoverAnchor;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
 use crate::i18n::ActiveLocale;
@@ -133,7 +133,7 @@ pub struct SettingsWindow {
     /// prepaint (via a `canvas` probe — not an entity update, which would
     /// dead-lock) so the popover can anchor to it. Same convention as
     /// `detail::meta_dialog::MetaDialog`'s organisation selector.
-    language_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    language_bounds: PopoverAnchor,
 }
 
 impl Drop for SettingsWindow {
@@ -153,7 +153,7 @@ impl SettingsWindow {
             pending: None,
             intercept: None,
             language_open: false,
-            language_bounds: Rc::new(Cell::new(None)),
+            language_bounds: PopoverAnchor::new(),
         }
     }
 
@@ -522,7 +522,7 @@ impl SettingsWindow {
                 .gap(px(6.))
                 .h(px(28.))
                 .px(px(12.))
-                .rounded(px((cx.theme().skin.radius_control - 2.0).max(2.0)))
+                .rounded(cx.theme().skin.radius_control_inset_px())
                 .text_size(px(12.5))
                 .when(selected, |el| {
                     el.bg(c.surface).shadow_xs().text_color(c.foreground)
@@ -578,7 +578,7 @@ impl SettingsWindow {
                 .justify_center()
                 .h(px(26.))
                 .px(px(10.))
-                .rounded(px((cx.theme().skin.radius_control - 2.0).max(2.0)))
+                .rounded(cx.theme().skin.radius_control_inset_px())
                 .text_size(px(12.))
                 .when(selected, |el| {
                     el.bg(c.surface).shadow_xs().text_color(c.foreground)
@@ -644,8 +644,6 @@ impl SettingsWindow {
         };
 
         let list = open.then(|| self.language_bounds.get()).flatten().map(|b| {
-            let anchor = point(b.origin.x, b.origin.y + b.size.height + px(3.));
-
             let option = |value: Option<String>, label: SharedString, cx: &mut Context<Self>| {
                 let selected = value == current;
                 let id = value.clone().unwrap_or_else(|| "system".to_owned());
@@ -695,14 +693,12 @@ impl SettingsWindow {
                 ));
             }
 
-            // Same priority convention as `MetaDialog::org_selector` — above
-            // a `gpui_kit::base::Dialog` (this window has none, but keeps every
-            // popover in the app consistent).
-            deferred(anchored().position(anchor).snap_to_window().child(col))
-                .with_priority(gpui_kit::base::POPUP_PRIORITY)
+            col
         });
-
-        let capture = self.language_bounds.clone();
+        // Same priority convention as `MetaDialog::org_selector` — above
+        // a `gpui_kit::base::Dialog` (this window has none, but keeps every
+        // popover in the app consistent).
+        let list = list.and_then(|col| self.language_bounds.float_below(px(3.), col));
 
         div()
             .id("language-select")
@@ -718,19 +714,7 @@ impl SettingsWindow {
             }))
             // Capture the *outer* bounds of the control (no padding/border of
             // its own) so the popover aligns with the trigger's visible edge.
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        if capture.get() != Some(bounds) {
-                            capture.set(Some(bounds));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.language_bounds.probe())
             .child(
                 div()
                     .id("language-select-trigger")
@@ -795,7 +779,7 @@ impl SettingsWindow {
                     .justify_center()
                     .h(px(26.))
                     .px(px(9.))
-                    .rounded(px((cx.theme().skin.radius_control - 2.0).max(2.0)))
+                    .rounded(cx.theme().skin.radius_control_inset_px())
                     .text_size(px(12.))
                     .when(selected, |el| {
                         el.bg(c.surface).shadow_xs().text_color(c.foreground)
@@ -874,7 +858,7 @@ impl SettingsWindow {
                     .justify_center()
                     .h(px(26.))
                     .px(px(9.))
-                    .rounded(px((cx.theme().skin.radius_control - 2.0).max(2.0)))
+                    .rounded(cx.theme().skin.radius_control_inset_px())
                     .text_size(px(12.))
                     .when(selected, |el| {
                         el.bg(c.surface).shadow_xs().text_color(c.foreground)

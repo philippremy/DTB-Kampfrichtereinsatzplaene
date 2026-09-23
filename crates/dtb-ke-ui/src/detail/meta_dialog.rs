@@ -1,16 +1,14 @@
 //! Modal for the competition's metadata: name, date, location, responsible
 //! persons, meeting times. Commits everything to the `MetadataEditor` on save.
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::{NaiveDate, NaiveTime, Weekday};
 use dtb_ke_types::{MeetingTimeDTO, OrganizationDTO};
 use gpui_kit::{
-    App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, PromptLevel, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, anchored, canvas, deferred, div,
-    point, prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, PromptLevel, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_kit::base::Dialog;
 use gpui_kit::base::input::{InputEvent, InputState};
@@ -19,6 +17,7 @@ use gpui_kit::base::{Calendar, CalendarEvent, CalendarItemKind, CalendarState, D
 use crate::components::button::{Button, ButtonTone};
 use crate::components::field::Field;
 use crate::components::icon::Icon;
+use crate::components::popover::PopoverAnchor;
 use crate::components::template_tile::TemplateTile;
 use crate::detail::dialog_frame::{dialog_panel, dismiss_handler, scrim};
 use crate::i18n::ActiveLocale;
@@ -51,7 +50,7 @@ pub struct MetaDialog {
     /// Absolute bounds of the organisation trigger, captured during prepaint (via
     /// a `canvas` probe — not an entity update, which would dead-lock) so the
     /// deferred popover can anchor to it.
-    org_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    org_bounds: PopoverAnchor,
     /// Focus handle for the date-picker trigger — `gpui_kit::base::DatePicker`'s own
     /// root, separate from the dialog's own `focus` so tab order/ARIA state
     /// (`role(ComboBox)`, `aria_expanded`) is scoped to just this control.
@@ -62,7 +61,7 @@ pub struct MetaDialog {
     date_open: bool,
     /// Absolute bounds of the date-picker trigger, same convention as
     /// `org_bounds`.
-    date_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    date_bounds: PopoverAnchor,
     split_meeting: bool,
     unified_time: Entity<InputState>,
     quali_time: Entity<InputState>,
@@ -116,11 +115,11 @@ impl MetaDialog {
             location: field(&cx.t("detail.meta.location-placeholder"), window, cx),
             organization: OrganizationDTO::DTB,
             org_open: false,
-            org_bounds: Rc::new(Cell::new(None)),
+            org_bounds: PopoverAnchor::new(),
             date_focus: cx.focus_handle(),
             calendar,
             date_open: false,
-            date_bounds: Rc::new(Cell::new(None)),
+            date_bounds: PopoverAnchor::new(),
             split_meeting: false,
             unified_time,
             quali_time,
@@ -376,50 +375,49 @@ impl MetaDialog {
         // A real popover: painted via `deferred` at the trigger's *absolute*
         // position (captured during prepaint) — it floats above the dialog
         // panel and never affects its height.
-        let list = open.then(|| self.org_bounds.get()).flatten().map(|b| {
-            let anchor = point(b.origin.x, b.origin.y + b.size.height + px(3.));
-
-            let mut col = div()
-                .id("org-list")
-                .w(b.size.width)
-                .max_h(px(260.))
-                .flex()
-                .flex_col()
-                .py(px(2.))
-                .rounded(radius)
-                .border_1()
-                .border_color(c.border)
-                .bg(c.surface)
-                .shadow_lg()
-                .overflow_y_scroll()
-                .occlude();
-            for (i, org) in OrganizationDTO::all().into_iter().enumerate() {
-                let selected = org == self.organization;
-                col = col.child(
-                    div()
-                        .id(("org-opt", i))
-                        .px(px(8.))
-                        .py(px(4.))
-                        .text_size(px(12.5))
-                        .cursor_pointer()
-                        .when(selected, |el| el.text_color(c.primary))
-                        .hover(|el| el.bg(c.accent_soft))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _w, cx| this.set_organization(org, cx)),
-                        )
-                        .child(org.to_string()),
-                );
-            }
+        let list = open
+            .then(|| self.org_bounds.get())
+            .flatten()
+            .map(|b| {
+                let mut col = div()
+                    .id("org-list")
+                    .w(b.size.width)
+                    .max_h(px(260.))
+                    .flex()
+                    .flex_col()
+                    .py(px(2.))
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(c.border)
+                    .bg(c.surface)
+                    .shadow_lg()
+                    .overflow_y_scroll()
+                    .occlude();
+                for (i, org) in OrganizationDTO::all().into_iter().enumerate() {
+                    let selected = org == self.organization;
+                    col = col.child(
+                        div()
+                            .id(("org-opt", i))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .text_size(px(12.5))
+                            .cursor_pointer()
+                            .when(selected, |el| el.text_color(c.primary))
+                            .hover(|el| el.bg(c.accent_soft))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _w, cx| this.set_organization(org, cx)),
+                            )
+                            .child(org.to_string()),
+                    );
+                }
+                col
+            })
             // `paint_deferred_draws` paints deferred layers in a flat priority
             // sort, and `gpui_kit::base::Dialog` sits at `10 + layer`; `POPUP_PRIORITY`
             // (100) is gpui-base's convention for "above a dialog". Without this
             // the dialog panel paints over the popover and it's invisible.
-            deferred(anchored().position(anchor).snap_to_window().child(col))
-                .with_priority(gpui_kit::base::POPUP_PRIORITY)
-        });
-
-        let capture = self.org_bounds.clone();
+            .and_then(|col| self.org_bounds.float_below(px(3.), col));
 
         div()
             .id("org-select")
@@ -434,19 +432,7 @@ impl MetaDialog {
             }))
             // Capture the *outer* bounds of the control (no padding/border of its
             // own) so the popover aligns with the trigger's visible left edge.
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        if capture.get() != Some(bounds) {
-                            capture.set(Some(bounds));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.org_bounds.probe())
             .child(
                 div()
                     .id("org-select-trigger")
@@ -492,42 +478,40 @@ impl MetaDialog {
             .map(|d| SharedString::from(d.format(DATE_FMT).to_string()))
             .unwrap_or_else(|| cx.t("detail.meta.date-placeholder"));
 
-        let popover = open.then(|| self.date_bounds.get()).flatten().map(|b| {
-            let anchor = point(b.origin.x, b.origin.y + b.size.height + px(3.));
-            let panel = div()
-                .id("date-popover")
-                .occlude()
-                // On the panel itself, not the (much smaller) trigger — the
-                // trigger's hitbox never covers where this panel actually
-                // paints (an anchored overlay). `Calendar`'s day/month/year
-                // cells select on `on_click` (mouse-up), one full event
-                // dispatch *after* the mouse-down that opens/closes a
-                // popover; attaching this to the trigger closed the popover
-                // on the down-half of every click inside it (the panel
-                // un-rendered before the up-half could ever reach the cell),
-                // so a day pick never registered — same fix as
-                // `remarks.rs`'s color panel.
-                .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
-                    if this.date_open {
-                        this.date_open = false;
-                        cx.notify();
-                    }
-                }))
-                .p(px(10.))
-                .rounded(radius)
-                .border_1()
-                .border_color(c.border)
-                .bg(c.surface)
-                .shadow_lg()
-                .child(self.calendar_element(cx));
+        let popover = open
+            .then(|| {
+                div()
+                    .id("date-popover")
+                    .occlude()
+                    // On the panel itself, not the (much smaller) trigger — the
+                    // trigger's hitbox never covers where this panel actually
+                    // paints (an anchored overlay). `Calendar`'s day/month/year
+                    // cells select on `on_click` (mouse-up), one full event
+                    // dispatch *after* the mouse-down that opens/closes a
+                    // popover; attaching this to the trigger closed the popover
+                    // on the down-half of every click inside it (the panel
+                    // un-rendered before the up-half could ever reach the cell),
+                    // so a day pick never registered — same fix as
+                    // `remarks.rs`'s color panel.
+                    .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
+                        if this.date_open {
+                            this.date_open = false;
+                            cx.notify();
+                        }
+                    }))
+                    .p(px(10.))
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(c.border)
+                    .bg(c.surface)
+                    .shadow_lg()
+                    .child(self.calendar_element(cx))
+            })
             // Same priority rationale as `org_selector`'s own popover —
             // `Dialog` paints at priority 10, so anything meant to float
             // above it needs `POPUP_PRIORITY` (100).
-            deferred(anchored().position(anchor).snap_to_window().child(panel))
-                .with_priority(gpui_kit::base::POPUP_PRIORITY)
-        });
+            .and_then(|panel| self.date_bounds.float_below(px(3.), panel));
 
-        let capture = self.date_bounds.clone();
         let entity = cx.entity().downgrade();
 
         DatePicker::new("meta-date-picker", &self.date_focus)
@@ -541,19 +525,7 @@ impl MetaDialog {
             .relative()
             .flex()
             .flex_col()
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        if capture.get() != Some(bounds) {
-                            capture.set(Some(bounds));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.date_bounds.probe())
             .child(
                 div()
                     .id("date-select-trigger")

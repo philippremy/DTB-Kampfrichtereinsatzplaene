@@ -17,6 +17,7 @@ pub mod kbd;
 pub mod menu_bar;
 pub mod org_emblem;
 pub mod overlay_host;
+pub mod popover;
 pub mod segmented;
 pub mod spinner;
 pub mod template_tile;
@@ -43,6 +44,8 @@ pub use menu_bar::MenuBar;
 pub use org_emblem::OrgEmblem;
 #[allow(unused_imports)]
 pub use overlay_host::OverlayHost;
+#[allow(unused_imports)]
+pub use popover::PopoverAnchor;
 #[allow(unused_imports)]
 pub use segmented::Segmented;
 #[allow(unused_imports)]

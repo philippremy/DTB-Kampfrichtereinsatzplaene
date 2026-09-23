@@ -16,8 +16,7 @@ use gpui_kit::{
     Animation, AnimationExt, App, AppContext, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
     EntityId, Focusable as _, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Window, anchored, canvas, deferred, div, ease_out_quint, point,
-    prelude::FluentBuilder, px,
+    Subscription, Window, canvas, div, ease_out_quint, prelude::FluentBuilder, px,
 };
 use gpui_kit::base::input::{InputEvent, InputState};
 
@@ -26,6 +25,7 @@ use crate::components::context_menu::{ContextMenuHandler, ContextMenuItem, conte
 use crate::components::field::Field;
 use crate::components::focus::field_border_color;
 use crate::components::icon::Icon;
+use crate::components::popover::PopoverAnchor;
 use crate::i18n::ActiveLocale;
 use crate::model::roles::{self, Discipline};
 use crate::skin::glass::{self, GlassRole};
@@ -156,7 +156,7 @@ pub struct JudgingTableCard {
     discipline_open: bool,
     /// Absolute bounds of the discipline trigger, captured during prepaint so
     /// the popover can float above the scroll container that would clip it.
-    discipline_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    discipline_bounds: PopoverAnchor,
     /// The card's own last-painted bounds, captured the same way as
     /// `discipline_bounds` — read at drag-start so the drag ghost (see
     /// `DragTable`) can be sized to match the real card's current width, and
@@ -221,7 +221,7 @@ impl JudgingTableCard {
             selected: false,
             conflict_roles: Vec::new(),
             discipline_open: false,
-            discipline_bounds: Rc::new(Cell::new(None)),
+            discipline_bounds: PopoverAnchor::new(),
             card_bounds: Rc::new(Cell::new(None)),
             flip: Rc::new(Cell::new((px(0.), 0))),
             context_menu: None,
@@ -360,7 +360,6 @@ impl JudgingTableCard {
             .then(|| self.discipline_bounds.get())
             .flatten()
             .map(|b| {
-                let anchor = point(b.origin.x, b.origin.y + b.size.height + px(4.));
                 let mut col = div()
                     .id("discipline-list")
                     .min_w(b.size.width.max(px(190.)))
@@ -393,12 +392,10 @@ impl JudgingTableCard {
                             .child(cx.t(d.label_key())),
                     );
                 }
-                // Above the scroll container (and any dialog) — see `meta_dialog`.
-                deferred(anchored().position(anchor).snap_to_window().child(col))
-                    .with_priority(gpui_kit::base::POPUP_PRIORITY)
-            });
-
-        let capture = self.discipline_bounds.clone();
+                col
+            })
+            // Above the scroll container (and any dialog) — see `meta_dialog`.
+            .and_then(|col| self.discipline_bounds.float_below(px(4.), col));
 
         div()
             .id("discipline-select")
@@ -411,19 +408,7 @@ impl JudgingTableCard {
                     cx.notify();
                 }
             }))
-            .child(
-                canvas(
-                    move |bounds, window, _cx| {
-                        if capture.get() != Some(bounds) {
-                            capture.set(Some(bounds));
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.discipline_bounds.probe())
             .child(
                 div()
                     .id("discipline-trigger")

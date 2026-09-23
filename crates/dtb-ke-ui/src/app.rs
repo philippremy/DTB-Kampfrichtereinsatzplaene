@@ -678,6 +678,7 @@ impl AppShell {
     /// The min / max / close buttons — drawn only under client-side decorations.
     fn window_controls(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
+        let radius = cx.theme().skin.radius_control_px();
         let maximized = window.is_maximized();
 
         let button = |id: &'static str, icon: Icon, area: WindowControlArea, danger: bool| {
@@ -688,7 +689,7 @@ impl AppShell {
                 .items_center()
                 .justify_center()
                 .size(px(28.))
-                .rounded(px(6.))
+                .rounded(radius)
                 .cursor_pointer()
                 .text_color(c.muted_foreground)
                 .hover(|el| {
@@ -1039,7 +1040,7 @@ impl Render for AppShell {
 fn perf_hud_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("DTB_KE_PERF_HUD").map_or(cfg!(debug_assertions), |var| !var.is_empty())
+        std::env::var("DTB_KE_PERF_HUD").map_or(cfg!(debug_assertions), |var| !var.is_empty() && var.as_str() != "0")
     })
 }
 

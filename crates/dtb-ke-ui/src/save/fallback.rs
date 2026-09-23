@@ -7,8 +7,8 @@ use dtb_ke_export::{PdfExport, PdfStandard, pdf_standard_conflicts};
 use futures::channel::oneshot;
 use gpui_kit::{
     App, AppContext, Bounds, Context, FocusHandle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, Size, StatefulInteractiveElement, Styled, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder, px,
+    IntoElement, ParentElement, Pixels, Render, Size, StatefulInteractiveElement, Styled,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder, px,
 };
 
 use crate::components::button::{Button, ButtonTone};
@@ -36,6 +36,7 @@ fn checkbox_row(
     checked: bool,
     c: Hsla,
     on: Hsla,
+    radius: Pixels,
 ) -> gpui_kit::Div {
     div()
         .flex()
@@ -46,7 +47,7 @@ fn checkbox_row(
             div()
                 .flex_none()
                 .size(px(16.))
-                .rounded(px(3.))
+                .rounded(radius)
                 .border_1()
                 .border_color(if checked { on } else { c })
                 .flex()
@@ -196,6 +197,7 @@ impl SaveOptions {
 impl Render for SaveOptions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
+        let checkbox_radius = cx.theme().skin.radius_control_px().min(px(4.));
         let radius = cx.theme().skin.radius_control_px();
         let kind = self.format.kind();
         let selected = FormatKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
@@ -285,6 +287,7 @@ impl Render for SaveOptions {
                                             } else {
                                                 c.primary
                                             },
+                                            checkbox_radius,
                                         ))
                                         .children(blocked.clone().map(|r| {
                                             div()
@@ -322,6 +325,7 @@ impl Render for SaveOptions {
                                             self.format.docx_embed_fonts(),
                                             c.line_strong,
                                             c.primary,
+                                            checkbox_radius,
                                         )),
                                 )
                                 .child(

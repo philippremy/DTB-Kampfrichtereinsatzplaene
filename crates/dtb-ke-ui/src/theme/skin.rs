@@ -221,6 +221,13 @@ impl SkinMetrics {
     pub fn radius_control_px(&self) -> Pixels {
         px(self.radius_control)
     }
+    /// Corner radius for a pill nested inside a `radius_control`-rounded,
+    /// `p(px(2.))`-padded container (segmented-style pickers), so the inner
+    /// and outer corners stay concentric instead of the inner one reading as
+    /// a plain rectangle.
+    pub fn radius_control_inset_px(&self) -> Pixels {
+        px((self.radius_control - 2.0).max(2.0))
+    }
     /// Corner radius for a labelled control of `height`: half the height for a
     /// capsule skin, else [`Self::radius_control_px`].
     pub fn control_radius_px(&self, height: Pixels) -> Pixels {
