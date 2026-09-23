@@ -1,0 +1,1 @@
+../../zed/crates/ztracing/build.rs

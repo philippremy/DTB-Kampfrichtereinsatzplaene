@@ -179,3 +179,33 @@ dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
 # feature parity on. Remove this patch once a fixed version ships upstream.
 [patch.crates-io]
 turso_sdk_kit = { path = "vendor/turso_sdk_kit-0.7.2" }
+
+# Vendored gpui (see vendor/README.md): the whole gpui-pre* family redirected
+# to a git submodule of zed-industries/zed (vendor/zed), pinned at the same
+# zed-rev the crates.io gpui-pre 0.3.6 snapshot was built from. Each entry
+# below is a thin wrapper crate (vendor/gpui-pre-shims/<dir>) that symlinks
+# the real crate content in from vendor/zed and carries the known-good
+# published Cargo.toml (same name/version/deps as crates.io) so semver
+# resolution is unaffected.
+gpui-pre = { path = "vendor/gpui-pre-shims/gpui" }
+gpui-pre-apple = { path = "vendor/gpui-pre-shims/gpui_apple" }
+gpui-pre-collections = { path = "vendor/gpui-pre-shims/collections" }
+gpui-pre-derive-refineable = { path = "vendor/gpui-pre-shims/derive_refineable" }
+gpui-pre-http-client = { path = "vendor/gpui-pre-shims/http_client" }
+gpui-pre-linux = { path = "vendor/gpui-pre-shims/gpui_linux" }
+gpui-pre-macos = { path = "vendor/gpui-pre-shims/gpui_macos" }
+gpui-pre-macros = { path = "vendor/gpui-pre-shims/gpui_macros" }
+gpui-pre-perf = { path = "vendor/gpui-pre-shims/perf" }
+gpui-pre-platform = { path = "vendor/gpui-pre-shims/gpui_platform" }
+gpui-pre-refineable = { path = "vendor/gpui-pre-shims/refineable" }
+gpui-pre-scheduler = { path = "vendor/gpui-pre-shims/scheduler" }
+gpui-pre-shared-string = { path = "vendor/gpui-pre-shims/gpui_shared_string" }
+gpui-pre-sum-tree = { path = "vendor/gpui-pre-shims/sum_tree" }
+gpui-pre-util = { path = "vendor/gpui-pre-shims/gpui_util" }
+gpui-pre-util-macros = { path = "vendor/gpui-pre-shims/util_macros" }
+gpui-pre-web = { path = "vendor/gpui-pre-shims/gpui_web" }
+gpui-pre-wgpu = { path = "vendor/gpui-pre-shims/gpui_wgpu" }
+gpui-pre-windows = { path = "vendor/gpui-pre-shims/gpui_windows" }
+gpui-pre-zlog = { path = "vendor/gpui-pre-shims/zlog" }
+gpui-pre-ztracing = { path = "vendor/gpui-pre-shims/ztracing" }
+gpui-pre-ztracing-macro = { path = "vendor/gpui-pre-shims/ztracing_macro" }
