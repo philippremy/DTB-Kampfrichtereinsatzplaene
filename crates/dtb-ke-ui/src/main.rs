@@ -103,6 +103,11 @@ fn main() {
         gpui_kit::base::init(cx);
         debug!("gpui-kit base initialised");
 
+        // The About window's app icon: on macOS, fetched natively (live
+        // appearance-adaptive on Tahoe+) instead of an embedded copy; see
+        // `skin::app_icon`. No-op watch on Windows/Linux.
+        about::install_icon(cx);
+
         // Persisted user settings, installed as a global so the settings window
         // and the editor layer read the same source of truth.
         Settings::init(cx);

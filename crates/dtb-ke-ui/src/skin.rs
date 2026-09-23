@@ -6,6 +6,7 @@
 //! proposal.
 
 pub mod accent;
+pub mod app_icon;
 pub mod backdrop;
 pub mod decorations;
 pub mod glass;

@@ -77,6 +77,16 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSColor", "NSColorSpace", "NSAppearance", "objc2-core-foundation", "block2",
     # `skin/backdrop.rs`'s native window backdrop.
     "NSVisualEffectView", "NSGlassEffectView", "NSBox",
+    # `skin/app_icon.rs`'s native app-icon fetch (`NSImage` -> `CGImage`,
+    # rasterised straight to a BGRA8 buffer via `objc2-core-graphics` — no
+    # PNG encode/decode round trip, so the `image` crate's format decoders
+    # never need to be linked in for this) + `NSWorkspace`'s notification
+    # center, for the private Tahoe+ icon-appearance-changed notification.
+    "NSImage", "NSWorkspace", "objc2-core-graphics",
+] }
+# `skin/app_icon.rs`'s BGRA8 rasterisation of the native app icon (see above).
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std", "CGContext", "CGImage", "CGColorSpace", "CGBitmapContext",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSString", "NSURL", "NSArray", "NSObject", "NSGeometry",
