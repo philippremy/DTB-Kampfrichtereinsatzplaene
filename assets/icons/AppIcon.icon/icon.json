@@ -1,91 +1,354 @@
 {
-  "fill" : {
-    "automatic-gradient" : "extended-gray:1.00000,1.00000"
-  },
+  "features" : [
+    "refractivity",
+    "specular-location"
+  ],
+  "fill" : "automatic",
   "groups" : [
     {
+      "blur-material" : 0.5,
       "layers" : [
         {
-          "glass" : true,
-          "image-name" : "Turnerkreuz.svg",
-          "name" : "Turnerkreuz",
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,1.00000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "hidden" : false,
+          "image-name" : "Template_3.svg",
+          "name" : "Layer 1 Top",
+          "opacity" : 1,
           "position" : {
-            "scale" : 0.65,
+            "scale" : 1,
             "translation-in-points" : [
-              -88.14458006173567,
-              -234.9505206256227
+              0.0001300000001265289,
+              170
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,1.00000",
+              "extended-gray:1.00000,0.00000"
+            ]
+          },
+          "hidden" : false,
+          "image-name" : "Template_2.svg",
+          "name" : "Layer 1 Middle",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -8.000000013907993e-05,
+              -161.71753000000012
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,1.00000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "image-name" : "Template_1.svg",
+          "name" : "Layer 1 Bottom",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -1.0000000202126103e-05,
+              -127
             ]
           }
         }
       ],
-      "name" : "Turnerkreuz - Gruppe",
+      "name" : "Layer 1",
       "position" : {
-        "scale" : 1,
+        "scale" : 0.55,
         "translation-in-points" : [
-          88.45258006173572,
-          0
+          0,
+          165
         ]
       },
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
       "shadow" : {
-        "kind" : "layer-color",
-        "opacity" : 0.75
+        "kind" : "none",
+        "opacity" : 0.5
       },
       "translucency" : {
-        "enabled" : false,
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.66000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "hidden" : false,
+          "image-name" : "Template_3.svg",
+          "name" : "Layer 2 Top",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0.0001300000001265289,
+              170
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.66000",
+              "extended-gray:1.00000,0.00000"
+            ]
+          },
+          "hidden" : false,
+          "image-name" : "Template_2.svg",
+          "name" : "Layer 2 Middle",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -8.000000013907993e-05,
+              -161.71753000000012
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.66000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "image-name" : "Template_1.svg",
+          "name" : "Layer 2 Bottom",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -1.0000000202126103e-05,
+              -127
+            ]
+          }
+        }
+      ],
+      "name" : "Layer 2",
+      "position" : {
+        "scale" : 0.55,
+        "translation-in-points" : [
+          0,
+          225
+        ]
+      },
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.33000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "hidden" : false,
+          "image-name" : "Template_3.svg",
+          "name" : "Layer 3 Top",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0.0001300000001265289,
+              170
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.10000",
+              "extended-gray:1.00000,0.00000"
+            ]
+          },
+          "hidden" : false,
+          "image-name" : "Template_2.svg",
+          "name" : "Layer 3 Middle",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -8.000000013907993e-05,
+              -161.71753000000012
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,0.10000",
+              "extended-gray:1.00000,0.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0
+              }
+            }
+          },
+          "image-name" : "Template_1.svg",
+          "name" : "Layer 3 Bottom",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -1.0000000202126103e-05,
+              -127
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "name" : "Layer 3",
+      "position" : {
+        "scale" : 0.55,
+        "translation-in-points" : [
+          0,
+          285
+        ]
+      },
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.15
+      },
+      "translucency" : {
+        "enabled" : true,
         "value" : 0.5
       }
     },
     {
       "blur-material" : null,
+      "hidden" : false,
       "layers" : [
         {
-          "glass" : true,
-          "image-name" : "Wertungstafel.png",
-          "name" : "Wertungstafel",
+          "fill" : {
+            "linear-gradient" : [
+              "extended-srgb:1.00000,0.21961,0.23529,1.00000",
+              "extended-srgb:0.00000,0.53333,1.00000,0.25000"
+            ]
+          },
+          "image-name" : "DTB_Background.svg",
+          "name" : "DTB Background",
           "position" : {
-            "scale" : 1.2,
+            "scale" : 0.52,
             "translation-in-points" : [
-              3.6000000000000227,
-              228.7016848123451
+              0,
+              0
             ]
           }
         }
       ],
-      "name" : "Wertungstafel - Gruppe",
+      "lighting" : "combined",
+      "name" : "DTB Card",
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
       "shadow" : {
         "kind" : "layer-color",
-        "opacity" : 0.7
+        "opacity" : 0.5
       },
-      "specular" : false,
+      "specular" : "inside",
       "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
-      }
-    },
-    {
-      "layers" : [
-        {
-          "glass" : true,
-          "image-name" : "Wertungstisch.png",
-          "name" : "Wertungstisch",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0.5,
-              214.50168481234505
-            ]
-          }
-        }
-      ],
-      "name" : "Wertungstisch - Gruppe",
-      "shadow" : {
-        "kind" : "layer-color",
-        "opacity" : 1
-      },
-      "specular" : false,
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
+        "enabled" : true,
+        "value" : 0.25
       }
     }
   ],

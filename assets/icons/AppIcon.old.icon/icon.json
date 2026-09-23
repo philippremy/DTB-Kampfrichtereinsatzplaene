@@ -1,0 +1,98 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-gray:1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Turnerkreuz.svg",
+          "name" : "Turnerkreuz",
+          "position" : {
+            "scale" : 0.65,
+            "translation-in-points" : [
+              -88.14458006173567,
+              -234.9505206256227
+            ]
+          }
+        }
+      ],
+      "name" : "Turnerkreuz - Gruppe",
+      "position" : {
+        "scale" : 1,
+        "translation-in-points" : [
+          88.45258006173572,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.75
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "blur-material" : null,
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Wertungstafel.png",
+          "name" : "Wertungstafel",
+          "position" : {
+            "scale" : 1.2,
+            "translation-in-points" : [
+              3.6000000000000227,
+              228.7016848123451
+            ]
+          }
+        }
+      ],
+      "name" : "Wertungstafel - Gruppe",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.7
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Wertungstisch.png",
+          "name" : "Wertungstisch",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0.5,
+              214.50168481234505
+            ]
+          }
+        }
+      ],
+      "name" : "Wertungstisch - Gruppe",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 1
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
