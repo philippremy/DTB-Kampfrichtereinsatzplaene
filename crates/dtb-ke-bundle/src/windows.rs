@@ -85,9 +85,13 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     if has_icon {
         copy(&icon::ico_path(), &staging.join("AppIcon.ico")).map_err(io)?;
     }
+    let has_doc_icon = icon::doc_available() && icon::doc_ico_path().exists();
+    if has_doc_icon {
+        copy(&icon::doc_ico_path(), &staging.join("DocumentIcon.ico")).map_err(io)?;
+    }
 
     let wxs = staging.join("Package.wxs");
-    std::fs::write(&wxs, wxs_source(&exe_name, has_icon)).map_err(io)?;
+    std::fs::write(&wxs, wxs_source(&exe_name, has_icon, has_doc_icon)).map_err(io)?;
     report(&wxs);
 
     // ── build the .msi ────────────────────────────────────────────────────
@@ -202,18 +206,64 @@ fn rtf_document(text: &str) -> String {
     )
 }
 
-fn wxs_source(exe_name: &str, has_icon: bool) -> String {
-    let icon_block = if has_icon {
-        "\n    <Icon Id=\"AppIcon.ico\" SourceFile=\"AppIcon.ico\" />\
-         \n    <Property Id=\"ARPPRODUCTICON\" Value=\"AppIcon.ico\" />"
-    } else {
-        ""
-    };
+/// The `.dtbke` ProgId — a plain short id (not a reverse-DNS one; the
+/// Windows registry doesn't care, and it's easier to read in `regedit`).
+const DOC_PROGID: &str = "DTBKE.Document";
+
+fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
+    let mut icon_block = String::new();
+    if has_icon {
+        icon_block.push_str(
+            "\n    <Icon Id=\"AppIcon.ico\" SourceFile=\"AppIcon.ico\" />\
+             \n    <Property Id=\"ARPPRODUCTICON\" Value=\"AppIcon.ico\" />",
+        );
+    }
+    if has_doc_icon {
+        icon_block.push_str("\n    <Icon Id=\"DocumentIcon.ico\" SourceFile=\"DocumentIcon.ico\" />");
+    }
     let shortcut_icon = if has_icon {
         " Icon=\"AppIcon.ico\""
     } else {
         ""
     };
+    let doc_icon_attr = if has_doc_icon {
+        " Icon=\"DocumentIcon.ico\""
+    } else {
+        ""
+    };
+
+    // `.dtbke` file association. `ProgId`/`Extension`/`Verb` are core WiX v4
+    // schema (not an extension), and register everything themselves —
+    // `HKCR\.dtbke` → the ProgId, the ProgId's description + icon, and the
+    // "open" verb's command line. A `MIME` child additionally sets this
+    // ProgId as the default handler for the content type. The `Component`
+    // still needs its own `KeyPath` (none of the above provides one), so it
+    // carries a small marker registry value in our own software key, the
+    // same pattern `RegistryEntries` below it already uses.
+    let file_association = format!(
+        r#"      <Component Id="FileAssociation" Guid="*">
+        <RegistryValue Root="HKMU"
+                       Key="Software\{publisher}\{name}"
+                       Name="FileAssociationInstalled"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+        <ProgId Id="{progid}" Description="{doc_name}"{doc_icon_attr}>
+          <Extension Id="{ext}" ContentType="{mime}">
+            <Verb Id="open" Command="Öffnen" TargetFile="AppExe" Argument="&quot;%1&quot;" />
+            <MIME Id="{mime}" ContentType="{mime}" Default="yes" />
+          </Extension>
+        </ProgId>
+      </Component>
+"#,
+        publisher = xml_escape(meta::PUBLISHER),
+        name = xml_escape(meta::DISPLAY_NAME),
+        progid = DOC_PROGID,
+        doc_name = xml_escape(meta::DOC_TYPE_NAME),
+        doc_icon_attr = doc_icon_attr,
+        ext = meta::DOC_EXTENSION,
+        mime = meta::DOC_MIME_TYPE,
+    );
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -289,7 +339,7 @@ fn wxs_source(exe_name: &str, has_icon: bool) -> String {
                        Value="[INSTALLFOLDER]"
                        KeyPath="yes" />
       </Component>
-    </ComponentGroup>
+{file_association}    </ComponentGroup>
   </Package>
 </Wix>
 "#,
@@ -302,6 +352,7 @@ fn wxs_source(exe_name: &str, has_icon: bool) -> String {
         icon_block = icon_block,
         exe_name = exe_name,
         shortcut_icon = shortcut_icon,
+        file_association = file_association,
     )
 }
 
@@ -344,7 +395,7 @@ mod tests {
 
     #[test]
     fn wxs_wires_the_install_wizard() {
-        let wxs = super::wxs_source("App.exe", true);
+        let wxs = super::wxs_source("App.exe", true, true);
         for needle in [
             r#"xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui""#,
             r#"<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />"#,
@@ -362,6 +413,25 @@ mod tests {
             wxs.matches('>').count(),
             "unbalanced angle brackets"
         );
+    }
+
+    #[test]
+    fn wxs_wires_the_dtbke_file_association() {
+        let wxs = super::wxs_source("App.exe", false, true);
+        for needle in [
+            r#"<Icon Id="DocumentIcon.ico" SourceFile="DocumentIcon.ico" />"#,
+            r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan" Icon="DocumentIcon.ico">"#,
+            r#"<Extension Id="dtbke" ContentType="application/x-dtbke">"#,
+            r#"TargetFile="AppExe""#,
+            r#"<MIME Id="application/x-dtbke" ContentType="application/x-dtbke" Default="yes" />"#,
+        ] {
+            assert!(wxs.contains(needle), "wxs missing {needle:?}");
+        }
+        assert_eq!(wxs.matches('<').count(), wxs.matches('>').count(), "unbalanced angle brackets");
+
+        let no_icon = super::wxs_source("App.exe", false, false);
+        assert!(!no_icon.contains("DocumentIcon.ico"));
+        assert!(no_icon.contains(r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan">"#));
     }
 
     #[test]

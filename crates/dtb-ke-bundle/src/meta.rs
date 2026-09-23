@@ -90,9 +90,43 @@ pub const MACOS_MIN_VERSION: &str = "11.0";
 /// left alone. Raise this when a later redesign moves the gate. See RUNNERS.md.
 pub const MACOS_SDK_FLOOR: &str = "26.0";
 
+/// The `.dtbke` file type — a single-competition postcard blob (see
+/// `dtb-ke-ui/src/save/mod.rs` / `store.rs::export_competition`; **not** the
+/// whole-database backup, which is a plain `.bin` file with no registered
+/// type — see that crate's `filesystem.rs`). Registered on every platform so
+/// double-clicking one imports it via `dtb-ke-ui/src/open_files.rs` +
+/// `app::open_paths`.
+pub const DOC_EXTENSION: &str = "dtbke";
+
+/// The user-facing name for the `.dtbke` file type — a macOS `ProgId`/
+/// `UTType` description, a Windows `ProgId` description, and the Linux
+/// shared-mime-info `<comment>`.
+pub const DOC_TYPE_NAME: &str = "DTB Kampfrichtereinsatzplan";
+
+/// The freedesktop / Windows MIME type for `.dtbke` — there's no registered
+/// vendor type for this, so this follows the conventional unofficial
+/// `application/x-<ext>` shape (e.g. Blender's `.blend` as
+/// `application/x-blender`).
+pub const DOC_MIME_TYPE: &str = "application/x-dtbke";
+
+/// The macOS Uniform Type Identifier exported for `.dtbke`
+/// (`UTExportedTypeDeclarations` in `macos.rs`'s Info.plist). Reverse-DNS
+/// under the same domain as [`IDENTIFIER`], but ASCII-only like [`RDNS_ID`] —
+/// UTIs are conventionally ASCII and there's no existing install to strand
+/// by keeping it that way from the start. A UTI cannot contain "Umlaute",
+/// so we turn "Kampfrichtereinsatzpläne" to "Kampfrichtereinsatzplaene".
+pub const DOC_UTI: &str = "de.philippremy.DTB-Kampfrichtereinsatzplaene.DTB-Kampfrichtereinsatzplan";
+
 /// **Stable** WiX upgrade code — a fixed GUID that identifies the product line
 /// across versions so an `.msi` upgrades in place. Never change this.
 pub const WIX_UPGRADE_CODE: &str = "8F3A1C57-2D94-4E6B-9A11-6C0F5B2E7D84";
+
+/// `CFBundleAlternateNames` — short nicknames Spotlight/Siri also match
+/// against, alongside [`DISPLAY_NAME`] itself. Useful here specifically
+/// because the real name is long and carries a non-ASCII `ä` that not every
+/// input method / keyboard layout types easily.
+pub const MACOS_ALTERNATE_NAMES: &[&str] =
+    &["DTB KE", "DTB-KE", "Kampfrichtereinsatzpläne", "Kampfrichtereinsatzplaene"];
 
 /// `CFBundleVersion` / MSI `ProductVersion` want `x.y.z[.b]`; our SemVer string
 /// is already in that shape, but strip any pre-release / build metadata.

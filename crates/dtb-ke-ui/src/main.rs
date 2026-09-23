@@ -20,6 +20,7 @@ mod mail;
 mod material;
 mod menu;
 mod model;
+mod open_files;
 mod preview;
 mod save;
 mod settings;
@@ -96,6 +97,11 @@ fn main() {
     // macOS: the app keeps running when the main window is closed; clicking the
     // dock icon re-opens it (or re-focuses it if it's still around).
     app.on_reopen(app::open_main_window);
+    // Opening a `.dtbke` file from the OS. Real (and possibly the only
+    // signal we get) on macOS; a harmless no-op registration on Windows/Linux
+    // — see `open_files`'s module doc for why those instead rely on the
+    // command-line argument, handled by `open_files::ready` below.
+    app.on_open_urls(open_files::handle_open_urls);
     app.run(|cx| {
         // `gpui-base` global infrastructure (input engine, popovers, …), via
         // gpui-kit. It installs a default `gpui_kit::base::Theme`; our
@@ -149,6 +155,11 @@ fn main() {
         } else {
             app::open_main_window(cx);
         }
+
+        // Opens a `.dtbke` file passed on the command line (Windows/Linux
+        // file-association launch) and hands `on_open_urls` a way to reach
+        // `cx` for anything it sees from here on (macOS).
+        open_files::ready(cx);
 
         // Debug aids: open a secondary window straight away.
         if let Some(v) = std::env::var_os("DTB_KE_ABOUT") {

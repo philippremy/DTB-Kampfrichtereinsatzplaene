@@ -32,7 +32,7 @@
 //! `assets/icons/AppIcon.icon` changes.
 
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use image::{DynamicImage, ImageFormat, RgbaImage, imageops::FilterType};
@@ -82,6 +82,43 @@ pub fn png_512_path() -> PathBuf {
     generated_dir().join("icon-512.png")
 }
 
+/// The `.dtbke` file-type icon master — a flat, square RGBA PNG (≥1024×1024
+/// recommended), unlike [`master_dir`] committed by hand rather than
+/// authored in Icon Composer: a document icon needs no Liquid Glass
+/// materials/layering, so it's rasterised straight into every output the
+/// same way [`flat_png_path`] itself is (see the module doc's "one bridge
+/// back to plain pixels" note) — only the macOS `.icns` step actually needs
+/// to run on a Mac (`iconutil`; no `actool`/Icon Composer involved), the
+/// `.ico` and hicolor PNGs are pure Rust wherever [`generate`] runs. Still
+/// folded into the same macOS-only `generate()` / `cargo dtb-ke-bundle
+/// icons` step as the app icon, for one regenerate-and-commit story rather
+/// than two.
+///
+/// Unlike [`master_dir`], this is expected to be **non-square** — a document
+/// icon is conventionally a page/leaf silhouette, not a squircle — so every
+/// derivation below fits it into each target size preserving aspect ratio
+/// (transparent letterboxing) rather than stretching it, see
+/// [`rasterise_contained`].
+pub fn doc_master_path() -> PathBuf {
+    workspace_root().join("assets/icons/FileIcon.png")
+}
+pub fn doc_icns_path() -> PathBuf {
+    generated_dir().join("DocumentIcon.icns")
+}
+pub fn doc_ico_path() -> PathBuf {
+    generated_dir().join("DocumentIcon.ico")
+}
+/// The freedesktop mimetype icon name for `.dtbke` —
+/// `meta::DOC_MIME_TYPE` with `/` → `-`, the lookup convention icon themes
+/// use for a MIME type with no explicit `<icon>` override in the
+/// shared-mime-info package (see `linux.rs`).
+pub const DOC_MIME_ICON_NAME: &str = "application-x-dtbke";
+
+/// Whether the committed document-type icons are present.
+pub fn doc_available() -> bool {
+    doc_ico_path().exists()
+}
+
 /// The freedesktop icon sizes we ship (px).
 const HICOLOR_SIZES: &[u32] = &[16, 22, 24, 32, 48, 64, 96, 128, 192, 256, 512];
 /// Sizes packed into the multi-resolution `.ico`.
@@ -94,10 +131,14 @@ pub fn available() -> bool {
     flat_png_path().exists()
 }
 
-/// Regenerate every icon output from the Icon Composer master. **macOS
-/// only** — see the module doc for why there is no fallback path on
-/// Windows/Linux. Writes into [`generated_dir`], which is git-tracked;
-/// callers are expected to `git add` + commit the result.
+/// Regenerate every icon output — the app icon from the Icon Composer
+/// master, and the `.dtbke` document-type icon from its own flat master, if
+/// committed (see [`doc_master_path`]). **macOS only** — see the module doc
+/// for why there is no fallback path on Windows/Linux (the app icon's
+/// `actool` step needs it; the document icon's `iconutil` step is folded in
+/// here too for one regenerate-and-commit story). Writes into
+/// [`generated_dir`], which is git-tracked; callers are expected to `git
+/// add` + commit the result.
 pub fn generate() -> Result<bool, String> {
     if !cfg!(target_os = "macos") {
         return Err(
@@ -108,6 +149,15 @@ pub fn generate() -> Result<bool, String> {
         );
     }
 
+    let app_icon = generate_app_icon()?;
+    let doc_icon = generate_doc_icon()?;
+    Ok(app_icon || doc_icon)
+}
+
+/// The app-icon half of [`generate`] — the Icon Composer master → `.icns` /
+/// `Assets.car` / `.ico` / hicolor `apps/` PNGs. `Ok(false)` (no error) when
+/// there's no master to build from yet.
+fn generate_app_icon() -> Result<bool, String> {
     let master = master_dir();
     if !master.exists() {
         eprintln!(
@@ -131,10 +181,79 @@ pub fn generate() -> Result<bool, String> {
     util::remove(&scratch).ok();
 
     write_png(&flat.resize_exact(512, 512, FilterType::Lanczos3).to_rgba8(), &png_512_path())?;
-    build_ico(&flat)?;
-    build_hicolor(&flat)?;
+    build_ico(&flat, &ico_path())?;
+    build_hicolor_named(&flat, "apps", meta::RDNS_ID)?;
 
     Ok(true)
+}
+
+/// The document-icon half of [`generate`] — [`doc_master_path`] → `.icns` /
+/// `.ico` / hicolor `mimetypes/` PNGs. `Ok(false)` (no error) when there's no
+/// master to build from yet — the icon is expected to be added later, and
+/// bundling without one just means the OS shows a generic file icon for
+/// `.dtbke` (see the `#cfg` sites in `macos.rs`/`windows.rs`/`linux.rs`).
+fn generate_doc_icon() -> Result<bool, String> {
+    let master_path = doc_master_path();
+    if !master_path.exists() {
+        eprintln!(
+            "dtb-ke-bundle: no document-type icon master at {} — bundling without a \
+             .dtbke file-type icon",
+            master_path.display()
+        );
+        return Ok(false);
+    }
+    let master =
+        image::open(&master_path).map_err(|e| format!("opening {}: {e}", master_path.display()))?;
+
+    std::fs::create_dir_all(generated_dir()).map_err(io("icon output dir"))?;
+    build_icns_from_flat(&master, &doc_icns_path())?;
+    build_ico(&master, &doc_ico_path())?;
+    build_hicolor_named(&master, "mimetypes", DOC_MIME_ICON_NAME)?;
+
+    Ok(true)
+}
+
+/// Build an `.icns` from a flat master image via a hand-built `.iconset` —
+/// the reverse of [`extract_flat_png`]. Only needs `iconutil` (ships with
+/// the Xcode Command Line Tools), unlike the app icon's `actool`/Icon
+/// Composer pipeline.
+fn build_icns_from_flat(master: &DynamicImage, out: &Path) -> Result<(), String> {
+    let scratch = scratch_dir().join("doc-icon-src");
+    util::fresh_dir(&scratch).map_err(io("doc icon scratch dir"))?;
+    let iconset = scratch.join("DocumentIcon.iconset");
+    std::fs::create_dir_all(&iconset).map_err(io("iconset dir"))?;
+
+    // Apple's `.iconset` naming convention: (pixel size, file name).
+    const ICNS_SIZES: &[(u32, &str)] = &[
+        (16, "icon_16x16.png"),
+        (32, "icon_16x16@2x.png"),
+        (32, "icon_32x32.png"),
+        (64, "icon_32x32@2x.png"),
+        (128, "icon_128x128.png"),
+        (256, "icon_128x128@2x.png"),
+        (256, "icon_256x256.png"),
+        (512, "icon_256x256@2x.png"),
+        (512, "icon_512x512.png"),
+        (1024, "icon_512x512@2x.png"),
+    ];
+    for (size, name) in ICNS_SIZES {
+        write_png(&rasterise(master, *size), &iconset.join(name))?;
+    }
+
+    util::try_run(
+        "iconutil",
+        &[
+            "--convert",
+            "icns",
+            "--output",
+            &out.to_string_lossy(),
+            &iconset.to_string_lossy(),
+        ],
+        &workspace_root(),
+    )
+    .map_err(|e| format!("iconutil: {e}"))?;
+    util::remove(&scratch).ok();
+    Ok(())
 }
 
 /// Compile the `.icon` master into `scratch/{AppIcon.icns,Assets.car}`.
@@ -203,11 +322,31 @@ fn extract_flat_png(scratch: &std::path::Path) -> Result<DynamicImage, String> {
     image::open(&largest).map_err(|e| format!("re-reading extracted AppIcon.png: {e}"))
 }
 
-/// A square RGBA bitmap `size`×`size`, resized from the flat master.
+/// A square RGBA bitmap `size`×`size`: `master` scaled to fit within the
+/// square (preserving aspect ratio) and centred on a transparent
+/// background. For a square master — the app icon's flattened Icon Composer
+/// output — the fit is exact and this is returned straight from
+/// `resize_exact`, byte-for-byte what a plain resize would give (compositing
+/// unconditionally, even when nothing needs letterboxing, would alpha-blend
+/// every partially-transparent edge pixel onto the canvas and premultiply
+/// its RGB — a real, if subtle, corruption of the app icon's anti-aliased
+/// edges). For a non-square one — the document icon's page silhouette, see
+/// [`doc_master_path`] — it letterboxes instead of stretching.
 fn rasterise(master: &DynamicImage, size: u32) -> RgbaImage {
-    master
-        .resize_exact(size, size, FilterType::Lanczos3)
-        .to_rgba8()
+    let (w, h) = (master.width(), master.height());
+    let scale = (f64::from(size) / f64::from(w)).min(f64::from(size) / f64::from(h));
+    let new_w = ((f64::from(w) * scale).round() as u32).clamp(1, size);
+    let new_h = ((f64::from(h) * scale).round() as u32).clamp(1, size);
+    let resized = master.resize_exact(new_w, new_h, FilterType::Lanczos3).to_rgba8();
+    if new_w == size && new_h == size {
+        return resized;
+    }
+
+    let mut canvas = RgbaImage::new(size, size);
+    let x_off = i64::from((size - new_w) / 2);
+    let y_off = i64::from((size - new_h) / 2);
+    image::imageops::overlay(&mut canvas, &resized, x_off, y_off);
+    canvas
 }
 
 /// PNG-encode an RGBA bitmap.
@@ -228,56 +367,62 @@ fn write_png(img: &RgbaImage, path: &std::path::Path) -> Result<(), String> {
 
 // ── Windows .ico ────────────────────────────────────────────────────────────
 
-/// Build a multi-resolution `.ico`. Each entry is a PNG (the ICO format has
-/// allowed PNG-compressed images since Windows Vista, and WiX / modern Windows
-/// read them fine).
-fn build_ico(master: &DynamicImage) -> Result<(), String> {
+/// Build a multi-resolution `.ico` at `out`. Each entry is a PNG (the ICO
+/// format has allowed PNG-compressed images since Windows Vista, and WiX /
+/// modern Windows read them fine).
+fn build_ico(master: &DynamicImage, out: &Path) -> Result<(), String> {
     let images: Vec<(u32, Vec<u8>)> = ICO_SIZES
         .iter()
         .map(|&s| Ok((s, png_bytes(&rasterise(master, s))?)))
         .collect::<Result<_, String>>()?;
 
     let count = images.len() as u16;
-    let mut out = Vec::new();
+    let mut buf = Vec::new();
     // ICONDIR
-    out.extend_from_slice(&0u16.to_le_bytes()); // reserved
-    out.extend_from_slice(&1u16.to_le_bytes()); // type: icon
-    out.extend_from_slice(&count.to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    buf.extend_from_slice(&1u16.to_le_bytes()); // type: icon
+    buf.extend_from_slice(&count.to_le_bytes());
 
     // Directory entries are followed by the image data; offsets start after all
     // 16-byte entries.
     let mut offset = 6 + 16 * images.len();
     for (size, png) in &images {
         let dim = if *size >= 256 { 0u8 } else { *size as u8 }; // 0 means 256
-        out.push(dim); // width
-        out.push(dim); // height
-        out.push(0); // palette count
-        out.push(0); // reserved
-        out.extend_from_slice(&1u16.to_le_bytes()); // colour planes
-        out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
-        out.extend_from_slice(&(png.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(offset as u32).to_le_bytes());
+        buf.push(dim); // width
+        buf.push(dim); // height
+        buf.push(0); // palette count
+        buf.push(0); // reserved
+        buf.extend_from_slice(&1u16.to_le_bytes()); // colour planes
+        buf.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        buf.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&(offset as u32).to_le_bytes());
         offset += png.len();
     }
     for (_, png) in &images {
-        out.extend_from_slice(png);
+        buf.extend_from_slice(png);
     }
-    std::fs::write(ico_path(), out).map_err(io("AppIcon.ico"))
+    std::fs::write(out, buf).map_err(io("writing .ico"))
 }
 
 // ── Linux hicolor ──────────────────────────────────────────────────────────
 
-fn build_hicolor(master: &DynamicImage) -> Result<(), String> {
+/// Write `master` into every [`HICOLOR_SIZES`] rendition under
+/// `hicolor_dir()/<size>x<size>/<category>/<name>.png` — `category` is
+/// `"apps"` (app icon, name = `meta::RDNS_ID`) or `"mimetypes"` (the
+/// `.dtbke` file-type icon, name = [`DOC_MIME_ICON_NAME`]). Doesn't touch
+/// any other category already on disk — callers that want a clean rebuild
+/// wipe `hicolor_dir()` themselves first (see `generate_app_icon`, which
+/// runs first and freshens the whole `generated/` tree).
+fn build_hicolor_named(master: &DynamicImage, category: &str, name: &str) -> Result<(), String> {
     let root = hicolor_dir();
-    util::remove(&root).ok();
     for &size in HICOLOR_SIZES {
-        let dir = root.join(format!("{size}x{size}")).join("apps");
+        let dir = root.join(format!("{size}x{size}")).join(category);
         std::fs::create_dir_all(&dir).map_err(io("hicolor dir"))?;
-        write_png(&rasterise(master, size), &dir.join(format!("{}.png", meta::RDNS_ID)))?;
+        write_png(&rasterise(master, size), &dir.join(format!("{name}.png")))?;
     }
-    // No `scalable/apps/<id>.svg`: unlike the old flat SVG master, a Liquid
-    // Glass Icon Composer icon is composited from multiple layers/materials —
-    // there's no single self-contained vector to hand freedesktop.
+    // No `scalable/…/<name>.svg`: unlike the old flat SVG master, a Liquid
+    // Glass Icon Composer icon (and, for the document icon, its own flat
+    // raster master) has no single self-contained vector to hand freedesktop.
     Ok(())
 }
 

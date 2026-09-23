@@ -124,6 +124,19 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
         metainfo(),
     )?;
 
+    // `.dtbke` MIME type → /usr/share/mime/packages/<id>.xml — shared-mime-info
+    // has no notion of a per-app "file association" the way Windows/macOS do;
+    // this declares the type itself (name, glob, icon lookup name), and the
+    // `.desktop` file's `MimeType=` (above) is what actually associates this
+    // app with it. `update-mime-database` (install scripts below) must run
+    // afterwards for the XDG shared-mime cache to pick it up.
+    write(
+        &prefix
+            .join("usr/share/mime/packages")
+            .join(format!("{}.xml", meta::RDNS_ID)),
+        mime_package(),
+    )?;
+
     // Licence → /usr/share/doc/<slug>/copyright
     copy(
         &workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt"),
@@ -148,6 +161,7 @@ fn desktop_entry() -> String {
          Icon={id}\n\
          Terminal=false\n\
          Categories={categories}\n\
+         MimeType={mime};\n\
          StartupWMClass={wmclass}\n\
          StartupNotify=true\n",
         name = meta::DISPLAY_NAME,
@@ -155,12 +169,34 @@ fn desktop_entry() -> String {
         slug = meta::SLUG,
         id = meta::RDNS_ID,
         categories = meta::FREEDESKTOP_CATEGORIES,
+        mime = meta::DOC_MIME_TYPE,
         // Kept as the raw kebab-case name, not meta::DISPLAY_NAME — a WM_CLASS
         // with a space in it is unconventional and this preserves the exact
         // prior behavior (this field's *correct* value — whatever gpui
         // actually sets as the X11 WM_CLASS hint at runtime — hasn't been
         // independently verified; flagging rather than guessing further).
         wmclass = meta::RAW_BIN_NAME,
+    )
+}
+
+/// The shared-mime-info package declaring `application/x-dtbke` — name,
+/// `*.dtbke` glob, and (implicitly) its icon: with no `<icon>` override, XDG
+/// icon-theme lookup for this type tries `application-x-dtbke` (the type
+/// name with `/` → `-`) automatically, which is exactly the name
+/// `icon::DOC_MIME_ICON_NAME` writes into `hicolor/<size>/mimetypes/` under.
+fn mime_package() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="{mime}">
+    <comment>{name}</comment>
+    <glob pattern="*.{ext}"/>
+  </mime-type>
+</mime-info>
+"#,
+        mime = meta::DOC_MIME_TYPE,
+        name = xml(meta::DOC_TYPE_NAME),
+        ext = meta::DOC_EXTENSION,
     )
 }
 
@@ -182,6 +218,9 @@ fn metainfo() -> String {
   <developer id="de.philippremy">
     <name>{publisher}</name>
   </developer>
+  <provides>
+    <mediatype>{mime}</mediatype>
+  </provides>
   <releases>
     <release version="{version}" date="{date}" />
   </releases>
@@ -194,6 +233,7 @@ fn metainfo() -> String {
         description = xml(meta::DESCRIPTION),
         homepage = xml(meta::HOMEPAGE),
         publisher = xml(meta::PUBLISHER),
+        mime = meta::DOC_MIME_TYPE,
         version = meta::numeric_version(),
         // `appstreamcli validate` (run by appimagetool, fatal on error)
         // rejects a `<release>` with no `date`/`timestamp`.
@@ -231,6 +271,7 @@ fn install_script(install: bool) -> String {
          cp -a usr/. \"$PREFIX/\"\n\
          # /usr/bin/<slug> was built for /usr; fix the Exec if a custom prefix.\n\
          update-desktop-database \"$PREFIX/share/applications\" 2>/dev/null || true\n\
+         update-mime-database \"$PREFIX/share/mime\" 2>/dev/null || true\n\
          gtk-update-icon-cache \"$PREFIX/share/icons/hicolor\" 2>/dev/null || true\n\
          echo done\n"
             .to_string()
@@ -242,11 +283,15 @@ fn install_script(install: bool) -> String {
              rm -f \"$PREFIX/bin/{slug}\"\n\
              rm -f \"$PREFIX/share/applications/{id}.desktop\"\n\
              rm -f \"$PREFIX/share/metainfo/{id}.metainfo.xml\"\n\
-             find \"$PREFIX/share/icons/hicolor\" -name '{id}.*' -delete 2>/dev/null || true\n\
+             rm -f \"$PREFIX/share/mime/packages/{id}.xml\"\n\
+             find \"$PREFIX/share/icons/hicolor\" \\( -name '{id}.*' -o -name '{doc_icon}.*' \\) \
+-delete 2>/dev/null || true\n\
              rm -rf \"$PREFIX/share/doc/{slug}\"\n\
+             update-mime-database \"$PREFIX/share/mime\" 2>/dev/null || true\n\
              echo done\n",
             slug = meta::SLUG,
             id = meta::RDNS_ID,
+            doc_icon = icon::DOC_MIME_ICON_NAME,
         )
     }
 }
@@ -355,6 +400,9 @@ fn maintainer_script() -> String {
      if [ -x \"$(command -v update-desktop-database)\" ]; then\n\
        update-desktop-database -q /usr/share/applications || true\n\
      fi\n\
+     if [ -x \"$(command -v update-mime-database)\" ]; then\n\
+       update-mime-database /usr/share/mime || true\n\
+     fi\n\
      if [ -x \"$(command -v gtk-update-icon-cache)\" ]; then\n\
        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true\n\
      fi\n"
@@ -459,6 +507,7 @@ fn rpm_spec(src_stem: &str) -> String {
          URL:            {homepage}\n\
          Source0:        {src_stem}.tar.gz\n\
          Requires:       hicolor-icon-theme\n\
+         Requires:       shared-mime-info\n\
          \n\
          %description\n\
          {description}\n\
@@ -477,6 +526,7 @@ fn rpm_spec(src_stem: &str) -> String {
          /usr/share/applications/{id}.desktop\n\
          /usr/share/icons/hicolor/*\n\
          /usr/share/metainfo/{id}.metainfo.xml\n\
+         /usr/share/mime/packages/{id}.xml\n\
          /usr/share/doc/{pkg}/copyright\n\
          \n\
          %post\n\
@@ -486,12 +536,14 @@ fn rpm_spec(src_stem: &str) -> String {
          if [ $1 -eq 0 ] ; then\n\
              touch --no-create /usr/share/icons/hicolor &>/dev/null || :\n\
              gtk-update-icon-cache /usr/share/icons/hicolor &>/dev/null || :\n\
+             update-mime-database /usr/share/mime &>/dev/null || :\n\
          fi\n\
          update-desktop-database &>/dev/null || :\n\
          \n\
          %posttrans\n\
          gtk-update-icon-cache /usr/share/icons/hicolor &>/dev/null || :\n\
          update-desktop-database &>/dev/null || :\n\
+         update-mime-database /usr/share/mime &>/dev/null || :\n\
          \n\
          %changelog\n",
         pkg = meta::SLUG,
@@ -681,5 +733,26 @@ mod tests {
             date.len() == 10 && date.split('-').count() == 3,
             "date {date:?} is not YYYY-MM-DD"
         );
+    }
+
+    #[test]
+    fn metainfo_declares_the_dtbke_mediatype() {
+        let xml = super::metainfo();
+        assert!(xml.contains("<mediatype>application/x-dtbke</mediatype>"));
+    }
+
+    #[test]
+    fn mime_package_declares_the_glob() {
+        let xml = super::mime_package();
+        assert!(xml.contains(r#"type="application/x-dtbke""#));
+        assert!(xml.contains(r#"<glob pattern="*.dtbke"/>"#));
+        assert_eq!(xml.matches('<').count(), xml.matches('>').count(), "unbalanced tags");
+    }
+
+    #[test]
+    fn desktop_entry_registers_the_mime_type() {
+        let entry = super::desktop_entry();
+        assert!(entry.lines().any(|l| l == "MimeType=application/x-dtbke;"));
+        assert!(entry.contains("Exec=dtb-ke-kampfrichtereinsatzplaene %F"));
     }
 }

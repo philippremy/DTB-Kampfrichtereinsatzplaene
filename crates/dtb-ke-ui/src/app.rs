@@ -2,6 +2,7 @@
 //! strip. Owns the root [`AppStore`] and the sidebar / toolbar entities.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -565,8 +566,7 @@ impl AppShell {
             multiple: false,
             prompt: Some(prompt),
         });
-        let store = self.store.clone();
-        cx.spawn_in(window, async move |_, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = receiver.await else {
                 debug!("import cancelled");
                 return;
@@ -574,6 +574,21 @@ impl AppShell {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
+            this.update_in(cx, |this, window, cx| this.import_path(path, window, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Decode + import a single-competition `.dtbke` blob from `path`,
+    /// confirming an overwrite if a competition with the same id already
+    /// exists. Shared by [`Self::handle_import`] (the File ▸ Import… dialog)
+    /// and [`open_paths`] (opening a `.dtbke` file from the OS — double
+    /// click, "Open with", a Windows/Linux command-line argument, or macOS
+    /// `on_open_urls`).
+    fn import_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        cx.spawn_in(window, async move |_, cx| {
             info!("importing competition from {}", path.display());
             let bytes = match std::fs::read(&path) {
                 Ok(bytes) => bytes,
@@ -589,6 +604,27 @@ impl AppShell {
                     return;
                 }
             };
+
+            // The OS can trigger this before `AppStore::bootstrap` (the
+            // database open) has finished — `open_paths` runs at very early
+            // startup, racing it every time. Poll rather than block; same
+            // style as `AppStore::select_then`'s own wait loop, and a no-op
+            // in the File ▸ Import… case, where the store is already long
+            // since ready.
+            loop {
+                match store.update(cx, |store, _| store.status().clone()) {
+                    store::Status::Ready => break,
+                    store::Status::Failed(err) => {
+                        warn!("import: aborting — database failed to open: {err}");
+                        return;
+                    }
+                    store::Status::Connecting => {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(15))
+                            .await;
+                    }
+                }
+            }
 
             let id = dto.id;
             let exists = store.update(cx, |store, _| store.contains(id));
@@ -1144,4 +1180,36 @@ pub fn open_main_window(cx: &mut App) {
 /// Whether `handle` is the main window (the only one with a native backdrop).
 pub fn is_main_window(handle: AnyWindowHandle) -> bool {
     MAIN_WINDOW.with(|m| *m.borrow() == Some(handle))
+}
+
+/// Import every `.dtbke` path (case-insensitive extension; anything else is
+/// ignored) through the main window's [`AppShell`] — opening it first if
+/// necessary. The cross-platform entry point for "open this file from the
+/// OS": macOS Finder double-click / Dock drop (`open_files::install`'s
+/// `on_open_urls` hook) and the Windows/Linux command-line argument a file
+/// association launches the app with (`open_files::argv_paths`) both funnel
+/// here.
+pub fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dtbke")))
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+
+    open_main_window(cx);
+    let Some(handle) = MAIN_WINDOW.with(|m| *m.borrow()).and_then(|h| h.downcast::<AppShell>())
+    else {
+        error!("open_paths: main window not available");
+        return;
+    };
+    for path in paths {
+        info!("opening {} from the OS", path.display());
+        if let Err(err) =
+            handle.update(cx, |shell, window, cx| shell.import_path(path, window, cx))
+        {
+            error!("open_paths: {err}");
+        }
+    }
 }
