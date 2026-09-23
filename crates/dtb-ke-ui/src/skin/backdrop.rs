@@ -154,8 +154,14 @@ mod mac {
         container: Retained<NSView>,
         /// The container's `contentView`; the glass views are its subviews.
         holder: Retained<NSView>,
-        /// Holds the glass that stands outside the container (the sidebar).
+        /// Holds the glass that stands outside the container (the sidebar,
+        /// detail-view cards) — sits *below* `container`.
         direct_holder: Retained<NSView>,
+        /// Holds standalone glass that must render *above* `container`
+        /// instead — currently just a segmented control's [`GlassRole::SelectionThumb`],
+        /// which would otherwise blend into an overlapping merged region
+        /// instead of reading as its own accent-coloured glass.
+        top_holder: Retained<NSView>,
         /// Sits *below* the container: every region's flat backing fill, so a
         /// backing (the toolbar band) can never cover another region's glass.
         backing_holder: Retained<NSView>,
@@ -249,6 +255,7 @@ mod mac {
                     Kind::Glass(host) => {
                         host.container.removeFromSuperview();
                         host.direct_holder.removeFromSuperview();
+                        host.top_holder.removeFromSuperview();
                         host.backing_holder.removeFromSuperview();
                     }
                 }
@@ -319,7 +326,11 @@ mod mac {
                         let clip = FlippedView::new(mtm, frame).into_super();
                         clip.setClipsToBounds(true);
                         clip.addSubview(&glass);
-                        host.direct_holder.addSubview(&clip);
+                        if region.top {
+                            host.top_holder.addSubview(&clip);
+                        } else {
+                            host.direct_holder.addSubview(&clip);
+                        }
                         Some(clip)
                     };
                     host.views.insert(
@@ -535,16 +546,25 @@ mod mac {
         let direct_holder = FlippedView::new(mtm, frame).into_super();
         direct_holder.setAutoresizingMask(fill_mask());
         // Just above the backing layer (bottom → top: backings, standalone
-        // glass, the container).
+        // glass, the container, the top layer).
         content.addSubview_positioned_relativeTo(
             &direct_holder,
             NSWindowOrderingMode::Above,
             Some(&backing_holder),
         );
+        let top_holder = FlippedView::new(mtm, frame).into_super();
+        top_holder.setAutoresizingMask(fill_mask());
+        // Above the container, unlike `direct_holder` — see its doc comment.
+        content.addSubview_positioned_relativeTo(
+            &top_holder,
+            NSWindowOrderingMode::Above,
+            Some(&container),
+        );
         Some(GlassHost {
             container,
             holder,
             direct_holder,
+            top_holder,
             backing_holder,
             views: HashMap::new(),
         })
@@ -561,6 +581,7 @@ mod mac {
             Kind::Glass(host) => {
                 host.container.setAppearance(appearance.as_deref());
                 host.direct_holder.setAppearance(appearance.as_deref());
+                host.top_holder.setAppearance(appearance.as_deref());
                 host.backing_holder.setAppearance(appearance.as_deref());
             }
         }

@@ -747,6 +747,7 @@ impl Render for DetailView {
                                         ],
                                         selected,
                                     )
+                                    .glass("detail-phase", self.card_viewport.get())
                                     .on_select({
                                         let weak = weak.clone();
                                         move |index, window, cx| {

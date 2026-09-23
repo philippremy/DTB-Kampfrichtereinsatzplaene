@@ -69,6 +69,10 @@ pub struct GlassRegion {
     /// render together) or stands alone. Large surfaces stand alone: merged
     /// into the container they enlarged the capsules' shadows.
     pub contained: bool,
+    /// A standalone (`contained == false`) region that must render *above*
+    /// the merged container rather than below it — see
+    /// [`GlassRole::SelectionThumb`]. Meaningless when `contained` is `true`.
+    pub top: bool,
     /// This region lives inside a scrollable pane: `(group id, the pane's
     /// current window-relative visible bounds)`. Every region sharing a
     /// group id is clipped to that same rect instead of its own frame — see
@@ -98,6 +102,25 @@ pub enum GlassRole {
     /// standalone floating glass panel, always used with
     /// [`region_in_viewport`] so it's clipped to its scroll pane.
     Card,
+    /// A capsule-shaped standalone surface confined to a scroll pane's
+    /// viewport — e.g. a segmented control's track. Unlike [`GlassRole::Capsule`]
+    /// (which joins the shared container so *nearby toolbar capsule groups*
+    /// can visually merge) this never needs to merge with anything, and
+    /// [`super::backdrop::apply_regions`]'s scroll-clip handling only exists
+    /// on the standalone code path — a `Capsule` region fed through
+    /// [`region_in_viewport`] would render at its full, unclipped bounds
+    /// regardless of the pane's viewport.
+    Track,
+    /// A small accent-tinted badge layered *above* another glass surface —
+    /// e.g. a segmented control's selection thumb, sized and positioned over
+    /// the active option. Unlike [`GlassRole::CapsuleProminent`] this never
+    /// joins the shared container: a tinted region merged with an
+    /// overlapping neutral one in the same render pass blends into a flat,
+    /// muddy wash rather than reading as its own accent-coloured glass — so
+    /// this gets a genuinely separate `NSGlassEffectView`, stacked on its own
+    /// top layer above the merged container (see [`super::backdrop`]'s
+    /// `top_holder`).
+    SelectionThumb,
 }
 
 impl GlassRole {
@@ -107,12 +130,23 @@ impl GlassRole {
             GlassRole::Sidebar
             | GlassRole::Capsule
             | GlassRole::CapsuleProminent
-            | GlassRole::Card => Some(GlassStyle::Regular),
+            | GlassRole::Card
+            | GlassRole::SelectionThumb
+            | GlassRole::Track => Some(GlassStyle::Regular),
         }
     }
 
     fn contained(self) -> bool {
-        !matches!(self, GlassRole::Sidebar | GlassRole::Card)
+        !matches!(
+            self,
+            GlassRole::Sidebar | GlassRole::Card | GlassRole::SelectionThumb | GlassRole::Track
+        )
+    }
+
+    /// A standalone region that must render above the merged container
+    /// instead of below it — see [`GlassRole::SelectionThumb`].
+    fn top(self) -> bool {
+        matches!(self, GlassRole::SelectionThumb)
     }
 
     /// Capsules are fully rounded, whatever size they lay out to; a card
@@ -120,9 +154,10 @@ impl GlassRole {
     fn corner_radius(self, bounds: Bounds<Pixels>, theme: &Theme) -> Pixels {
         match self {
             GlassRole::Sidebar | GlassRole::ContentBacking => px(0.),
-            GlassRole::Capsule | GlassRole::CapsuleProminent => {
-                bounds.size.width.min(bounds.size.height) / 2.0
-            }
+            GlassRole::Capsule
+            | GlassRole::CapsuleProminent
+            | GlassRole::SelectionThumb
+            | GlassRole::Track => bounds.size.width.min(bounds.size.height) / 2.0,
             GlassRole::Card => theme.skin.radius_lg_px(),
         }
     }
@@ -160,8 +195,8 @@ impl GlassRole {
             // The card's own glass material carries enough visual weight on
             // its own — no extra tint/backing, same call as the plain
             // toolbar capsule.
-            GlassRole::Capsule | GlassRole::Card => (none, none),
-            GlassRole::CapsuleProminent => (
+            GlassRole::Capsule | GlassRole::Card | GlassRole::Track => (none, none),
+            GlassRole::CapsuleProminent | GlassRole::SelectionThumb => (
                 Hsla {
                     a: 0.9,
                     ..theme.color.primary
@@ -187,6 +222,22 @@ pub fn region(id: impl Into<SharedString>, role: GlassRole) -> impl IntoElement 
     region_scaled(id, role, 1.0)
 }
 
+/// `bounds` grown by `scale` about its own centre — the press bump, shared
+/// by [`region_scaled`] and [`region_in_viewport_scaled`].
+fn scale_about_center(bounds: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
+    if scale == 1.0 {
+        return bounds;
+    }
+    let (w, h) = (bounds.size.width * scale, bounds.size.height * scale);
+    Bounds {
+        origin: gpui::point(
+            bounds.origin.x - (w - bounds.size.width) / 2.0,
+            bounds.origin.y - (h - bounds.size.height) / 2.0,
+        ),
+        size: gpui::size(w, h),
+    }
+}
+
 /// [`region`] with the glass grown by `scale` about its centre — the press
 /// bump. Only the native frame changes; gpui's layout is untouched.
 pub fn region_scaled(id: impl Into<SharedString>, role: GlassRole, scale: f32) -> impl IntoElement {
@@ -194,18 +245,7 @@ pub fn region_scaled(id: impl Into<SharedString>, role: GlassRole, scale: f32) -
     canvas(
         move |bounds, _window, cx| {
             if super::backdrop::glass_active() {
-                let bounds = if scale == 1.0 {
-                    bounds
-                } else {
-                    let (w, h) = (bounds.size.width * scale, bounds.size.height * scale);
-                    Bounds {
-                        origin: gpui::point(
-                            bounds.origin.x - (w - bounds.size.width) / 2.0,
-                            bounds.origin.y - (h - bounds.size.height) / 2.0,
-                        ),
-                        size: gpui::size(w, h),
-                    }
-                };
+                let bounds = scale_about_center(bounds, scale);
                 let (tint, backing) = role.colors(cx.theme());
                 FRAME.with(|f| {
                     f.borrow_mut().insert(
@@ -217,6 +257,7 @@ pub fn region_scaled(id: impl Into<SharedString>, role: GlassRole, scale: f32) -
                             tint,
                             backing,
                             contained: role.contained(),
+                            top: role.top(),
                             scroll_clip: None,
                         },
                     );
@@ -254,11 +295,26 @@ pub fn region_in_viewport(
     group: impl Into<SharedString>,
     tint_override: Option<Hsla>,
 ) -> impl IntoElement {
+    region_in_viewport_scaled(id, role, viewport, group, tint_override, 1.0)
+}
+
+/// [`region_in_viewport`] with the glass grown by `scale` about its centre —
+/// the press bump (see [`region_scaled`]), for a region that also needs
+/// scroll-pane clipping.
+pub fn region_in_viewport_scaled(
+    id: impl Into<SharedString>,
+    role: GlassRole,
+    viewport: Bounds<Pixels>,
+    group: impl Into<SharedString>,
+    tint_override: Option<Hsla>,
+    scale: f32,
+) -> impl IntoElement {
     let id = id.into();
     let group = group.into();
     canvas(
         move |bounds, _window, cx| {
             if super::backdrop::glass_active() {
+                let bounds = scale_about_center(bounds, scale);
                 let (role_tint, backing) = role.colors(cx.theme());
                 let tint = tint_override.unwrap_or(role_tint);
                 FRAME.with(|f| {
@@ -271,6 +327,7 @@ pub fn region_in_viewport(
                             tint,
                             backing,
                             contained: role.contained(),
+                            top: role.top(),
                             scroll_clip: Some((group.clone(), viewport)),
                         },
                     );
