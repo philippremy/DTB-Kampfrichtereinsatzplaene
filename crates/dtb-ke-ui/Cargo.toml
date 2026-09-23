@@ -32,6 +32,7 @@ chacha20.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 futures.workspace = true
+gpui-fps.workspace = true
 gpui-kit.workspace = true
 image.workspace = true
 lettre.workspace = true

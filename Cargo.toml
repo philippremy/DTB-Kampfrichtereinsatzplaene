@@ -40,6 +40,7 @@ getrandom = { version = "0.3" }
 lettre = { version = "0.11", default-features = false, features = [
     "builder", "smtp-transport", "rustls-tls", "hostname",
 ] }
+gpui-fps = { version = "0.6" }
 # One dependency for the whole GPUI stack — bundles gpui, gpui-base (as
 # `gpui_kit::base`) and gpui_platform (as `gpui_kit::platform`) so no crate in
 # the workspace depends on gpui/gpui-base/gpui_platform directly any more.
@@ -153,6 +154,7 @@ gpui-pre-platform = { opt-level = 3 }
 gpui-pre-apple = { opt-level = 3 }
 gpui-pre-macos = { opt-level = 3 }
 gpui-base = { opt-level = 3 }
+gpui-fps = { opt-level = 3 }
 taffy = { opt-level = 3 }
 dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
 

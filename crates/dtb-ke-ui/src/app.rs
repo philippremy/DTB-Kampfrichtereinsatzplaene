@@ -2,7 +2,7 @@
 //! strip. Owns the root [`AppStore`] and the sidebar / toolbar entities.
 
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dtb_ke_export::Exporter;
@@ -988,12 +988,59 @@ impl Render for AppShell {
             .child(self.body(window, content_fill, cx))
             // Last child: flushes this frame's glass regions to the native backdrop.
             .child(glass::end_frame())
-            .children(self.updater_toast(cx));
+            .children(self.updater_toast(cx))
+            // Debug FPS HUD — inserted *last* so it always paints above the rest
+            // of the shell (it used to sit ahead of `self.body`, so its own
+            // content silently painted over it). `gpui_fps::FpsOverlay`
+            // positions itself `.absolute()` and anchors to the nearest
+            // positioned ancestor's full padding box, so it needs a container
+            // spanning the whole shell — but that container must itself be
+            // `.absolute().inset_0()`, not `.relative()`: `shell` is
+            // `.flex().flex_col()`, and a `.relative()` (i.e. normal-flow)
+            // `.size_full()` child is a real flex item that claims the entire
+            // column, which is what blanked out the rest of the UI. `.absolute()`
+            // takes it out of flow entirely (same `scrim()` technique as
+            // `detail/dialog_frame.rs`) while still filling `shell`'s padding
+            // box, since `shell` itself is `Position::Relative` (gpui's
+            // default). No extra `.occlude()` here: the HUD's own root div
+            // already carries `on_click`/right-click listeners (toggle compact
+            // view / headline), which gives it its own hitbox scoped to just
+            // its rendered footprint — now that it paints topmost, that hitbox
+            // already wins over whatever toolbar control sits behind it.
+            // Occluding this wrapper itself would block clicks across the
+            // *entire* window (it's `inset_0`), which would make the app
+            // unusable while the HUD is up — worth flagging if that's actually
+            // what was wanted.
+            .when(perf_hud_enabled(), |el| {
+                el.child(
+                    div()
+                        // Hand-taken from gpui_fps::HUD_WIDTH
+                        // The element itself is (nearly) square
+                        .w(px(172.))
+                        .h(px(172.))
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .occlude()
+                        .child(gpui_fps::fps_monitor(window, cx)),
+                )
+            });
 
         // Client-side decorations (Linux): wrap in the frame chrome + resize
         // gutter. A pass-through on macOS / Windows.
         decorations::apply_frame(shell, window, cx)
     }
+}
+
+/// Whether the debug FPS HUD (`gpui_fps`) should render. Debug builds show it
+/// by default; `DTB_KE_PERF_HUD` overrides in either direction (set but empty
+/// ⇒ off, set to anything else ⇒ on). Cached — `Render::render` runs every
+/// frame, and `std::env::var` isn't free to call that often.
+fn perf_hud_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("DTB_KE_PERF_HUD").map_or(cfg!(debug_assertions), |var| !var.is_empty())
+    })
 }
 
 /// Show a modal warning from an async context.
