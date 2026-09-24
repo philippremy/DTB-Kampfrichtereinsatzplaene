@@ -79,6 +79,10 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
+    pub(crate) fn scroll_handle(&self) -> gpui_kit::ScrollHandle {
+        self.list_scroll.base_handle().clone()
+    }
+
     pub fn new(
         store: Entity<AppStore>,
         on_export: CompetitionAction,

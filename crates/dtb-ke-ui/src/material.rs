@@ -54,7 +54,11 @@ enum Effective {
 /// drawn right now. See the module doc comment and [`window_background`]'s
 /// for the full fallback chain this implements.
 fn effective(theme: &Theme, cx: &App) -> Effective {
-    if Settings::global(cx).reduce_transparency {
+    // `DTB_KE_NO_NATIVE=1`: no native backdrop of any kind (neither Liquid Glass nor the
+    // vibrancy fallback), for isolating rendering problems from AppKit.
+    static NO_NATIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let no_native = *NO_NATIVE.get_or_init(|| std::env::var_os("DTB_KE_NO_NATIVE").is_some());
+    if no_native || Settings::global(cx).reduce_transparency {
         return Effective::Opaque;
     }
     match theme.skin.material {

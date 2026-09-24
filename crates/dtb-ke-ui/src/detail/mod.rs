@@ -101,6 +101,35 @@ pub struct DetailView {
 }
 
 impl DetailView {
+    /// Perf stress test only (`stress.rs`): one step of a fixed cycle of interactions.
+    pub(crate) fn stress_step(&mut self, step: usize, window: &mut Window, cx: &mut Context<Self>) {
+        match step % 5 {
+            0 => self.set_phase(Phase::Finale, window, cx),
+            1 => {
+                if let Some(card) = self.cards.first() {
+                    let id = card.read(cx).editor_id();
+                    self.select_table(id, cx);
+                }
+            }
+            2 => self.open_meta_dialog(window, cx),
+            3 => self.meta_dialog.update(cx, |dialog, cx| dialog.close(cx)),
+            _ => self.set_phase(Phase::Qualification, window, cx),
+        }
+    }
+
+    /// Perf stress test only: select the `step`-th card, like clicking through them.
+    pub(crate) fn stress_select(&mut self, step: usize, cx: &mut Context<Self>) {
+        if self.cards.is_empty() {
+            return;
+        }
+        let id = self.cards[step % self.cards.len()].read(cx).editor_id();
+        self.select_table(id, cx);
+    }
+
+    pub(crate) fn scroll_handle(&self) -> ScrollHandle {
+        self.scroll.clone()
+    }
+
     pub fn new(store: Entity<AppStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let card_viewport: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::new(Cell::new(None));
         let spare = cx.new(|cx| SpareJudgesSection::new(card_viewport.clone(), window, cx));

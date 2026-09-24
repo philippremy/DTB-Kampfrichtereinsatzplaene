@@ -931,6 +931,50 @@ impl AppStore {
         .detach();
     }
 
+    /// Perf stress test only (`stress.rs`): persist many competitions in one
+    /// background pass, list them all, then select `select`.
+    pub fn seed_many(&mut self, dtos: Vec<CompetitionDTO>, select: Uuid, cx: &mut Context<Self>) {
+        let Some(db) = self.db.as_ref() else {
+            warn!("seed_many ignored — database not ready");
+            return;
+        };
+        let connection = db.connection();
+        let summaries: Vec<CompetitionSummary> = dtos
+            .iter()
+            .map(|d| CompetitionSummary {
+                id: d.id,
+                date: d.date,
+                name: d.name.clone(),
+            })
+            .collect();
+        info!("stress: seeding {} competitions", dtos.len());
+
+        cx.spawn(async move |this, cx| {
+            let background = cx.background_executor().clone();
+            let saved = background
+                .spawn(async move {
+                    for dto in &dtos {
+                        persist::save_competition(&connection, dto).await?;
+                    }
+                    Ok::<(), persist::PersistError>(())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match saved {
+                    Ok(()) => {
+                        this.summaries.extend(summaries);
+                        sort_summaries(&mut this.summaries);
+                        this.select(select, cx);
+                    }
+                    Err(err) => error!("stress: seeding failed: {err}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn report_error(this: &WeakEntity<Self>, cx: &mut AsyncApp, message: String) {
         warn!("store error surfaced to the UI: {message}");
         this.update(cx, |this, cx| {

@@ -242,7 +242,7 @@ impl MetaDialog {
             .collect();
     }
 
-    fn close(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.open = false;
         self.target = None;
         self.creating = false;
