@@ -76,5 +76,7 @@ for entry in "${MAP[@]}"; do
   done
   shopt -u dotglob nullglob
   cp "$R/$pkg-0.3.6/Cargo.toml" "$wrapdir/Cargo.toml"
+  # Vendored upstream code: silence its warnings (cargo only hides them for registry/git deps).
+  printf '\n# dtb-ke: vendored upstream code; its warnings are not ours to fix.\n[lints.rust.warnings]\nlevel = "allow"\npriority = -1\n' >> "$wrapdir/Cargo.toml"
   echo "OK: $pkg -> $dirname (from $realrel)"
 done

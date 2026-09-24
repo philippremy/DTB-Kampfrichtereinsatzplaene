@@ -667,3 +667,9 @@ priority = -1
 [lints.rust.unexpected_cfgs]
 level = "allow"
 priority = 0
+
+# dtb-ke: this is vendored upstream code; its warnings are not ours to fix, and cargo only hides
+# warnings for registry/git dependencies, not the path dependencies the shims are.
+[lints.rust.warnings]
+level = "allow"
+priority = -1

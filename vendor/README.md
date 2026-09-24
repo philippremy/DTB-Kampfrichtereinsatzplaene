@@ -101,3 +101,13 @@ Debugging aids (off by default): `DTB_KE_VIEW_CACHE_VERIFY=1` re-renders every c
 would be reused and logs any difference; `DTB_KE_LAYOUT_VERIFY=1` recomputes every layout from
 scratch and compares; `DTB_KE_NO_NATIVE=1` disables the native window backdrop (Liquid Glass /
 vibrancy); `DTB_KE_PERF_HUD=0` hides the debug FPS HUD.
+
+## Warnings from vendored code
+
+Cargo hides warnings for registry and git dependencies but not for path dependencies, and every
+shim crate here is one. Each shim manifest therefore ends with a `[lints.rust.warnings]` table set
+to `allow`, so upstream Zed / taffy / turso / gpui-kit code doesn't add noise to our builds.
+`vendor/generate-shims.sh` adds the same table when it regenerates the gpui-pre shims; when
+refreshing a shim's `Cargo.toml` from the published crate by hand, re-append it. This only affects
+rustc warnings — errors, `cargo:warning` messages from build scripts, and cargo's own
+future-incompatibility notices (for example about the registry crate `block`) still show.
