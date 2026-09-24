@@ -62,3 +62,24 @@ change/addition (not upstream)"), needed by gpui's retained layout engine
 
 To update: check out the new tag in `vendor/taffy`, re-apply the three changes,
 refresh `vendor/taffy-shim/Cargo.toml` from the published crate.
+
+## Vendored gpui-base (`vendor/gpui-kit` + `vendor/gpui-base-shim`)
+
+`vendor/gpui-kit` is a shallow git submodule of the `philippremy/gpui-kit` fork (upstream
+`longbridge/gpui-kit`), checked out at `v0.6.6` — the commit `gpui-base` 0.6.6 was published
+from — with the local changes on the `dtb-ke-patches` branch. `vendor/gpui-base-shim` wraps
+`crates/base` with the published `Cargo.toml` and symlinks `src`/`tests`/`benches`, wired in via
+`[patch.crates-io]` like the other vendored crates. The rest of the gpui-kit facade still comes
+from crates.io and resolves this `gpui-base` through the patch.
+
+Local changes:
+
+- `input/base/blink_cursor.rs`: only blink an input's caret while it has focus. `pause()` used to
+  resume blinking after its delay regardless of focus, so the first programmatic cursor move
+  (setting the text) started a timer loop that re-armed itself every 500 ms for the life of the
+  input, re-rendering it twice a second with nothing focused (~12 points of idle CPU with a
+  competition open in a debug build). The cursor now tracks focus (`start`/`stop`), `pause` is a
+  no-op while unfocused, and the loop ends when focus is lost. Has unit tests.
+
+To update: check out the new tag in `vendor/gpui-kit`, re-apply the change, refresh
+`vendor/gpui-base-shim/Cargo.toml` from the published crate.

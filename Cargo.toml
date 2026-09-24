@@ -185,6 +185,11 @@ turso_sdk_kit = { path = "vendor/turso_sdk_kit-shim" }
 # published Cargo.toml — the same scheme as the gpui-pre* entries below.
 taffy = { path = "vendor/taffy-shim" }
 
+# Vendored gpui-base (see vendor/README.md): submodule of philippremy/gpui-kit pinned at
+# v0.6.6 (the commit 0.6.6 was published from), wrapped by a shim crate carrying the
+# published Cargo.toml. Local patch: only blink an input's caret while it has focus.
+gpui-base = { path = "vendor/gpui-base-shim" }
+
 # Vendored gpui (see vendor/README.md): the whole gpui-pre* family redirected
 # to a git submodule of zed-industries/zed (vendor/zed), pinned at the same
 # zed-rev the crates.io gpui-pre 0.3.6 snapshot was built from. Each entry
