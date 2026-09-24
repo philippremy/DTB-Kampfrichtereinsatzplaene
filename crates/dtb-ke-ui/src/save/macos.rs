@@ -366,7 +366,7 @@ fn read_choice(response: NSModalResponse, ui: &Ui) -> Option<SaveChoice> {
     };
 
     Some(SaveChoice {
-        path: with_extension(path, &format),
+        target: crate::save::Target::Path(with_extension(path, &format)),
         format,
     })
 }

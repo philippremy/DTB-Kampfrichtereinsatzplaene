@@ -10,7 +10,7 @@ use dtb_ke_export::Exporter;
 use futures::channel::oneshot;
 use gpui_kit::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, ClickEvent, Context, Entity,
-    FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions,
+    FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
     PromptLevel, Pixels, Render, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
     WindowControlArea, WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
 };
@@ -592,7 +592,7 @@ impl AppShell {
         let exporter = self.exporter();
 
         cx.spawn_in(window, async move |_, cx| {
-            let Ok(Some(SaveChoice { path, format })) = receiver.await else {
+            let Ok(Some(SaveChoice { target, format })) = receiver.await else {
                 debug!("export dialog cancelled");
                 return;
             };
@@ -601,15 +601,32 @@ impl AppShell {
                 ExportFormat::Docx(_) => "DOCX",
                 ExportFormat::Blob => ".dtbke",
             };
-            info!("exporting {id} as {fmt} → {}", path.display());
+            let staged = match target.staging_path() {
+                Ok(path) => path,
+                Err(err) => {
+                    error!("{fmt} export: no place to stage the file: {err}");
+                    let detail = err.to_string();
+                    alert_t_fmt(cx, "app.export-failed", &[("detail", &detail)]);
+                    return;
+                }
+            };
+            info!("exporting {id} as {fmt} → {}", staged.display());
 
             match format {
                 ExportFormat::Blob => {
-                    store.update(cx, |store, cx| store.export_competition(id, path, cx));
+                    let written = store
+                        .update(cx, |store, cx| store.export_competition(id, staged.clone(), cx))
+                        .await;
+                    if !written {
+                        // The store has already told the user why.
+                        target.discard(&staged);
+                        return;
+                    }
                 }
                 pdf_or_docx => {
                     let Some(exporter) = exporter else {
                         error!("export aborted — the Typst exporter is unavailable");
+                        target.discard(&staged);
                         alert_t(cx, "app.exporter-unavailable");
                         return;
                     };
@@ -619,10 +636,11 @@ impl AppShell {
                             .cloned()
                             .map(|doc| doc.read(cx).to_dto(cx))
                     }) else {
+                        target.discard(&staged);
                         return;
                     };
 
-                    let target = path.clone();
+                    let destination = staged.clone();
                     let compiled = cx
                         .background_executor()
                         .spawn(async move {
@@ -634,7 +652,7 @@ impl AppShell {
                             match bytes {
                                 Ok(bytes) => {
                                     let n = bytes.len();
-                                    std::fs::write(&path, bytes)
+                                    std::fs::write(&destination, bytes)
                                         .map(|()| n)
                                         .map_err(|e| WriteError::Io(e.to_string()))
                                 }
@@ -644,29 +662,49 @@ impl AppShell {
                         .await;
 
                     match compiled {
-                        Ok(n) => info!("{fmt} export written — {n} bytes → {}", target.display()),
+                        Ok(n) => info!("{fmt} export written — {n} bytes → {}", staged.display()),
                         Err(err) => {
                             error!("{fmt} export failed: {err:?}");
+                            target.discard(&staged);
                             let detail = err.detail(cx);
                             alert_t_fmt(cx, "app.export-failed", &[("detail", &detail)]);
+                            return;
                         }
                     }
                 }
             }
+            deliver_export(target, &staged, cx).await;
         })
         .detach();
     }
 
     fn handle_export_all(&mut self, _: &ExportAll, window: &mut Window, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_new_path(&default_dir(), Some("PersistedSessions.bin"));
+        let receiver = save::prompt_backup_target("PersistedSessions.bin", cx);
         let store = self.store.clone();
         cx.spawn_in(window, async move |_, cx| {
-            let Ok(Ok(Some(dest))) = receiver.await else {
+            let Ok(Some(target)) = receiver.await else {
                 debug!("full-database export cancelled");
                 return;
             };
-            info!("full-database export → {}", dest.display());
-            store.update(cx, |store, cx| store.export_all(dest, cx));
+            let staged = match target.staging_path() {
+                Ok(path) => path,
+                Err(err) => {
+                    error!("full-database export: no place to stage the file: {err}");
+                    let detail = err.to_string();
+                    alert_t_fmt(cx, "app.export-failed", &[("detail", &detail)]);
+                    return;
+                }
+            };
+            info!("full-database export → {}", staged.display());
+            let copied = store
+                .update(cx, |store, cx| store.export_all(staged.clone(), cx))
+                .await;
+            if !copied {
+                // The store has already told the user why.
+                target.discard(&staged);
+                return;
+            }
+            deliver_export(target, &staged, cx).await;
         })
         .detach();
     }
@@ -682,14 +720,9 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let prompt = cx.t("app.import-prompt");
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(prompt),
-        });
+        let receiver = save::prompt_import(prompt, cx);
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = receiver.await else {
+            let Ok(Some(paths)) = receiver.await else {
                 debug!("import cancelled");
                 return;
             };
@@ -719,6 +752,7 @@ impl AppShell {
                     return;
                 }
             };
+            save::discard_imported_copy(&path);
             let dto = match dtb_ke_persist::competition_dto_from_bytes(&bytes) {
                 Ok(dto) => dto,
                 Err(err) => {
@@ -1280,10 +1314,23 @@ impl WriteError {
 }
 
 /// A sensible starting directory for a save / open dialog.
-fn default_dir() -> std::path::PathBuf {
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+/// Finish an export whose file is fully written to `staged`: a no-op for a path the user chose,
+/// the system document picker on iPadOS. Reports a failure to the user.
+async fn deliver_export(
+    target: save::Target,
+    staged: &std::path::Path,
+    cx: &mut gpui_kit::AsyncWindowContext,
+) {
+    match target.deliver(staged).await {
+        Ok(save::Delivery::Saved(destination)) => {
+            info!("export delivered → {}", destination.map_or_else(|| "(unknown)".into(), |p| p.display().to_string()));
+        }
+        Ok(save::Delivery::Cancelled) => debug!("export cancelled at the destination picker"),
+        Err(detail) => {
+            error!("export delivery failed: {detail}");
+            alert_t_fmt(cx, "app.export-failed", &[("detail", &detail)]);
+        }
+    }
 }
 
 thread_local! {
@@ -1349,6 +1396,48 @@ pub(crate) fn debug_show_preview(cx: &mut App) {
                         shell.store.update(cx, |store, cx| store.select(id, cx));
                     }
                     shell.show_preview(cx);
+                })
+                .ok();
+        });
+    })
+    .detach();
+}
+
+/// Debug aid (`DTB_KE_ACTION=ExportAll|ImportCompetition|ExportCompetition`): dispatch one of the
+/// file commands shortly after launch (with the first competition selected), so the file flows
+/// can be exercised without touching the UI.
+pub(crate) fn debug_dispatch_file_action(name: &str, cx: &mut App) {
+    let name = name.to_owned();
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(Duration::from_secs(2)).await;
+        cx.update(|cx| {
+            let Some(handle) = main_window_handle() else {
+                return;
+            };
+            handle
+                .update(cx, |shell, _, cx| {
+                    let first = shell.store.read(cx).summaries().first().map(|s| s.id);
+                    if let Some(id) = first {
+                        shell.store.update(cx, |store, cx| store.select(id, cx));
+                    }
+                })
+                .ok();
+        });
+        // Let the shell re-render with the selection (it registers the competition-scoped
+        // handlers) before dispatching.
+        cx.background_executor().timer(Duration::from_secs(1)).await;
+        cx.update(|cx| {
+            let Some(handle) = main_window_handle() else {
+                return;
+            };
+            handle
+                .update(cx, |_, window, cx| {
+                    let action: Box<dyn gpui_kit::Action> = match name.as_str() {
+                        "ExportAll" => Box::new(ExportAll),
+                        "ImportCompetition" => Box::new(crate::actions::file::ImportCompetition),
+                        _ => Box::new(ExportCompetition),
+                    };
+                    window.dispatch_action(action, cx);
                 })
                 .ok();
         });

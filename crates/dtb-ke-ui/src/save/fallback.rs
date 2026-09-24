@@ -16,8 +16,8 @@ use crate::components::icon::Icon;
 use crate::components::segmented::Segmented;
 use crate::i18n::ActiveLocale;
 use crate::save::{
-    ExportFormat, FormatKind, SaveChoice, pdf_standard_conflict_message, pdf_standard_label,
-    with_extension,
+    ExportFormat, FormatKind, SaveChoice, Target, pdf_standard_conflict_message,
+    pdf_standard_label, with_extension,
 };
 use crate::theme::ActiveTheme;
 
@@ -79,16 +79,49 @@ pub(super) fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Op
         ..Default::default()
     };
 
+    if crate::sheet::enabled() {
+        crate::sheet::present(cx, "export", &options, move |window, cx| {
+            new_panel(default_name, tx, window, cx)
+        });
+        return rx;
+    }
     if cx
-        .open_window(options, |window, cx| {
-            cx.new(|cx| SaveOptions::new(default_name, tx, window, cx))
-        })
+        .open_window(options, |window, cx| new_panel(default_name, tx, window, cx))
         .is_err()
     {
         log::error!("save dialog: could not open the in-app export window");
     }
 
     rx
+}
+
+fn new_panel(
+    name: String,
+    tx: oneshot::Sender<Option<SaveChoice>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_kit::Entity<SaveOptions> {
+    let panel = cx.new(|cx| SaveOptions::new(name, tx, window, cx));
+    // Test aid: `DTB_KE_SAVE_AUTOCONFIRM=pdf|docx|blob` picks that format and confirms the panel by
+    // itself a second later, so the export pipeline can be driven without touching the UI.
+    if let Ok(kind) = std::env::var("DTB_KE_SAVE_AUTOCONFIRM") {
+        panel.update(cx, |panel, cx| {
+            let kind = match kind.as_str() {
+                "docx" => FormatKind::Docx,
+                "blob" => FormatKind::Blob,
+                _ => FormatKind::Pdf,
+            };
+            panel.set_kind(kind, cx);
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                this.update_in(cx, |this, window, cx| this.choose_path(window, cx)).ok();
+            })
+            .detach();
+        });
+    }
+    panel
 }
 
 struct SaveOptions {
@@ -161,6 +194,24 @@ impl SaveOptions {
         if self.standards_error().is_some() {
             return;
         }
+        if crate::sheet::enabled() {
+            // iPadOS has no save panel to ask: hand back a deferred target. The exporter stages
+            // the file in the app's container and shows the document picker once it exists.
+            let file_name = with_extension(std::path::PathBuf::from(self.name.trim()), &self.format)
+                .to_string_lossy()
+                .into_owned();
+            if let Some(tx) = self.tx.take() {
+                let choice = SaveChoice {
+                    target: Target::Deferred { file_name },
+                    format: self.format.clone(),
+                };
+                if tx.send(Some(choice)).is_err() {
+                    log::debug!("save dialog: the receiver went away before the choice was made");
+                }
+            }
+            crate::sheet::close(window, cx);
+            return;
+        }
         self.picking = true;
         cx.notify();
 
@@ -179,11 +230,11 @@ impl SaveOptions {
                     Some(path) => {
                         if let Some(tx) = this.tx.take() {
                             let _ = tx.send(Some(SaveChoice {
-                                path: with_extension(path, &format),
+                                target: Target::Path(with_extension(path, &format)),
                                 format,
                             }));
                         }
-                        window.remove_window();
+                        crate::sheet::close(window, cx);
                     }
                     None => cx.notify(),
                 }
@@ -210,7 +261,7 @@ impl Render for SaveOptions {
             .text_color(c.foreground)
             .flex()
             .flex_col()
-            .child(
+            .when(!crate::sheet::enabled(), |el| el.child(
                 // Title strip — mirrors the preview window's; leaves room for
                 // the traffic lights on macOS.
                 div()
@@ -226,7 +277,7 @@ impl Render for SaveOptions {
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
                     .child(cx.t("save.window-title")),
-            )
+            ))
             .child(
                 div()
                     .flex()
@@ -357,7 +408,7 @@ impl Render for SaveOptions {
                                     .tone(ButtonTone::Ghost)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.cancel(cx);
-                                        window.remove_window();
+                                        crate::sheet::close(window, cx);
                                     })),
                             )
                             .child(

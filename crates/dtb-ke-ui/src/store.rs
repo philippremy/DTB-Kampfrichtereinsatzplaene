@@ -740,10 +740,18 @@ impl AppStore {
 
     /// Write the selected competition's postcard blob to `dest` (a `.dtbke`
     /// file). Flushes the open document first so the export is current.
-    pub fn export_competition(&mut self, id: Uuid, dest: PathBuf, cx: &mut Context<Self>) {
+    ///
+    /// The task resolves to whether the file was written completely, so a caller that still has to
+    /// deliver it somewhere (iPadOS) can wait for that.
+    pub fn export_competition(
+        &mut self,
+        id: Uuid,
+        dest: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<bool> {
         let Some(db) = self.db.as_ref() else {
             warn!("export_competition({id}) ignored — database not ready");
-            return;
+            return Task::ready(false);
         };
         let connection = db.connection();
         let flush = self
@@ -766,15 +774,19 @@ impl AppStore {
                 Ok(Some(dto)) => persist::competition_dto_to_bytes(&dto),
                 Ok(None) => {
                     warn!("export_competition({id}): row gone");
-                    return;
+                    return false;
                 }
                 Err(err) => {
                     error!("export_competition({id}): load failed: {err}");
-                    return Self::report_error(&this, cx, err.to_string());
+                    Self::report_error(&this, cx, err.to_string());
+                    return false;
                 }
             };
             match bytes.map(|bytes| std::fs::write(&dest, bytes)) {
-                Ok(Ok(())) => info!("exported competition {id} → {}", dest.display()),
+                Ok(Ok(())) => {
+                    info!("exported competition {id} → {}", dest.display());
+                    true
+                }
                 Ok(Err(err)) => {
                     error!(
                         "export_competition({id}): writing {} failed: {err}",
@@ -783,19 +795,22 @@ impl AppStore {
                     let message = cx.update(|cx| {
                         cx.t_fmt("store.export-write-failed", &[("detail", &err.to_string())])
                     });
-                    Self::report_error(&this, cx, message)
+                    Self::report_error(&this, cx, message);
+                    false
                 }
                 Err(err) => {
                     error!("export_competition({id}): serialising failed: {err}");
-                    Self::report_error(&this, cx, err.to_string())
+                    Self::report_error(&this, cx, err.to_string());
+                    false
                 }
             }
         })
-        .detach();
     }
 
     /// Copy the whole database file to `dest`. Flushes every open document first.
-    pub fn export_all(&mut self, dest: PathBuf, cx: &mut Context<Self>) {
+    ///
+    /// Like [`Self::export_competition`], the task resolves to whether the copy succeeded.
+    pub fn export_all(&mut self, dest: PathBuf, cx: &mut Context<Self>) -> Task<bool> {
         for doc in self.open.values().cloned().collect::<Vec<_>>() {
             doc.update(cx, |doc, cx| doc.flush_now(cx).detach());
         }
@@ -807,7 +822,10 @@ impl AppStore {
                 .timer(std::time::Duration::from_millis(600))
                 .await;
             match std::fs::copy(&source, &dest) {
-                Ok(bytes) => info!("database exported ({bytes} bytes) → {}", dest.display()),
+                Ok(bytes) => {
+                    info!("database exported ({bytes} bytes) → {}", dest.display());
+                    true
+                }
                 Err(err) => {
                     error!(
                         "export_all: copying {} → {} failed: {err}",
@@ -818,10 +836,10 @@ impl AppStore {
                         cx.t_fmt("store.copy-failed", &[("detail", &err.to_string())])
                     });
                     Self::report_error(&this, cx, message);
+                    false
                 }
             }
         })
-        .detach();
     }
 
     /// Write today's automatic backup, if one hasn't been written already and

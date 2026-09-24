@@ -106,6 +106,11 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   macOS. It replaces the system File/Edit/Format/View/Window/Help menus, and the first gpui menu replaces the
   children of the system application menu. The PR has no hardware-key handling, so these key commands are the
   only path for shortcuts on iPadOS. Drop this when upstream gains its own menu support.
+- **Document picker** (`gpui_ios/src/ios/documents.rs`, also ours): `export_files` / `pick_files` wrap
+  `UIDocumentPickerViewController` so files can leave and enter the app sandbox (iCloud Drive, Downloads, "On My
+  iPad", other providers); `Platform::prompt_for_paths` is backed by `pick_files`. There is no `prompt_for_new_path`
+  (iOS has no save panel) — callers stage a file in the container and call `export_files`. Needs
+  `objc2-uniform-type-identifiers` (added to the shim manifest and the fork's workspace).
 - `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
   Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
   downstream `with_platform`; the patch drops that exclusion (Android stays excluded) so iOS is

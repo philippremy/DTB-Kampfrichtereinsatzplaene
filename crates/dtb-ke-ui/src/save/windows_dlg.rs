@@ -221,7 +221,7 @@ fn show_dialog(default_name: &str, locale: &Locale) -> windows::core::Result<Opt
     };
 
     Ok(Some(SaveChoice {
-        path: with_extension(path, &format),
+        target: crate::save::Target::Path(with_extension(path, &format)),
         format,
     }))
 }

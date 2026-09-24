@@ -20,15 +20,21 @@ use gpui_kit::{App, SharedString};
 use crate::i18n::{ActiveLocale, Locale};
 
 mod fallback;
+mod target;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows_dlg;
 
+pub use target::{
+    Delivery, Target, discard_imported_copy, prompt_backup_target, prompt_import,
+    remove_stale_staging,
+};
+
 /// What the user chose in the save dialog.
 #[derive(Clone, Debug)]
 pub struct SaveChoice {
-    pub path: PathBuf,
+    pub target: Target,
     pub format: ExportFormat,
 }
 
@@ -217,6 +223,13 @@ pub fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Option<Sa
     {
         fallback::prompt(default_name, cx)
     }
+}
+
+/// Where the file dialogs start: the user's documents folder.
+pub(crate) fn default_dir() -> PathBuf {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Ensure `path` ends in the format's extension (the native panels usually do

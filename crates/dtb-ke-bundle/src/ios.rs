@@ -158,6 +158,41 @@ fn info_plist(platform: &str, sdk_name: &str) -> String {
 	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>{category}</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>{doc_name}</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>{uti}</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>{uti}</string>
+			<key>UTTypeDescription</key>
+			<string>{doc_name}</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>{doc_ext}</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
 "#,
@@ -169,6 +204,9 @@ fn info_plist(platform: &str, sdk_name: &str) -> String {
         platform = platform,
         min = meta::IOS_MIN_VERSION,
         category = meta::MACOS_CATEGORY,
+        doc_name = meta::DOC_TYPE_NAME,
+        uti = meta::DOC_UTI,
+        doc_ext = meta::DOC_EXTENSION,
     )
 }
 

@@ -47,6 +47,9 @@ gpui-fps = { version = "0.6" }
 # `component` (gpui-component) and `assets` are on by default upstream; we
 # roll our own components/assets, so both are turned off.
 gpui-kit = { version = "0.6", default-features = false }
+# The iOS backend, for its document picker (`gpui_ios::ios::documents`). The same crate gpui_platform
+# already pulls in on iOS (see vendor/README.md); named here only to call it directly.
+gpui-ios = { package = "gpui-pre-ios", version = "=0.3.6", path = "vendor/gpui-pre-shims/gpui_ios" }
 image = { version = "0.25", default-features = false }
 # Embeds the .ico + VERSIONINFO into the Windows .exe (`dtb-ke-ui/build.rs`).
 # Same crate gpui uses for its own resources. It selects the resource compiler

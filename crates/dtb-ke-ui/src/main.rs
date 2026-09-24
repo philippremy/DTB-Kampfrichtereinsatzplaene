@@ -74,6 +74,8 @@ fn main() {
         removed => info!("log gc: removed {removed} log file(s) older than 7 days"),
     }
 
+    save::remove_stale_staging();
+
     // Crash capture, before anything else can fault. On a hardware fault or a
     // panic an out-of-process helper writes a minidump (`.dmp`) under `logs/
     // crashes/` for offline symbolisation (the shipped binary is stripped — see
@@ -179,6 +181,9 @@ fn main() {
         // Debug aids: open a secondary window straight away.
         if let Some(v) = std::env::var_os("DTB_KE_ABOUT") {
             about::open_named(cx, &v.to_string_lossy());
+        }
+        if let Ok(action) = std::env::var("DTB_KE_ACTION") {
+            app::debug_dispatch_file_action(&action, cx);
         }
         if std::env::var_os("DTB_KE_PREVIEW").is_some() {
             app::debug_show_preview(cx);
