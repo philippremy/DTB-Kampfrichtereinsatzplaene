@@ -8,6 +8,8 @@ RUNNERS.md's "Vendored dependency patches" section for the fuller policy.
 
 Each entry here is:
 
+(Historical note: `turso_sdk_kit` used to be a plain copy of the published crate here; it is now a submodule + shim like taffy and zed, see the entries below. The description that follows is how that copy was originally made.)
+
 1. The **exact published source** for the version currently in `Cargo.lock`
    — fetched from crates.io's own download endpoint
    (`https://crates.io/api/v1/crates/<name>/<version>/download`, needs a
@@ -26,7 +28,7 @@ Each entry here is:
 
 ## Current entries
 
-- **`turso_sdk_kit-0.7.2`** — upstream's `build.rs` shells out to a bare
+- **`turso_sdk_kit` 0.7.2** (`vendor/turso` submodule + `vendor/turso_sdk_kit-shim`; the shim carries the published `Cargo.toml` and symlinks `src`/`build.rs` into `vendor/turso/sdk-kit`; the fix is one commit on the fork's `dtb-ke-patches` branch, on top of upstream commit `046e9cb`) — upstream's `build.rs` shells out to a bare
   `windres` (no target-triple prefix) to compile its Windows version
   resource, which resolves to whichever architecture's copy happens to be
   first on `PATH` — correct by coincidence on a native build, wrong when

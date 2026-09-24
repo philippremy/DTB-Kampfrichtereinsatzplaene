@@ -1,7 +1,12 @@
 [submodule "vendor/zed"]
 	path = vendor/zed
-	url = https://github.com/zed-industries/zed.git
+	url = https://github.com/philippremy/zed.git
 	shallow = true
+	branch = dtb-ke-patches
 [submodule "vendor/taffy"]
 	path = vendor/taffy
-	url = https://github.com/DioxusLabs/taffy.git
+	url = https://github.com/philippremy/taffy.git
+	branch = dtb-ke-patches
+[submodule "vendor/turso"]
+	path = vendor/turso
+	url = https://github.com/philippremy/turso.git

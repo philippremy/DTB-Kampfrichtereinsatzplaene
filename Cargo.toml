@@ -168,7 +168,7 @@ gpui-fps = { opt-level = 3 }
 taffy = { opt-level = 3 }
 dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
 
-# Vendored, patched copy of turso_sdk_kit 0.7.2 — see vendor/README.md and
+# Vendored, patched turso_sdk_kit 0.7.2 (vendor/turso submodule + shim) — see vendor/README.md and
 # RUNNERS.md's "Vendored dependency patches" section for why. Upstream's
 # build.rs shells out to a bare `windres` with no target-triple prefix,
 # which resolves to whichever architecture's copy happens to be first on
@@ -178,7 +178,7 @@ dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
 # the crate is untouched — this is a one-line fix, not a fork to maintain
 # feature parity on. Remove this patch once a fixed version ships upstream.
 [patch.crates-io]
-turso_sdk_kit = { path = "vendor/turso_sdk_kit-0.7.2" }
+turso_sdk_kit = { path = "vendor/turso_sdk_kit-shim" }
 
 # Vendored taffy (see vendor/README.md): submodule of DioxusLabs/taffy pinned at
 # v0.13.0 (what gpui pins with `=0.13.0`), wrapped by a shim crate carrying the
