@@ -18,7 +18,6 @@ use crate::actions::window::TogglePreview;
 use crate::components::button::{Button, ButtonTone};
 use crate::components::icon::Icon;
 use crate::components::org_emblem::OrgEmblem;
-use crate::components::segmented::Segmented;
 use crate::components::toolbar_group::ToolbarGroup;
 use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
@@ -176,8 +175,8 @@ impl Render for CompetitionToolbar {
                     false,
                     || Box::new(CompetitionSettings),
                 ));
-                // Where the preview replaces the editor in place (iPadOS), it is a two-state pill
-                // switch showing both modes; elsewhere it opens a window, so a plain button.
+                // Where the preview replaces the editor in place (iPadOS), the two modes are a
+                // separate icon group; elsewhere it opens a window, so a plain button here.
                 if pane_mode {
                     group
                 } else {
@@ -191,17 +190,26 @@ impl Render for CompetitionToolbar {
                 }
             })
             .when(pane_mode, |row| {
+                // One selected button per mode; clicking the selected one does nothing.
+                let mode = |id: &'static str, icon: Icon, tooltip, selected: bool| {
+                    let button = Button::icon(id, icon)
+                        .oval()
+                        .tooltip(tooltip)
+                        .on_click(move |_, window, cx| {
+                            if !selected {
+                                window.dispatch_action(Box::new(TogglePreview), cx);
+                            }
+                        });
+                    if selected {
+                        button.tone(ButtonTone::Primary).foreground(c.primary_foreground)
+                    } else {
+                        button
+                    }
+                };
                 row.child(
-                    Segmented::new(
-                        "toolbar-mode",
-                        [label("edit"), label("preview")],
-                        usize::from(previewing),
-                    )
-                    .on_select(move |index, window, cx| {
-                        if (index == 1) != previewing {
-                            window.dispatch_action(Box::new(TogglePreview), cx);
-                        }
-                    }),
+                    ToolbarGroup::new("toolbar-mode")
+                        .button(mode("toolbar-edit", Icon::Pencil, label("edit"), !previewing))
+                        .button(mode("toolbar-preview", Icon::Preview, label("preview"), previewing)),
                 )
             })
             .child(

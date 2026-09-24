@@ -387,6 +387,9 @@ impl LogsWindow {
                 let widest = loaded.widest;
                 let colorize = self.colorize;
                 let colors = *c;
+                // The skin's monospace face (Menlo / Consolas, or the generic name where the platform
+                // resolves one), not a per-OS guess — CoreText has no "monospace" alias.
+                let mono = cx.theme().skin.mono_font_family();
 
                 let list = uniform_list("log-lines", lines.len(), move |range, _window, _cx| {
                     range
@@ -400,7 +403,7 @@ impl LogsWindow {
                 .size_full()
                 .px(px(14.))
                 .py(px(10.))
-                .font_family(mono_family())
+                .font_family(mono.clone())
                 .text_size(px(11.5))
                 .text_color(c.foreground);
 
@@ -629,15 +632,5 @@ fn human_size(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{size:.1} {}", UNITS[unit]).replace('.', ",")
-    }
-}
-
-fn mono_family() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "SF Mono"
-    } else if cfg!(target_os = "windows") {
-        "Consolas"
-    } else {
-        "monospace"
     }
 }

@@ -58,6 +58,7 @@ icons! {
     WindowMaximize => "window-maximize.svg",
     WindowRestore  => "window-restore.svg",
     Preview => "preview.svg",
+    Pencil => "pencil.svg",
     Export => "export.svg",
     Package => "package.svg",
     Download => "download.svg",
