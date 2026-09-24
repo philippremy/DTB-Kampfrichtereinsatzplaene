@@ -10,15 +10,17 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage, ScrollHandle,
-    SharedString, Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds,
-    WindowKind, WindowOptions, div, img, prelude::FluentBuilder, px, size,
-};
-use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::ImageFormat;
+use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::{
+    AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, ScrollHandle, SharedString,
+    Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowKind,
+    WindowOptions, div, img, prelude::FluentBuilder, px, size,
+};
+#[cfg(target_os = "macos")]
+use gpui_kit::RenderImage;
 #[cfg(target_os = "macos")]
 use image::{Frame, RgbaImage};
 
