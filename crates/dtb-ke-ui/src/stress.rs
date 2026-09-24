@@ -297,6 +297,18 @@ fn report(r: &mut Run) {
         hist(100, 1000),
         hist(1000, u32::MAX)
     );
+    let outcomes = gpui_kit::take_view_cache_stats();
+    if outcomes.iter().any(|(_, n)| *n > 0) {
+        info!(
+            "stress:   view cache: {}",
+            outcomes
+                .iter()
+                .filter(|(_, n)| *n > 0)
+                .map(|(name, n)| format!("{name} {n}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        );
+    }
     let (hits, misses) = gpui_kit::take_taffy_cache_stats();
     info!(
         "stress:   taffy cache: {:.0} hits/draw, {:.0} misses/draw",
