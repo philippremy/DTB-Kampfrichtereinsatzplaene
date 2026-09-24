@@ -276,7 +276,15 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window) {
     });
 }
 
+/// User + system CPU time of this process (all threads). Zero off Unix (the stress test's CPU
+/// figure is a macOS/Linux profiling aid).
+#[cfg(not(unix))]
+fn process_cpu_time() -> Duration {
+    Duration::ZERO
+}
+
 /// User + system CPU time of this process (all threads).
+#[cfg(unix)]
 fn process_cpu_time() -> Duration {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `ts` is a valid out-pointer for the duration of the call.
