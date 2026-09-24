@@ -919,18 +919,30 @@ mod ios {
                     .setBackgroundColor(Some(&ui_color(region.backing)));
 
                 entry.glass.setHidden(region.style.is_none());
-                if let Some(style) = region.style {
-                    let effect = UIGlassEffect::effectWithStyle(
-                        match style {
-                            GlassStyle::Clear => UIGlassEffectStyle::Clear,
-                            GlassStyle::Regular => UIGlassEffectStyle::Regular,
-                        },
-                        mtm,
-                    );
-                    effect.setTintColor((region.tint.a > 0.0).then(|| ui_color(region.tint)).as_deref());
-                    entry.glass.setEffect(Some(&effect));
+                // Re-assigning the effect or corner configuration makes UIKit re-materialise the
+                // glass, which reads as flicker while a window resizes — only touch them when they
+                // actually changed (a resize changes bounds only).
+                let first = !entry.shown && entry.last == *region && entry.glass.effect().is_none();
+                let look_changed = first
+                    || entry.last.style != region.style
+                    || entry.last.tint != region.tint
+                    || entry.last.corner_radius != region.corner_radius;
+                if look_changed {
+                    if let Some(style) = region.style {
+                        let effect = UIGlassEffect::effectWithStyle(
+                            match style {
+                                GlassStyle::Clear => UIGlassEffectStyle::Clear,
+                                GlassStyle::Regular => UIGlassEffectStyle::Regular,
+                            },
+                            mtm,
+                        );
+                        effect.setTintColor(
+                            (region.tint.a > 0.0).then(|| ui_color(region.tint)).as_deref(),
+                        );
+                        entry.glass.setEffect(Some(&effect));
+                    }
+                    set_corner_radius(&entry.glass, f64::from(f32::from(region.corner_radius)));
                 }
-                set_corner_radius(&entry.glass, f64::from(f32::from(region.corner_radius)));
                 entry.last = region.clone();
                 entry.shown = true;
             }
