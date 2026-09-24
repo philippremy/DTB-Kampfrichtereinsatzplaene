@@ -553,20 +553,9 @@ impl AppShell {
     /// position survives the round trip.
     fn preview_pane_overlay(
         &mut self,
-        window: &Window,
         fill: gpui_kit::Hsla,
-        cx: &mut Context<Self>,
     ) -> Option<gpui_kit::Div> {
         let pane = self.preview_pane.clone().filter(|_| self.showing_preview)?;
-        let insets = window.insets().effective();
-        let sidebar = if self.sidebar_collapsed {
-            px(0.)
-        } else {
-            self.sidebar_width
-        };
-        pane.update(cx, |pane, cx| {
-            pane.set_reserved_width(sidebar + insets.left + insets.right, cx)
-        });
         Some(div().absolute().inset_0().occlude().bg(fill).child(pane))
     }
 
@@ -1034,7 +1023,7 @@ impl AppShell {
                     .relative()
                     .bg(content_fill)
                     .child(cached_or_plain(self.detail.clone()))
-                    .children(self.preview_pane_overlay(window, content_fill, cx)),
+                    .children(self.preview_pane_overlay(content_fill)),
             );
 
         if self.sidebar_collapsed {

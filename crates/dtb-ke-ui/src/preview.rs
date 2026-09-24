@@ -7,6 +7,7 @@
 //! view-owned `VirtualListScrollHandle` keeps the scroll position across
 //! re-renders so visual proofing stays put.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use std::time::Duration;
 use dtb_ke_export::{Exporter, PreviewOptions};
 use gpui_kit::{
     App, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, RenderImage, Size, Styled,
-    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, div, hsla, img,
+    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla, img,
     prelude::FluentBuilder, px, size, white,
 };
 use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
@@ -57,9 +58,9 @@ pub struct PreviewWindow {
     /// Owned by the view, so the scroll offset survives a full re-render.
     scroll: VirtualListScrollHandle,
 
-    /// Width of the window not available to the preview (the sidebar and safe-area insets, when
-    /// it is a pane rather than a window of its own).
-    reserved_width: Pixels,
+    /// The width the pages area actually has, measured while painting (0 until the first frame). It
+    /// differs from the window width when the preview is a pane beside a sidebar of varying width.
+    measured_width: Rc<Cell<Pixels>>,
 
     watched: Option<Uuid>,
     _store_sub: Subscription,
@@ -94,20 +95,13 @@ impl PreviewWindow {
             generation: 0,
             render_task: None,
             scroll: VirtualListScrollHandle::new(),
-            reserved_width: px(0.),
+            measured_width: Rc::new(Cell::new(px(0.))),
             watched: None,
             _store_sub: store_sub,
             _doc_sub: None,
         };
         this.rewatch(cx);
         this
-    }
-
-    pub fn set_reserved_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
-        if self.reserved_width != width {
-            self.reserved_width = width;
-            cx.notify();
-        }
     }
 
     /// Keep `_doc_sub` pointed at the selected document, and (re)render.
@@ -221,8 +215,15 @@ impl gpui_kit::Render for PreviewWindow {
         let failed = matches!(self.status, Status::Failed(_));
 
         // Fit each page to the viewport width (minus padding + scrollbar gutter).
-        let viewport_w: f32 = (window.viewport_size().width - self.reserved_width).into();
-        let content_px = (viewport_w - 72.).max(240.);
+        let measured: f32 = self.measured_width.get().into();
+        let available_w: f32 = if measured > 0. {
+            measured
+        } else {
+            window.viewport_size().width.into()
+        };
+        // Pages fill the area between equal 28 px margins (the scrollbar floats over the right one),
+        // so they stay centred.
+        let content_px = (available_w - 56.).max(240.);
         let content_w = px(content_px);
         let ground = hsla(c.background.h, c.background.s * 0.4, c.background.l, 1.0);
         let ground = if c.background.l > 0.5 {
@@ -266,6 +267,22 @@ impl gpui_kit::Render for PreviewWindow {
                     .flex_1()
                     .min_h(px(0.))
                     .bg(ground)
+                    .child({
+                        let measured = self.measured_width.clone();
+                        let entity = cx.entity_id();
+                        canvas(
+                            move |bounds, window, _cx| {
+                                if measured.get() != bounds.size.width {
+                                    measured.set(bounds.size.width);
+                                    // An entity cannot be updated mid-prepaint; ask for another pass.
+                                    window.on_next_frame(move |_, cx| cx.notify(entity));
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
                     .when(self.pages.is_empty(), |el| {
                         el.child(
                             div().size_full().flex().justify_center().child(
