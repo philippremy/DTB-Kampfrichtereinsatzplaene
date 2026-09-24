@@ -27,13 +27,15 @@ enum Phase {
     SidebarScroll,
     SelectChurn,
     EditChurn,
+    CardClicks,
 }
 
-const PHASES: [(Phase, &str); 4] = [
+const PHASES: [(Phase, &str); 5] = [
     (Phase::DetailScroll, "detail-scroll"),
     (Phase::SidebarScroll, "sidebar-scroll"),
     (Phase::SelectChurn, "select-churn"),
     (Phase::EditChurn, "edit-churn"),
+    (Phase::CardClicks, "card-clicks"),
 ];
 
 fn fixture() -> (Vec<CompetitionDTO>, Uuid) {
@@ -243,6 +245,14 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window) {
             match PHASES[r.phase_ix].0 {
                 Phase::DetailScroll => drive(&r.detail, t, 1.6, cx),
                 Phase::SidebarScroll => drive(&r.sidebar, t, 1.2, cx),
+                Phase::CardClicks => {
+                    if now.duration_since(r.last_select) > Duration::from_millis(100) {
+                        r.last_select = now;
+                        r.edit_step += 1;
+                        let (view, step) = (r.detail_view.clone(), r.edit_step);
+                        view.update(cx, |view, cx| view.stress_select(step, cx));
+                    }
+                }
                 Phase::EditChurn => {
                     if now.duration_since(r.last_select) > Duration::from_millis(200) {
                         r.last_select = now;

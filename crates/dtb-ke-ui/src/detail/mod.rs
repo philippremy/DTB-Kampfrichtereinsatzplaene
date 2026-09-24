@@ -117,6 +117,15 @@ impl DetailView {
         }
     }
 
+    /// Perf stress test only: select the `step`-th card, like clicking through them.
+    pub(crate) fn stress_select(&mut self, step: usize, cx: &mut Context<Self>) {
+        if self.cards.is_empty() {
+            return;
+        }
+        let id = self.cards[step % self.cards.len()].read(cx).editor_id();
+        self.select_table(id, cx);
+    }
+
     pub(crate) fn scroll_handle(&self) -> ScrollHandle {
         self.scroll.clone()
     }
