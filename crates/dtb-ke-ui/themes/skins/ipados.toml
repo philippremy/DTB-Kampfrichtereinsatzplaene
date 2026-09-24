@@ -7,9 +7,9 @@
 material           = "blurred"      # glass on iOS 26+, opaque before (iOS has no window blur)
 material-opacity   = 1.0
 glass-tint-opacity    = 0.12   # iPadOS sidebars are frosted, not tinted: let the glass show
-glass-backing-opacity = 0.0
+glass-backing-opacity = 0.55  # a fixed base under the glass: it flips between a light and a dark look while resizing without one
 glass-tint-opacity-dark    = 0.2
-glass-backing-opacity-dark = 0.0
+glass-backing-opacity-dark = 0.6
 window-decorations = "server"       # UIKit owns the window; we never draw a frame
 menu-bar           = "native"       # gpui_ios builds the iPadOS menu bar with UIMenuBuilder
 title-bar-height   = 52.0
