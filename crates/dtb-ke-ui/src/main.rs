@@ -25,6 +25,7 @@ mod preview;
 mod save;
 mod settings;
 mod settings_window;
+mod sheet;
 mod sidebar;
 mod skin;
 mod store;
@@ -160,6 +161,8 @@ fn main() {
         keymap::install(&settings.keybindings, cx);
         actions::register_global_handlers(cx);
         skin::menu::install(MenuState::default(), cx);
+        sheet::init(cx);
+        cx.set_global(preview::PreviewPane::default());
 
         if std::env::var_os("DTB_KE_GALLERY").is_some() {
             debug!("DTB_KE_GALLERY set — opening the component gallery");
@@ -176,6 +179,9 @@ fn main() {
         // Debug aids: open a secondary window straight away.
         if let Some(v) = std::env::var_os("DTB_KE_ABOUT") {
             about::open_named(cx, &v.to_string_lossy());
+        }
+        if std::env::var_os("DTB_KE_PREVIEW").is_some() {
+            app::debug_show_preview(cx);
         }
         if std::env::var_os("DTB_KE_SETTINGS").is_some() {
             settings_window::open(cx);

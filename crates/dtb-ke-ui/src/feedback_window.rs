@@ -111,6 +111,17 @@ pub fn open_feature(cx: &mut App) {
 }
 
 fn open_kind(cx: &mut App, kind: Kind) {
+    if crate::sheet::enabled() {
+        let key = match kind {
+            Kind::Bug => "feedback-bug",
+            Kind::Feature => "feedback-feature",
+        };
+        let options = window_options(kind, cx);
+        crate::sheet::present(cx, key, &options, move |window, cx| {
+            cx.new(|cx| FeedbackWindow::new(kind, window, cx))
+        });
+        return;
+    }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
     let existing = OPEN.with(|m| m.borrow().get(&kind).copied());
     if let Some(handle) = existing {
@@ -271,7 +282,7 @@ impl FeedbackWindow {
                     })
                     .ok();
                     cx.background_executor().timer(Duration::from_secs(4)).await;
-                    this.update_in(cx, |_, window, _| window.remove_window())
+                    this.update_in(cx, |_, window, cx| crate::sheet::close(window, cx))
                         .ok();
                 }
                 Err(err) => {
@@ -448,7 +459,7 @@ impl FeedbackWindow {
                         el.child(
                             Button::new("fb-cancel", cx.t("feedback.cancel-button"))
                                 .disabled(busy)
-                                .on_click(|_, window, _| window.remove_window()),
+                                .on_click(|_, window, cx| crate::sheet::close(window, cx)),
                         )
                         .child({
                             let send_weak = weak.clone();
@@ -491,7 +502,7 @@ impl FeedbackWindow {
                     .gap(px(8.))
                     .child(
                         Button::new("fb-close", cx.t("feedback.close-button"))
-                            .on_click(|_, window, _| window.remove_window()),
+                            .on_click(|_, window, cx| crate::sheet::close(window, cx)),
                     )
                     .child(
                         Button::new("fb-codeberg", cx.t("feedback.codeberg-button"))

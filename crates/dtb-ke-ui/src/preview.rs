@@ -31,6 +31,16 @@ const DEBOUNCE: Duration = Duration::from_millis(350);
 /// Raster scale. 2.0 ≈ 300 dpi — sharp enough scaled down to page width.
 const PIXELS_PER_POINT: f32 = 3.0;
 
+/// Whether the live preview currently replaces the editor pane (platforms where secondary
+/// windows are sheets, see [`crate::skin::window::secondary_windows_as_sheets`]). A global so the
+/// toolbar can show the toggle's state without holding the shell.
+#[derive(Default)]
+pub struct PreviewPane {
+    pub showing: bool,
+}
+
+impl gpui_kit::Global for PreviewPane {}
+
 pub struct PreviewWindow {
     store: Entity<AppStore>,
     exporter: Arc<Exporter>,
@@ -46,6 +56,10 @@ pub struct PreviewWindow {
 
     /// Owned by the view, so the scroll offset survives a full re-render.
     scroll: VirtualListScrollHandle,
+
+    /// Width of the window not available to the preview (the sidebar and safe-area insets, when
+    /// it is a pane rather than a window of its own).
+    reserved_width: Pixels,
 
     watched: Option<Uuid>,
     _store_sub: Subscription,
@@ -80,12 +94,20 @@ impl PreviewWindow {
             generation: 0,
             render_task: None,
             scroll: VirtualListScrollHandle::new(),
+            reserved_width: px(0.),
             watched: None,
             _store_sub: store_sub,
             _doc_sub: None,
         };
         this.rewatch(cx);
         this
+    }
+
+    pub fn set_reserved_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if self.reserved_width != width {
+            self.reserved_width = width;
+            cx.notify();
+        }
     }
 
     /// Keep `_doc_sub` pointed at the selected document, and (re)render.
@@ -199,7 +221,7 @@ impl gpui_kit::Render for PreviewWindow {
         let failed = matches!(self.status, Status::Failed(_));
 
         // Fit each page to the viewport width (minus padding + scrollbar gutter).
-        let viewport_w: f32 = window.viewport_size().width.into();
+        let viewport_w: f32 = (window.viewport_size().width - self.reserved_width).into();
         let content_px = (viewport_w - 72.).max(240.);
         let content_w = px(content_px);
         let ground = hsla(c.background.h, c.background.s * 0.4, c.background.l, 1.0);

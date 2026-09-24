@@ -33,7 +33,7 @@ use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
 use crate::material;
 use crate::menu::{self, DbStatus, MenuState};
-use crate::preview::{self, PreviewWindow};
+use crate::preview::{self, PreviewPane, PreviewWindow};
 use crate::save::{self, ExportFormat, SaveChoice};
 use crate::sidebar::{SIDEBAR_MAX, SIDEBAR_MIN, SIDEBAR_SNAP, SIDEBAR_WIDTH, Sidebar};
 use crate::skin::glass::{self, GlassRole};
@@ -128,6 +128,12 @@ pub struct AppShell {
     exporter: Option<Arc<Exporter>>,
     preview_window: Option<WindowHandle<PreviewWindow>>,
     _preview_release: Option<Subscription>,
+    /// Where secondary windows are sheets (iPadOS) the preview is a pane laid over the editor
+    /// instead of a window: the pane and whether it is showing.
+    preview_pane: Option<Entity<PreviewWindow>>,
+    showing_preview: bool,
+    /// Re-render when a sheet is presented or dismissed.
+    _sheet_sub: Subscription,
     /// Re-render `AppShell` when the store's aggregate dirty flag changes.
     _store_sub: Subscription,
     /// Re-render when the detail view's table selection changes (menu state).
@@ -182,7 +188,7 @@ impl AppShell {
             let store = store.clone();
             std::rc::Rc::new(move |id, window, cx| {
                 select_then_act(store.clone(), weak.clone(), id, window, cx, |this, _window, cx| {
-                    this.toggle_preview(cx);
+                    this.show_preview(cx);
                 });
             })
         };
@@ -293,6 +299,9 @@ impl AppShell {
             exporter: None,
             preview_window: None,
             _preview_release: None,
+            preview_pane: None,
+            showing_preview: false,
+            _sheet_sub: cx.observe_global::<crate::sheet::Sheets>(|_, cx| cx.notify()),
             _store_sub: store_sub,
             _detail_sub: detail_sub,
             _appearance_sub: appearance_sub,
@@ -412,7 +421,7 @@ impl AppShell {
             can_undo,
             can_redo,
             fullscreen: window.is_fullscreen(),
-            preview_open: self.preview_window.is_some(),
+            preview_open: self.preview_window.is_some() || self.showing_preview,
             db_status: match self.store.read(cx).status() {
                 store::Status::Connecting => DbStatus::Connecting,
                 store::Status::Ready => DbStatus::Ready,
@@ -453,6 +462,10 @@ impl AppShell {
     /// Open the preview window; if it's already open but hidden behind another
     /// window bring it forward; if it's already frontmost close it (toggle).
     fn toggle_preview(&mut self, cx: &mut Context<Self>) {
+        if skin_window::secondary_windows_as_sheets() {
+            self.set_preview_pane(!self.showing_preview, cx);
+            return;
+        }
         if let Some(handle) = self.preview_window {
             let frontmost = cx.active_window() == Some(handle.into());
             if !frontmost {
@@ -502,6 +515,59 @@ impl AppShell {
         }
         self.preview_window = Some(handle);
         cx.notify();
+    }
+
+    /// Make sure the preview is showing (the sidebar's "Vorschau" context item): unlike the menu
+    /// toggle, asking for it when it is already up must not close it.
+    fn show_preview(&mut self, cx: &mut Context<Self>) {
+        if skin_window::secondary_windows_as_sheets() {
+            self.set_preview_pane(true, cx);
+        } else {
+            self.toggle_preview(cx);
+        }
+    }
+
+    /// Show or hide the preview pane that replaces the editor. The pane is dropped while hidden,
+    /// so it does not keep re-rendering the document behind the editor.
+    fn set_preview_pane(&mut self, show: bool, cx: &mut Context<Self>) {
+        if show == self.showing_preview {
+            return;
+        }
+        if show {
+            let Some(exporter) = self.exporter() else {
+                return;
+            };
+            let store = self.store.clone();
+            self.preview_pane = Some(cx.new(|cx| PreviewWindow::new(store, exporter, cx)));
+        } else {
+            self.preview_pane = None;
+        }
+        debug!("preview pane {}", if show { "shown" } else { "hidden" });
+        self.showing_preview = show;
+        cx.set_global(PreviewPane { showing: show });
+        cx.notify();
+    }
+
+    /// The preview laid over the content area (below the toolbar), or `None` when the editor
+    /// shows. The editor stays rendered underneath so its dialogs keep working and its scroll
+    /// position survives the round trip.
+    fn preview_pane_overlay(
+        &mut self,
+        window: &Window,
+        fill: gpui_kit::Hsla,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::Div> {
+        let pane = self.preview_pane.clone().filter(|_| self.showing_preview)?;
+        let insets = window.insets().effective();
+        let sidebar = if self.sidebar_collapsed {
+            px(0.)
+        } else {
+            self.sidebar_width
+        };
+        pane.update(cx, |pane, cx| {
+            pane.set_reserved_width(sidebar + insets.left + insets.right, cx)
+        });
+        Some(div().absolute().inset_0().occlude().bg(fill).child(pane))
     }
 
     fn handle_export(
@@ -927,8 +993,10 @@ impl AppShell {
                     .flex()
                     .flex_1()
                     .min_h(px(0.))
+                    .relative()
                     .bg(content_fill)
-                    .child(cached_or_plain(self.detail.clone())),
+                    .child(cached_or_plain(self.detail.clone()))
+                    .children(self.preview_pane_overlay(window, content_fill, cx)),
             );
 
         if self.sidebar_collapsed {
@@ -1101,6 +1169,7 @@ impl Render for AppShell {
             // Last child: flushes this frame's glass regions to the native backdrop.
             .child(glass::end_frame())
             .children(self.updater_toast(cx))
+            .children(crate::sheet::overlay(window, cx))
             // Debug FPS HUD — inserted *last* so it always paints above the rest
             // of the shell (it used to sit ahead of `self.body`, so its own
             // content silently painted over it). `gpui_fps::FpsOverlay`
@@ -1264,6 +1333,29 @@ pub fn is_main_window(handle: AnyWindowHandle) -> bool {
 /// `on_open_urls` hook) and the Windows/Linux command-line argument a file
 /// association launches the app with (`open_files::argv_paths`) both funnel
 /// here.
+/// Debug aid (`DTB_KE_PREVIEW=1`): once the database is up, select the first competition and show
+/// the preview, so the pane can be checked without touching the UI.
+pub(crate) fn debug_show_preview(cx: &mut App) {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(Duration::from_secs(2)).await;
+        cx.update(|cx| {
+            let Some(handle) = main_window_handle() else {
+                return;
+            };
+            handle
+                .update(cx, |shell, _, cx| {
+                    let first = shell.store.read(cx).summaries().first().map(|s| s.id);
+                    if let Some(id) = first {
+                        shell.store.update(cx, |store, cx| store.select(id, cx));
+                    }
+                    shell.show_preview(cx);
+                })
+                .ok();
+        });
+    })
+    .detach();
+}
+
 pub(crate) fn main_window_handle() -> Option<WindowHandle<AppShell>> {
     MAIN_WINDOW.with(|m| *m.borrow()).and_then(|h| h.downcast::<AppShell>())
 }

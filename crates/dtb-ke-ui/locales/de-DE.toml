@@ -119,6 +119,7 @@ hint = "Klicke „Aufnehmen“ und drücke die gewünschte Tastenkombination."
 "toolbar-delete" = "Löschen"
 "toolbar-settings" = "Wettkampf"
 "toolbar-preview" = "Vorschau"
+"toolbar-edit" = "Bearbeiten"
 "toolbar-export" = "Exportieren"
 "no-selection" = "Kein Wettkampf ausgewählt"
 "phase-qualification" = "Qualifikation"
@@ -164,6 +165,10 @@ hint = "Klicke „Aufnehmen“ und drücke die gewünschte Tastenkombination."
 "import-overwrite-detail" = "Der vorhandene Wettkampf wird überschrieben."
 "import-overwrite-button" = "Überschreiben"
 "import-overwrite-cancel-button" = "Abbrechen"
+
+[sheet]
+"done" = "Fertig"
+"back" = "Zurück"
 
 [preview]
 "window-title" = "DTB Kampfrichtereinsatzpläne · Vorschau"

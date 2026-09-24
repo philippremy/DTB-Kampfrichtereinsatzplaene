@@ -119,6 +119,7 @@ hint = "Click \"Record\" and press the desired key combination."
 "toolbar-delete" = "Delete"
 "toolbar-settings" = "Competition"
 "toolbar-preview" = "Preview"
+"toolbar-edit" = "Edit"
 "toolbar-export" = "Export"
 "no-selection" = "No competition selected"
 "phase-qualification" = "Qualification"
@@ -164,6 +165,10 @@ hint = "Click \"Record\" and press the desired key combination."
 "import-overwrite-detail" = "The existing competition will be overwritten."
 "import-overwrite-button" = "Overwrite"
 "import-overwrite-cancel-button" = "Cancel"
+
+[sheet]
+"done" = "Done"
+"back" = "Back"
 
 [preview]
 "window-title" = "DTB Kampfrichtereinsatzpläne · Preview"

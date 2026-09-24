@@ -67,6 +67,11 @@ thread_local! {
 
 /// Open (or focus) the settings window.
 pub fn open(cx: &mut App) {
+    if crate::sheet::enabled() {
+        let options = window_options(cx);
+        crate::sheet::present(cx, "settings", &options, |_, cx| cx.new(SettingsWindow::new));
+        return;
+    }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
     let existing = OPEN.with(|h| *h.borrow());
     if let Some(handle) = existing {
@@ -1090,7 +1095,7 @@ impl Render for SettingsWindow {
             .bg(c.background)
             .text_color(c.foreground)
             .when_some(font, |el, family| el.font_family(family))
-            .child(
+            .when(!crate::sheet::enabled(), |el| el.child(
                 // Title strip — mirrors the other secondary windows.
                 div()
                     .flex_none()
@@ -1105,7 +1110,7 @@ impl Render for SettingsWindow {
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
                     .child(cx.t("settings.window-title")),
-            )
+            ))
             .child(
                 div()
                     .flex()

@@ -39,6 +39,13 @@ pub fn main_window_options(cx: &mut App) -> WindowOptions {
     }
 }
 
+/// Whether secondary windows (About, Settings, Logs, Feedback, Trash) are presented as sheets
+/// inside the main window — and the live preview replaces the editor pane — instead of as OS
+/// windows. True where the platform has a single window scene (iPadOS); see [`crate::sheet`].
+pub const fn secondary_windows_as_sheets() -> bool {
+    cfg!(target_os = "ios")
+}
+
 /// Whether a secondary/utility window (About, Feedback, Preview, Logs,
 /// Settings) should ask for a transparent title bar.
 ///

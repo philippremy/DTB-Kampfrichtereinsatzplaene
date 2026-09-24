@@ -38,3 +38,9 @@ pub fn in_app(cx: &App) -> bool {
 pub const fn has_window_commands() -> bool {
     !cfg!(target_os = "ios")
 }
+
+/// Whether the platform has a file manager to reveal folders and files in (the "open log folder"
+/// and "show database" items). iPadOS apps live in a sandbox the user cannot browse from here.
+pub const fn has_file_manager() -> bool {
+    !cfg!(target_os = "ios")
+}

@@ -319,7 +319,7 @@ fn window_menu(state: MenuState, locale: &Locale) -> Menu {
 }
 
 fn help_menu(_state: MenuState, locale: &Locale) -> Menu {
-    Menu::new(locale.t("menu.help.title")).items(vec![
+    let mut items = vec![
         MenuItem::action(locale.t("actions.help::ReportBug"), help::ReportBug),
         MenuItem::action(
             locale.t("actions.help::RequestFeature"),
@@ -327,8 +327,14 @@ fn help_menu(_state: MenuState, locale: &Locale) -> Menu {
         ),
         MenuItem::separator(),
         MenuItem::action(locale.t("actions.help::ShowLogs"), help::ShowLogs),
-        MenuItem::action(locale.t("actions.help::OpenLogFolder"), help::OpenLogFolder),
-        MenuItem::action(locale.t("actions.help::ShowDatabase"), help::ShowDatabase),
+    ];
+    if crate::skin::menu::has_file_manager() {
+        items.extend([
+            MenuItem::action(locale.t("actions.help::OpenLogFolder"), help::OpenLogFolder),
+            MenuItem::action(locale.t("actions.help::ShowDatabase"), help::ShowDatabase),
+        ]);
+    }
+    items.extend([
         MenuItem::separator(),
         MenuItem::action(
             locale.t("actions.help::ClearLogFolder"),
@@ -339,7 +345,8 @@ fn help_menu(_state: MenuState, locale: &Locale) -> Menu {
             locale.t_fmt("actions.help::OpenRepository", &[("app_name", APP_NAME)]),
             help::OpenRepository,
         ),
-    ])
+    ]);
+    Menu::new(locale.t("menu.help.title")).items(items)
 }
 
 #[cfg(test)]

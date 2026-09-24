@@ -22,6 +22,7 @@ use crate::components::toolbar_group::ToolbarGroup;
 use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
 use crate::model::CompetitionMeta;
+use crate::preview::PreviewPane;
 use crate::store::AppStore;
 use crate::theme::ActiveTheme;
 
@@ -34,12 +35,15 @@ pub struct CompetitionToolbar {
     watch_subs: Vec<Subscription>,
     _store_sub: Subscription,
     _detail_sub: Subscription,
+    /// The preview pane replacing the editor (iPadOS) toggles the button's state.
+    _preview_sub: Subscription,
 }
 
 impl CompetitionToolbar {
     pub fn new(store: Entity<AppStore>, detail: Entity<DetailView>, cx: &mut Context<Self>) -> Self {
         let store_sub = cx.observe(&store, |this, _, cx| this.rewatch(cx));
         let detail_sub = cx.observe(&detail, |_, _, cx| cx.notify());
+        let preview_sub = cx.observe_global::<PreviewPane>(|_, cx| cx.notify());
         let mut this = Self {
             store,
             detail,
@@ -47,6 +51,7 @@ impl CompetitionToolbar {
             watch_subs: Vec::new(),
             _store_sub: store_sub,
             _detail_sub: detail_sub,
+            _preview_sub: preview_sub,
         };
         this.rewatch(cx);
         this
@@ -106,6 +111,8 @@ impl Render for CompetitionToolbar {
         let locale = cx.global::<Locale>().clone();
 
         let has_table = self.detail.read(cx).has_table_selection();
+        // The preview pane hides the editor, so the table buttons have nothing to act on.
+        let previewing = cx.try_global::<PreviewPane>().is_some_and(|pane| pane.showing);
         let label = |key: &str| cx.t(&format!("detail.toolbar-{key}"));
 
         row.child(OrgEmblem::new(meta.organization))
@@ -141,21 +148,21 @@ impl Render for CompetitionToolbar {
                         "toolbar-add-table",
                         Icon::Plus,
                         label("add-table"),
-                        false,
+                        previewing,
                         || Box::new(AddJudgingTable),
                     ))
                     .button(action(
                         "toolbar-duplicate",
                         Icon::Copy,
                         label("duplicate"),
-                        !has_table,
+                        !has_table || previewing,
                         || Box::new(DuplicateJudgingTable),
                     ))
                     .button(action(
                         "toolbar-delete",
                         Icon::Trash,
                         label("delete"),
-                        !has_table,
+                        !has_table || previewing,
                         || Box::new(DeleteJudgingTable),
                     )),
             )
@@ -168,13 +175,20 @@ impl Render for CompetitionToolbar {
                         false,
                         || Box::new(CompetitionSettings),
                     ))
-                    .button(action(
-                        "toolbar-preview",
-                        Icon::Preview,
-                        label("preview"),
-                        false,
-                        || Box::new(TogglePreview),
-                    )),
+                    .button({
+                        let toggle = action(
+                            "toolbar-preview",
+                            Icon::Preview,
+                            if previewing { label("edit") } else { label("preview") },
+                            false,
+                            || Box::new(TogglePreview),
+                        );
+                        if previewing {
+                            toggle.tone(ButtonTone::Primary).foreground(c.primary_foreground)
+                        } else {
+                            toggle
+                        }
+                    }),
             )
             .child(
                 ToolbarGroup::new("toolbar-export").prominent().button(

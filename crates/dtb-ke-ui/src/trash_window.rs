@@ -29,6 +29,13 @@ thread_local! {
 
 /// Open (or focus) the trash window.
 pub fn open(store: Entity<AppStore>, cx: &mut App) {
+    if crate::sheet::enabled() {
+        let options = window_options(cx);
+        crate::sheet::present(cx, "trash", &options, move |window, cx| {
+            cx.new(|cx| TrashWindow::new(store, window, cx))
+        });
+        return;
+    }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
     let existing = OPEN.with(|h| *h.borrow());
     if let Some(handle) = existing {
@@ -267,7 +274,7 @@ impl Render for TrashWindow {
             .bg(c.background)
             .text_color(c.foreground)
             .when_some(font, |el, family| el.font_family(family))
-            .child(
+            .when(!crate::sheet::enabled(), |el| el.child(
                 div()
                     .flex_none()
                     .h(px(34.))
@@ -281,7 +288,7 @@ impl Render for TrashWindow {
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
                     .child(cx.t("trash.window-title")),
-            )
+            ))
             .child(self.toolbar(cx))
             .when(is_empty, |el| {
                 el.child(empty_state(cx.t("trash.empty-state"), &c))

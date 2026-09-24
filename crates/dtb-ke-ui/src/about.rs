@@ -80,6 +80,24 @@ pub fn open_named(cx: &mut App, name: &str) {
 }
 
 fn open_kind(cx: &mut App, kind: Kind) {
+    if crate::sheet::enabled() {
+        let key = match kind {
+            Kind::About => "about",
+            Kind::Acknowledgements => "about-acknowledgements",
+            Kind::BuildInfo => "about-build-info",
+            Kind::License => "about-license",
+        };
+        let options = window_options(kind, cx);
+        match kind {
+            Kind::About => crate::sheet::present(cx, key, &options, move |_, cx| {
+                cx.new(|_| AboutWindow { kind })
+            }),
+            other => crate::sheet::present(cx, key, &options, move |_, cx| {
+                cx.new(|_| InfoWindow::new(other))
+            }),
+        }
+        return;
+    }
     // Already open? Bring it forward and stop. Existence is checked against
     // `cx.windows()`, not the return of `handle.update` — when this runs from
     // the menu action *while that window is the one dispatching it*, the
