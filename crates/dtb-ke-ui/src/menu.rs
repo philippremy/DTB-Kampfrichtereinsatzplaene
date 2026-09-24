@@ -117,14 +117,20 @@ fn app_menu(state: MenuState, locale: &Locale) -> Menu {
             locale.t_fmt("actions.app::About", &[("app_name", APP_NAME)]),
             app::About,
         ),
-        MenuItem::action(
-            locale.t("actions.app::CheckForUpdates"),
-            app::CheckForUpdates,
-        )
-        .disabled(!crate::updater::available()),
+    ];
+    if crate::updater::supported() {
+        items.push(
+            MenuItem::action(
+                locale.t("actions.app::CheckForUpdates"),
+                app::CheckForUpdates,
+            )
+            .disabled(!crate::updater::available()),
+        );
+    }
+    items.extend([
         MenuItem::separator(),
         MenuItem::action(locale.t("actions.app::OpenSettings"), app::OpenSettings),
-    ];
+    ]);
 
     #[cfg(target_os = "macos")]
     {

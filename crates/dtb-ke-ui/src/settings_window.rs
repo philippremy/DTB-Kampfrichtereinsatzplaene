@@ -459,7 +459,8 @@ impl SettingsWindow {
                     }))
                     .into_any_element(),
             ))
-            .child(divider(&c))
+            .when(crate::updater::supported(), |el| {
+                el.child(divider(&c))
             .child(section_label(cx.t("settings.general.update-section"), &c))
             .child(setting_row(
                 cx.t("settings.general.auto-update-title"),
@@ -505,6 +506,7 @@ impl SettingsWindow {
                     })
                     .into_any_element(),
                 ))
+            })
             })
     }
 

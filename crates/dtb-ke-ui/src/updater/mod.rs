@@ -61,9 +61,15 @@ pub const STARTUP_DELAY: Duration = Duration::from_secs(4);
 /// Minimum spacing between automatic checks while the app stays open.
 pub const RECHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Whether this platform updates itself at all. iPadOS builds are updated through TestFlight /
+/// the App Store, so the whole feature (menu item, toast, settings section) is absent there.
+pub const fn supported() -> bool {
+    !cfg!(target_os = "ios")
+}
+
 /// Whether the updater is usable in this build (a verification key is embedded).
 pub fn available() -> bool {
-    key::VERIFY_KEY.is_some()
+    supported() && key::VERIFY_KEY.is_some()
 }
 
 /// Whether this platform can install an update in place on `channel`.
