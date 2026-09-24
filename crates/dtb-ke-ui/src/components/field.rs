@@ -28,6 +28,7 @@ pub struct Field {
     accent: Option<Hsla>,
     paints_background: bool,
     pill: bool,
+    height: Option<gpui_kit::Pixels>,
     bare: bool,
     icon_scale: f32,
 }
@@ -44,6 +45,7 @@ impl Field {
             accent: None,
             paints_background: false,
             pill: false,
+            height: None,
             bare: false,
             icon_scale: 1.0,
         }
@@ -101,6 +103,12 @@ impl Field {
         self
     }
 
+    /// Overrides the default 30 px height (the sidebar search matches the toolbar controls).
+    pub fn height(mut self, height: gpui_kit::Pixels) -> Self {
+        self.height = Some(height);
+        self
+    }
+
     pub fn paints_background(mut self, yes: bool) -> Self {
         self.paints_background = yes;
         self
@@ -119,7 +127,7 @@ impl RenderOnce for Field {
             .flex()
             .items_center()
             .gap(px(6.))
-            .h(px(30.))
+            .h(self.height.unwrap_or(px(30.)))
             .px(px(8.))
             .when(self.pill, |el| el.rounded_full().px(px(12.)))
             .when(!self.pill, |el| el.rounded(theme.skin.radius_control_px()))

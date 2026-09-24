@@ -540,10 +540,12 @@ fn search_capsule(
     use crate::components::toolbar_group::Bump;
 
     let native = glass::active();
+    let control_height = cx.theme().skin.toolbar_control_height_px();
     let bump = Bump::new("sidebar-search", window, cx);
     let field = Field::new("sidebar-search", search)
         .leading_icon(Icon::Search)
         .icon_scale(bump.scale)
+        .height(control_height)
         .pill();
     if native {
         // The probe sits on this unpadded wrapper (see `glass::region`).
@@ -553,7 +555,7 @@ fn search_capsule(
             .flex_1()
             .min_w_0()
             .items_center()
-            .h(px(crate::components::toolbar_group::GROUP_HEIGHT))
+            .h(control_height)
             .rounded_full()
             .on_mouse_down(MouseButton::Left, bump.on_press())
             .child(glass::region_scaled(
@@ -776,7 +778,7 @@ impl Render for Sidebar {
                     .child(
                         ToolbarGroup::new("sidebar-add").chromeless().button(
                             Button::icon("new-competition", Icon::Plus)
-                                .round()
+                                .oval()
                                 .tooltip(cx.t("sidebar.new-competition-button"))
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(NewCompetition), cx);
