@@ -141,3 +141,17 @@ pub fn windows_backdrop_support() -> WindowsBackdropSupport {
 pub fn windows_backdrop_support() -> WindowsBackdropSupport {
     WindowsBackdropSupport::None
 }
+
+/// Match the iPadOS status bar / menu bar text to the app's effective appearance — the system
+/// picks it from the *system* appearance otherwise, so a manual Hell/Dunkel choice would leave
+/// dark text on a dark bar.
+pub fn sync_status_bar(dark: bool) {
+    #[cfg(target_os = "ios")]
+    gpui_ios::ios::set_status_bar_style(if dark {
+        gpui_ios::StatusBarContentStyle::Light
+    } else {
+        gpui_ios::StatusBarContentStyle::Dark
+    });
+    #[cfg(not(target_os = "ios"))]
+    let _ = dark;
+}

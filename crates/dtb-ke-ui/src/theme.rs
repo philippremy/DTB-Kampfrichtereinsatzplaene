@@ -188,6 +188,7 @@ impl Theme {
         );
         theme.bridge_to_base(cx);
         crate::skin::backdrop::set_mode(mode);
+        crate::skin::window::sync_status_bar(theme.appearance == Appearance::Dark);
         cx.set_global(theme);
         cx.refresh_windows();
     }
