@@ -1045,11 +1045,7 @@ impl AppShell {
         // The window controls float over the sidebar's top-left corner in a windowed iPadOS
         // window (and a touch skin leaves some air under the native bar); the padding sits on this wrapper (the sidebar view itself is cached) and is
         // filled like the sidebar so it reads as part of it.
-        let sidebar_top = window
-            .insets()
-            .window_controls
-            .top
-            .max(cx.theme().skin.sidebar_top_padding_px());
+        let sidebar_top = window.insets().window_controls.top + cx.theme().skin.sidebar_top_padding_px();
         let sidebar_fill = material::sidebar_fill(cx.theme(), cx);
         let sidebar = div()
             .size_full()
