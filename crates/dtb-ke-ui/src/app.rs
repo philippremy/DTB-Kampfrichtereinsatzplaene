@@ -76,6 +76,16 @@ fn select_then_act(
         .detach();
 }
 
+/// Experiment (`DTB_KE_VIEW_CACHE=1`): embed a child view through gpui's view cache.
+fn cached_or_plain<T: Render>(view: Entity<T>) -> gpui_kit::AnyElement {
+    if std::env::var_os("DTB_KE_VIEW_CACHE").is_some() {
+        view.cached(gpui_kit::StyleRefinement::default().size_full())
+            .into_any_element()
+    } else {
+        view.into_any_element()
+    }
+}
+
 pub struct AppShell {
     store: Entity<AppStore>,
     sidebar: Entity<Sidebar>,
@@ -890,7 +900,7 @@ impl AppShell {
                     .flex_1()
                     .min_h(px(0.))
                     .bg(content_fill)
-                    .child(self.detail.clone()),
+                    .child(cached_or_plain(self.detail.clone())),
             );
 
         if self.sidebar_collapsed {
@@ -900,7 +910,7 @@ impl AppShell {
         let motion = cx.theme().skin.motion(Duration::from_millis(500));
         let sidebar = div()
             .size_full()
-            .child(self.sidebar.clone())
+            .child(cached_or_plain(self.sidebar.clone()))
             .with_animation(
                 "sidebar-fade",
                 Animation::new(motion).with_easing(ease_out_quint()),
