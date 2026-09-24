@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::util::{self, built_binary_path, bundle_dir, fresh_dir};
-use crate::{helper, icon, linux, macos, meta, windows};
+use crate::{helper, icon, ios, linux, macos, meta, windows};
 
 /// The two Mach-O slices a `--universal` build merges with `lipo`. `pub(crate)`
 /// — `debug_info::universal_dsym` merges the same two slices' `.dSYM`s the
@@ -29,6 +29,8 @@ pub struct Options {
     /// itself). Requires the target installed and, for a cross target, its
     /// linker configured (`.cargo/config.toml` / `CARGO_TARGET_*_LINKER`).
     pub target: Option<String>,
+    /// iOS device builds: the `.mobileprovision` to embed (entitlements are derived from it).
+    pub provisioning_profile: Option<String>,
 }
 
 /// Inputs every packager needs.
@@ -42,6 +44,7 @@ pub struct Context {
     /// The `--target` triple this was built for (`None` = the host). Linux
     /// packaging derives its arch labels (`amd64`/`arm64`, …) from it.
     pub target: Option<String>,
+    pub provisioning_profile: Option<String>,
     /// Whether an icon master was found and the icon cache is populated.
     pub have_icon: bool,
 }
@@ -59,7 +62,11 @@ pub fn run(opts: Options) -> Result<(), String> {
         build_universal(opts.release)?
     } else {
         let target = opts.target.as_deref();
-        helper::stage(opts.release, target);
+        let ios = ios::is_ios_target(target);
+        // The out-of-process crash helper is macOS/Windows/Linux only.
+        if !ios {
+            helper::stage(opts.release, target);
+        }
         let mut cargo = vec!["build".to_string(), "-p".into(), "dtb-ke-ui".into()];
         if opts.release {
             cargo.push("--release".into());
@@ -68,7 +75,13 @@ pub fn run(opts: Options) -> Result<(), String> {
             cargo.push("--target".into());
             cargo.push(triple.to_string());
         }
-        util::run("cargo", &cargo);
+        if ios {
+            // rustc's own default is far older than the backend supports; the Metal shaders
+            // are compiled against the same floor in `gpui_apple`'s build script.
+            util::run_with_env("cargo", &cargo, &[("IPHONEOS_DEPLOYMENT_TARGET", meta::IOS_MIN_VERSION)]);
+        } else {
+            util::run("cargo", &cargo);
+        }
 
         let binary = built_binary_path(opts.release, target, meta::RAW_BIN_NAME);
         if !binary.exists() {
@@ -99,10 +112,13 @@ pub fn run(opts: Options) -> Result<(), String> {
         formats: opts.formats,
         sign: opts.sign,
         target: opts.target,
+        provisioning_profile: opts.provisioning_profile,
         have_icon,
     };
 
-    if cfg!(target_os = "macos") {
+    if ios::is_ios_target(cx.target.as_deref()) {
+        ios::bundle(&cx)
+    } else if cfg!(target_os = "macos") {
         macos::bundle(&cx)
     } else if cfg!(target_os = "windows") {
         windows::bundle(&cx)

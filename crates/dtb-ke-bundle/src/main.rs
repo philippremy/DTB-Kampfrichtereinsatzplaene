@@ -15,6 +15,9 @@
 //!                                                   see icon.rs; writes + commits to
 //!                                                   assets/icons/generated/)
 //!   cargo dtb-ke-bundle bundle  [--debug] [--formats a,b,c] [--sign <id>]
+//!     iOS/iPadOS (macOS host only): `bundle --debug --target aarch64-apple-ios-sim` builds a
+//!     simulator `.app`; `--target aarch64-apple-ios` a device one and additionally takes
+//!     `--sign <identity> --provisioning-profile <file>`.
 //!   cargo dtb-ke-bundle debug-info [--universal | --target <t>] <out.tar.gz>
 //!     package `[profile.release] split-debuginfo = "packed"`'s sidecar —
 //!     macOS's `.dSYM`, Linux's `.dwp` — kept entirely separate from `bundle`
@@ -27,6 +30,7 @@ mod codeberg;
 mod debug_info;
 mod helper;
 mod icon;
+mod ios;
 mod linux;
 mod macos;
 mod manifest;
@@ -76,12 +80,14 @@ fn main() {
             let sign = flag_value(&rest, "--sign");
             let universal = has("--universal");
             let target = flag_value(&rest, "--target");
+            let provisioning_profile = flag_value(&rest, "--provisioning-profile");
             if let Err(e) = bundle::run(bundle::Options {
                 release,
                 formats: formats.map(parse_formats),
                 sign,
                 universal,
                 target,
+                provisioning_profile,
             }) {
                 eprintln!("dtb-ke-bundle: {e}");
                 exit(1);

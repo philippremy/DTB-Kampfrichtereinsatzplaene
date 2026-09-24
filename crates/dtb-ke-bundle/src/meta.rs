@@ -80,6 +80,10 @@ pub const MACOS_CATEGORY: &str = "public.app-category.productivity";
 /// Lowest macOS the app is expected to run on.
 pub const MACOS_MIN_VERSION: &str = "11.0";
 
+/// Lowest iOS / iPadOS the app is expected to run on (matches the `gpui_ios` backend's floor;
+/// `bundle` also exports it as `IPHONEOS_DEPLOYMENT_TARGET` for the build).
+pub const IOS_MIN_VERSION: &str = "15.0";
+
 /// Minimum macOS **SDK** version stamped into the built binary's
 /// `LC_BUILD_VERSION` (`macos::ensure_min_sdk`). macOS 26 ("Tahoe") gates its
 /// redesigned interface — larger window controls, Liquid Glass chrome — on the

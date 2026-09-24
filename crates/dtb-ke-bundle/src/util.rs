@@ -19,6 +19,23 @@ pub fn run(program: &str, args: &[String]) {
     }
 }
 
+/// Like [`run`], with extra environment variables for the child.
+pub fn run_with_env(program: &str, args: &[String], envs: &[(&str, &str)]) {
+    let status = Command::new(program)
+        .args(args)
+        .envs(envs.iter().copied())
+        .current_dir(workspace_root())
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("dtb-ke-bundle: failed to spawn {program}: {e}");
+            exit(1);
+        });
+    if !status.success() {
+        eprintln!("dtb-ke-bundle: {program} exited with {status}");
+        exit(status.code().unwrap_or(1));
+    }
+}
+
 /// Run a program in `dir`, returning `Err` with a message instead of aborting.
 pub fn try_run(program: &str, args: &[&str], dir: &Path) -> Result<(), String> {
     let status = Command::new(program)
