@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(linux.control_shape, ControlShape::Rounded);
 
         let ipad = SkinMetrics::parse(Skin::IPadOs.embedded_toml()).unwrap();
-        assert_eq!(ipad.material, WindowMaterial::Opaque);
+        assert_eq!(ipad.material, WindowMaterial::Blurred);
         assert_eq!(ipad.window_decorations, WindowDecorations::Server);
         assert_eq!(ipad.selection_style, SelectionStyle::GlassTint);
         assert_eq!(ipad.menu_bar, MenuStyle::Native);
