@@ -127,6 +127,7 @@ pub fn overlay(window: &Window, cx: &mut App) -> Option<impl IntoElement> {
 
     let c = cx.theme().color;
     let radius = cx.theme().skin.radius_lg_px();
+    let corner_inset = px((f32::from(radius) * (1. - std::f32::consts::FRAC_1_SQRT_2)).ceil() + 1.);
     let insets = window.insets().effective();
     let (back_label, done_label) = (cx.t("sheet.back"), cx.t("sheet.done"));
 
@@ -139,6 +140,8 @@ pub fn overlay(window: &Window, cx: &mut App) -> Option<impl IntoElement> {
         .border_b_1()
         .border_color(c.border)
         .bg(c.chrome)
+        // gpui clips to rectangles, so the header rounds its own top corners.
+        .rounded_t(radius - px(1.))
         .child(
             div().w(px(110.)).flex().justify_start().when(stacked, |el| {
                 el.child(
@@ -179,11 +182,23 @@ pub fn overlay(window: &Window, cx: &mut App) -> Option<impl IntoElement> {
         .rounded(radius)
         .border_1()
         .border_color(c.border)
-        .bg(c.surface)
+        .bg(c.background)
         .text_color(c.foreground)
         .shadow_lg()
         .child(header)
-        .child(div().relative().flex_1().min_h(px(0.)).child(view));
+        // Clipping is rectangular, so a view's square corners would poke out of the rounded
+        // panel. Insetting the content by the depth of the corner arc (r·(1−1/√2), rounded up)
+        // keeps them inside; the panel's background matches the views', so the gutter is
+        // invisible.
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h(px(0.))
+                .mx(corner_inset)
+                .mb(corner_inset)
+                .child(view),
+        );
 
     Some(deferred(
         div()

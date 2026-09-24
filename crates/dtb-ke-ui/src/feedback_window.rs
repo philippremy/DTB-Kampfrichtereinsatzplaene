@@ -325,18 +325,18 @@ impl Render for FeedbackWindow {
                 |el| el.pt(px(20.)),
             )
             .gap(px(12.))
-            .child(
+            .when(!crate::sheet::enabled(), |el| el.child(
                 div()
                     .text_size(px(15.))
                     .font_weight(FontWeight::BOLD)
                     .child(self.kind.title(cx.global::<Locale>())),
-            )
-            .child(
+            ))
+            .when(mail::available(), |el| el.child(
                 div()
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
                     .child(self.kind.intro(cx.global::<Locale>())),
-            )
+            ))
             .map(|el| {
                 if mail::available() {
                     el.child(self.form(radius, c, cx))

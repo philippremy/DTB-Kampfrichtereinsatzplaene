@@ -423,7 +423,7 @@ impl Render for InfoWindow {
             .text_color(c.foreground)
             .flex()
             .flex_col()
-            .child(
+            .when(!crate::sheet::enabled(), |el| el.child(
                 // Title strip — mirrors the preview window's; leaves room for
                 // the traffic lights on macOS.
                 div()
@@ -439,7 +439,7 @@ impl Render for InfoWindow {
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
                     .child(self.kind.title(cx.global::<Locale>())),
-            )
+            ))
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
 }
