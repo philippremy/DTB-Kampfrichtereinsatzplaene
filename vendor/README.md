@@ -128,6 +128,7 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   two-finger scroll → `ScrollWheel`) and `ios/pointer.rs` (a `UIPointerInteraction` whose style follows
   `Platform::set_cursor_style`: text beam for `IBeam`, system pointer otherwise). `gpui-kit`'s resize handle grabs a
   14 px strip on iOS (4 px elsewhere).
+- **Metal 4 on iOS** (ours): `gpui_apple`'s `metal4_renderer` / `renderer_select` now build for iOS too. `renderer_select::new_renderer_for_layer` (used by `gpui_ios`) picks `Metal4Renderer::from_layer` when iOS is 26+ *and* the device reports `MTLGPUFamily::Metal4` (`metal4_capability`), else the Metal 3 renderer, both on the view's own `CAMetalLayer`. Video surfaces (CoreVideo) stay macOS-only. The simulator's GPU reports no Metal 4 family, so the Metal 4 path is only exercised on hardware.
 - **Window transparency** (ours, `gpui_ios`): `set_background_appearance(anything but Opaque)` makes the Metal layer/view non-opaque (`MetalRenderer::update_transparency`), so an app can put `UIVisualEffectView`s beneath the gpui view (`dtb-ke-ui`'s Liquid Glass backdrop). **Native prompts**: `PlatformWindow::prompt` shows a `UIAlertController`. `gpui_ios::ios::set_status_bar_style` is what the app calls to keep the bar text readable.
 - `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
   Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
