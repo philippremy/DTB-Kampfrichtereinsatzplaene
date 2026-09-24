@@ -94,6 +94,10 @@ pub enum GlassRole {
     /// glass, which bends light at its edge, always samples that one colour
     /// instead of the bare desktop below the band.
     ContentBacking,
+    /// The sidebar column while the window is fullscreen: no glass, just the opaque chrome
+    /// colour — painted natively (beneath the toolbar capsules' glass) rather than by gpui,
+    /// whose opaque fill would cover them.
+    SidebarBacking,
     /// A group of toolbar controls in one capsule.
     Capsule,
     /// The one primary toolbar action — accent-tinted capsule.
@@ -137,7 +141,7 @@ pub enum GlassRole {
 impl GlassRole {
     fn style(self) -> Option<GlassStyle> {
         match self {
-            GlassRole::ContentBacking => None,
+            GlassRole::ContentBacking | GlassRole::SidebarBacking => None,
             GlassRole::Sidebar
             | GlassRole::Capsule
             | GlassRole::CapsuleProminent
@@ -169,7 +173,7 @@ impl GlassRole {
     /// (and its overlay) keeps the skin's ordinary large-radius corner.
     fn corner_radius(self, bounds: Bounds<Pixels>, theme: &Theme) -> Pixels {
         match self {
-            GlassRole::Sidebar | GlassRole::ContentBacking => px(0.),
+            GlassRole::Sidebar | GlassRole::ContentBacking | GlassRole::SidebarBacking => px(0.),
             GlassRole::Capsule
             | GlassRole::CapsuleProminent
             | GlassRole::SelectionThumb
@@ -200,6 +204,13 @@ impl GlassRole {
                 Hsla {
                     a: backing,
                     ..chrome
+                },
+            ),
+            GlassRole::SidebarBacking => (
+                none,
+                Hsla {
+                    a: 1.0,
+                    ..theme.color.chrome
                 },
             ),
             GlassRole::ContentBacking => (

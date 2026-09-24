@@ -949,10 +949,7 @@ mod ios {
             end_no_actions();
             // The window itself takes the content colour (the `ContentBacking` region's flat
             // fill), so the sidebar's glass frosts that colour instead of the bare black window.
-            if let Some(backing) = regions
-                .values()
-                .find(|r| r.style.is_none() && r.backing.a >= 1.0)
-            {
+            if let Some(backing) = regions.get("content-backing") {
                 host.content
                     .setBackgroundColor(Some(&ui_color(backing.backing)));
             }

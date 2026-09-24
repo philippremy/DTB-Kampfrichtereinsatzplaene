@@ -1043,7 +1043,9 @@ impl AppShell {
             .relative()
             .size_full()
             .when(sidebar_top > px(0.), |el| el.pt(sidebar_top).bg(sidebar_fill))
-            .when(glass::active() && !glass_sidebar, |el| el.bg(cx.theme().color.chrome))
+            .when(glass::active() && !glass_sidebar, |el| {
+                el.child(glass::region("sidebar", GlassRole::SidebarBacking))
+            })
             // The native glass behind the whole sidebar column, padding included (macOS 26+ /
             // iPadOS 26+; a no-op elsewhere).
             .when(glass_sidebar, |el| {
