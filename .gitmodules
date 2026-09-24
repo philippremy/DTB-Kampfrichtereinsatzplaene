@@ -10,6 +10,7 @@
 [submodule "vendor/turso"]
 	path = vendor/turso
 	url = https://github.com/philippremy/turso.git
+	branch = dtb-ke-patches
 [submodule "vendor/gpui-kit"]
 	path = vendor/gpui-kit
 	url = https://github.com/philippremy/gpui-kit.git
