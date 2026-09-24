@@ -119,6 +119,15 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   iPad", other providers); `Platform::prompt_for_paths` is backed by `pick_files`. There is no `prompt_for_new_path`
   (iOS has no save panel) — callers stage a file in the container and call `export_files`. Needs
   `objc2-uniform-type-identifiers` (added to the shim manifest and the fork's workspace).
+- **Touch drags and pointer input** (ours, `gpui` + `gpui_ios` + `gpui-kit`): `on_drag` now also starts from a touch
+  (a `TouchDragEvent` listener in `elements/div.rs` claims the touch at once, so only put `on_drag` on grips /
+  slider tracks / resize handles), and `Window::dispatch_recognized_touch_gesture` feeds the finger's moves and
+  release into the ordinary mouse path as synthetic `MouseMoveEvent` / `MouseUpEvent`, so `on_drag_move`, `on_drop`
+  and the resizable panels work unmodified. `gpui_ios` adds `UIPinchGestureRecognizer` (→ `PinchEvent`),
+  `UIHoverGestureRecognizer` (→ `MouseMove` / `MouseExited`), a scroll-only `UIPanGestureRecognizer` (trackpad
+  two-finger scroll → `ScrollWheel`) and `ios/pointer.rs` (a `UIPointerInteraction` whose style follows
+  `Platform::set_cursor_style`: text beam for `IBeam`, system pointer otherwise). `gpui-kit`'s resize handle grabs a
+  14 px strip on iOS (4 px elsewhere).
 - `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
   Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
   downstream `with_platform`; the patch drops that exclusion (Android stays excluded) so iOS is

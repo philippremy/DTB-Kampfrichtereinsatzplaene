@@ -14,8 +14,9 @@ use std::time::Duration;
 
 use dtb_ke_export::{Exporter, PreviewOptions};
 use gpui_kit::{
-    App, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, RenderImage, Size, Styled,
-    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla, img,
+    App, Bounds, Context, DispatchPhase, Entity, InteractiveElement, IntoElement, ParentElement,
+    PinchEvent, Pixels, RenderImage, ScrollHandle, ScrollWheelEvent, Size, StatefulInteractiveElement,
+    Styled, Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla, img,
     prelude::FluentBuilder, px, size, white,
 };
 use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
@@ -29,6 +30,12 @@ use crate::theme::ActiveTheme;
 
 /// Quiet period after the last edit before a re-render fires.
 const DEBOUNCE: Duration = Duration::from_millis(350);
+/// Zoom range: 1.0 fits the page width, larger magnifies (pages then scroll sideways too).
+const ZOOM_MIN: f32 = 1.0;
+const ZOOM_MAX: f32 = 4.0;
+/// Zoom change per scroll-wheel pixel while the zoom modifier is held.
+const WHEEL_ZOOM_PER_PIXEL: f32 = 0.005;
+
 /// Raster scale. 2.0 ≈ 300 dpi — sharp enough scaled down to page width.
 const PIXELS_PER_POINT: f32 = 3.0;
 
@@ -62,6 +69,11 @@ pub struct PreviewWindow {
     /// differs from the window width when the preview is a pane beside a sidebar of varying width.
     measured_width: Rc<Cell<Pixels>>,
 
+    /// Magnification on top of fit-to-width (`ZOOM_MIN..=ZOOM_MAX`).
+    zoom: f32,
+    /// Horizontal scroll of the (possibly wider than the viewport) page column.
+    h_scroll: ScrollHandle,
+
     watched: Option<Uuid>,
     _store_sub: Subscription,
     _doc_sub: Option<Subscription>,
@@ -85,6 +97,21 @@ enum Status {
 }
 
 impl PreviewWindow {
+    /// Multiply the zoom by `factor`, keeping the scroll position at the same spot of the document.
+    fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
+        let zoom = (self.zoom * factor).clamp(ZOOM_MIN, ZOOM_MAX);
+        if (zoom - self.zoom).abs() < f32::EPSILON {
+            return;
+        }
+        let ratio = zoom / self.zoom;
+        self.zoom = zoom;
+        let offset = self.scroll.offset();
+        self.scroll.set_offset(gpui_kit::point(offset.x, offset.y * ratio));
+        let h_offset = self.h_scroll.offset();
+        self.h_scroll.set_offset(gpui_kit::point(h_offset.x * ratio, h_offset.y));
+        cx.notify();
+    }
+
     pub fn new(store: Entity<AppStore>, exporter: Arc<Exporter>, cx: &mut Context<Self>) -> Self {
         let store_sub = cx.observe(&store, |this, _, cx| this.rewatch(cx));
         let mut this = Self {
@@ -96,6 +123,8 @@ impl PreviewWindow {
             render_task: None,
             scroll: VirtualListScrollHandle::new(),
             measured_width: Rc::new(Cell::new(px(0.))),
+            zoom: ZOOM_MIN,
+            h_scroll: ScrollHandle::new(),
             watched: None,
             _store_sub: store_sub,
             _doc_sub: None,
@@ -223,7 +252,8 @@ impl gpui_kit::Render for PreviewWindow {
         };
         // Pages fill the area between equal 28 px margins (the scrollbar floats over the right one),
         // so they stay centred.
-        let content_px = (available_w - 56.).max(240.);
+        let fit_px = (available_w - 56.).max(240.);
+        let content_px = fit_px * self.zoom;
         let content_w = px(content_px);
         let ground = hsla(c.background.h, c.background.s * 0.4, c.background.l, 1.0);
         let ground = if c.background.l > 0.5 {
@@ -267,6 +297,41 @@ impl gpui_kit::Render for PreviewWindow {
                     .flex_1()
                     .min_h(px(0.))
                     .bg(ground)
+                    .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
+                        this.zoom_by(1. + event.delta, cx);
+                    }))
+                    .child({
+                        // Ctrl (Cmd on macOS) + wheel zooms. Registered for the capture phase so
+                        // the page list never sees — and scrolls on — those events.
+                        let entity = cx.entity().downgrade();
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _cx| {
+                                let entity = entity.clone();
+                                window.on_mouse_event(
+                                    move |event: &ScrollWheelEvent, phase, window, cx| {
+                                        if phase != DispatchPhase::Capture
+                                            || !event.modifiers.secondary()
+                                            || !bounds.contains(&event.position)
+                                        {
+                                            return;
+                                        }
+                                        let dy: f32 =
+                                            event.delta.pixel_delta(px(20.)).y.into();
+                                        entity
+                                            .update(cx, |this, cx| {
+                                                this.zoom_by(1. + dy * WHEEL_ZOOM_PER_PIXEL, cx)
+                                            })
+                                            .ok();
+                                        cx.stop_propagation();
+                                        window.refresh();
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .size_full()
+                    })
                     .child({
                         let measured = self.measured_width.clone();
                         let entity = cx.entity_id();
@@ -314,32 +379,41 @@ impl gpui_kit::Render for PreviewWindow {
                                 .collect(),
                         );
                         let border = c.border;
+                        let column_w = px(content_px + 56.).max(px(available_w));
                         el.child(
-                            v_virtual_list(
-                                cx.entity(),
-                                "preview-pages",
-                                sizes,
-                                move |this, range, _window, _cx| {
-                                    range
-                                        .map(|ix| {
-                                            let page = &this.pages[ix];
-                                            let scale = content_px / page.width as f32;
-                                            div()
-                                                .w(content_w)
-                                                .h(px(page.height as f32 * scale))
-                                                .bg(white())
-                                                .border_1()
-                                                .border_color(border)
-                                                .shadow_md()
-                                                .child(img(page.image.clone()).size_full())
-                                        })
-                                        .collect()
-                                },
-                            )
-                            .track_scroll(&self.scroll)
-                            .p(px(28.))
-                            .gap(px(18.))
-                            .size_full(),
+                            div()
+                                .id("preview-columns")
+                                .size_full()
+                                .overflow_x_scroll()
+                                .track_scroll(&self.h_scroll)
+                                .child(
+                                    v_virtual_list(
+                                        cx.entity(),
+                                        "preview-pages",
+                                        sizes,
+                                        move |this, range, _window, _cx| {
+                                            range
+                                                .map(|ix| {
+                                                    let page = &this.pages[ix];
+                                                    let scale = content_px / page.width as f32;
+                                                    div()
+                                                        .w(content_w)
+                                                        .h(px(page.height as f32 * scale))
+                                                        .bg(white())
+                                                        .border_1()
+                                                        .border_color(border)
+                                                        .shadow_md()
+                                                        .child(img(page.image.clone()).size_full())
+                                                })
+                                                .collect()
+                                        },
+                                    )
+                                    .track_scroll(&self.scroll)
+                                    .p(px(28.))
+                                    .gap(px(18.))
+                                    .h_full()
+                                    .w(column_w),
+                                ),
                         )
                         .child(Scrollbar::vertical(&self.scroll))
                     }),

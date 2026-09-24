@@ -13,8 +13,10 @@ use std::rc::Rc;
 use gpui_kit::FontWeight;
 use gpui_kit::{
     App, AppContext, ClickEvent, Context, Entity, Focusable as _, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Size,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollWheelEvent,
+    Size,
+    StatefulInteractiveElement, Styled, Subscription, TouchPhase, Window, div,
+    prelude::FluentBuilder, px,
     size,
 };
 use gpui_kit::base::input::{InputEvent, InputState};
@@ -56,6 +58,8 @@ pub const SIDEBAR_SNAP: Pixels = px(172.);
 const SB_YEAR_H_FIRST: f32 = 18.0;
 const SB_YEAR_H: f32 = 30.0;
 const SB_COMP_H: f32 = 42.0;
+/// Width of the revealed swipe actions (Duplizieren + Löschen).
+const SWIPE_ACTIONS_W: f32 = 148.0;
 
 pub struct Sidebar {
     store: Entity<AppStore>,
@@ -69,6 +73,8 @@ pub struct Sidebar {
     /// The row context menu currently open, if any — the competition id and
     /// the window-absolute point (the right-click) to anchor the popover at.
     context_menu: Option<(Uuid, Point<Pixels>)>,
+    /// The row swiped sideways (touch or trackpad) and how far it is pulled open, in px.
+    swipe: Option<(Uuid, f32)>,
     /// The selected document whose save state the row indicator shows.
     watched_doc: Option<gpui_kit::EntityId>,
     doc_sub: Option<Subscription>,
@@ -117,6 +123,7 @@ impl Sidebar {
             anchor: None,
             list_scroll: VirtualListScrollHandle::new(),
             context_menu: None,
+            swipe: None,
             watched_doc: None,
             doc_sub: None,
             on_export,
@@ -173,6 +180,7 @@ impl Sidebar {
     /// Apply a click on a competition row, honouring Cmd/Ctrl (toggle) and
     /// Shift (range).
     fn click_row(&mut self, id: Uuid, modifiers: gpui_kit::Modifiers, cx: &mut Context<Self>) {
+        self.swipe = None;
         if modifiers.shift {
             let visible = self.visible_ids(cx);
             let from = self.anchor.and_then(|a| visible.iter().position(|v| *v == a));
@@ -271,6 +279,30 @@ impl Sidebar {
     fn duplicate_one(&mut self, id: Uuid, cx: &mut Context<Self>) {
         self.store
             .update(cx, |store, cx| store.duplicate_competition(id, cx));
+    }
+
+    /// Horizontal scrolling over a row pulls it sideways to reveal its actions; letting go settles
+    /// it open or shut. Vertical scrolling is left to the list.
+    fn swipe_scroll(&mut self, id: Uuid, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let delta = event.delta.pixel_delta(px(20.));
+        let (dx, dy): (f32, f32) = (delta.x.into(), delta.y.into());
+        let current = match self.swipe {
+            Some((swiped, offset)) if swiped == id => offset,
+            _ => 0.,
+        };
+        if matches!(event.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+            let settled = if current > SWIPE_ACTIONS_W / 2. { SWIPE_ACTIONS_W } else { 0. };
+            self.swipe = (settled > 0.).then_some((id, settled));
+            cx.notify();
+            return;
+        }
+        if dx.abs() <= dy.abs() {
+            return;
+        }
+        let offset = (current - dx).clamp(0., SWIPE_ACTIONS_W + 24.);
+        self.swipe = Some((id, offset));
+        cx.stop_propagation();
+        cx.notify();
     }
 
     fn open_context_menu(&mut self, id: Uuid, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -379,7 +411,11 @@ fn sidebar_row(
         Row::Competition { id, name, meta } => {
             let id = *id;
             let highlight = this.selection.contains(&id);
-            div()
+            let swipe_offset = match this.swipe {
+                Some((swiped, offset)) if swiped == id => offset,
+                _ => 0.,
+            };
+            let row = div()
                 .id(id)
                 .h(px(SB_COMP_H))
                 .w_full()
@@ -399,6 +435,13 @@ fn sidebar_row(
                         this.open_context_menu(id, event.position, cx);
                     }),
                 )
+                // Touch's right click: a long press.
+                .on_aux_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+                    if matches!(event, ClickEvent::Touch(_)) && event.is_secondary() {
+                        this.prepare_context_menu(id, cx);
+                        this.open_context_menu(id, event.position(), cx);
+                    }
+                }))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, _window, cx| {
                     this.click_row(id, ev.modifiers(), cx);
                 }))
@@ -423,7 +466,56 @@ fn sidebar_row(
                 .children(
                     (this.store.read(cx).selected_id() == Some(id))
                         .then(|| save_indicator(this, c, cx)),
-                )
+                );
+            let action = |label: gpui_kit::SharedString, fill: gpui_kit::Hsla, text: gpui_kit::Hsla| {
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h_full()
+                    .w(px(SWIPE_ACTIONS_W / 2.))
+                    .bg(fill)
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(text)
+                    .child(label)
+            };
+            div()
+                .id(gpui_kit::SharedString::from(format!("swipe-{id}")))
+                .relative()
+                .h(px(SB_COMP_H))
+                .w_full()
+                .overflow_hidden()
+                .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _window, cx| {
+                    this.swipe_scroll(id, event, cx);
+                }))
+                .when(swipe_offset > 0., |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .flex()
+                            .child(
+                                action(cx.t("sidebar.context-duplicate"), c.primary, c.primary_foreground)
+                                    .id(gpui_kit::SharedString::from(format!("swipe-duplicate-{id}")))
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.swipe = None;
+                                        this.duplicate_one(id, cx);
+                                    })),
+                            )
+                            .child(
+                                action(cx.t("sidebar.context-delete"), c.critical, c.destructive_foreground)
+                                    .id(gpui_kit::SharedString::from(format!("swipe-delete-{id}")))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.swipe = None;
+                                        this.confirm_and_delete(vec![id], window, cx);
+                                    })),
+                            ),
+                    )
+                })
+                .child(div().relative().left(px(-swipe_offset)).child(row))
                 .into_any_element()
         }
     }

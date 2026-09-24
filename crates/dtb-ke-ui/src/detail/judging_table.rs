@@ -714,6 +714,12 @@ impl Render for JudgingTableCard {
                             this.open_context_menu(event.position, cx);
                         }),
                     )
+                    // Touch's right click: a long press.
+                    .on_aux_click(cx.listener(|this, event: &gpui_kit::ClickEvent, _window, cx| {
+                        if matches!(event, gpui_kit::ClickEvent::Touch(_)) && event.is_secondary() {
+                            this.open_context_menu(event.position(), cx);
+                        }
+                    }))
                     // Tracks whether *this* card is the one currently being dragged —
                     // fires for every move of any active `DragTable` drag, regardless
                     // of where the pointer is (see `judging_table.rs`'s cursor-style

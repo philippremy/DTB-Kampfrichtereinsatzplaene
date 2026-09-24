@@ -69,7 +69,7 @@ version = "0.3.2"
 default-features = false
 features = [
     "std", "block2", "objc2-quartz-core", "objc2-uniform-type-identifiers", "UIDocumentPickerViewController", "objc2-core-foundation",
-    "NSText", "UIApplication", "UIAction", "UICommand", "UIKeyCommand", "UIMenu", "UIMenuBuilder", "UIMenuElement", "UIMenuSystem", "UIEditMenuInteraction", "UIImage", "UIEvent", "UIGeometry",
+    "NSText", "UIApplication", "UIAction", "UICommand", "UIKeyCommand", "UIMenu", "UIMenuBuilder", "UIMenuElement", "UIMenuSystem", "UIEditMenuInteraction", "UIImage", "UIEvent", "UIGeometry", "UIGestureRecognizer", "UIHoverGestureRecognizer", "UIPanGestureRecognizer", "UIPinchGestureRecognizer", "UIPointerInteraction", "UIPointerRegion", "UIPointerStyle", "UIHoverStyle",
     "UIInteraction", "UIInterface", "UIOpenURLContext", "UIPasteboard", "UIResponder",
     "UIScene", "UISceneConfiguration", "UISceneDefinitions", "UISceneOptions",
     "UISceneSession", "UIScreen", "UITextInput", "UITextInputTraits", "UITouch",
