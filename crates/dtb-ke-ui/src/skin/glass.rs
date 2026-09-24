@@ -40,7 +40,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use gpui_kit::{Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, canvas, px};
+use gpui_kit::{App, Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, Window, canvas, px};
 
 use crate::theme::{ActiveTheme, Appearance, Theme};
 
@@ -233,6 +233,18 @@ thread_local! {
     static FRAME: RefCell<Frame> = const { RefCell::new(BTreeMap::new()) };
 }
 
+/// Publishes `region` into this frame's registry. It goes through
+/// [`Window::replayable_effect`] so that a cached view that is reused from the previous frame
+/// (skipping its prepaint) still contributes its regions — otherwise they would drop out of
+/// [`end_frame`]'s set and the native glass would flicker or vanish.
+fn record(id: SharedString, region: GlassRegion, window: &mut Window, cx: &mut App) {
+    window.replayable_effect(cx, move |_, _| {
+        FRAME.with(|f| {
+            f.borrow_mut().insert(id.clone(), region.clone());
+        });
+    });
+}
+
 /// A zero-cost probe: place it (as a child) inside a `relative` container that
 /// should be a glass surface. `id` must be unique per window and, for a
 /// surface that comes and goes across frames, stable for as long as that
@@ -262,25 +274,25 @@ fn scale_about_center(bounds: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
 pub fn region_scaled(id: impl Into<SharedString>, role: GlassRole, scale: f32) -> impl IntoElement {
     let id = id.into();
     canvas(
-        move |bounds, _window, cx| {
+        move |bounds, window, cx| {
             if super::backdrop::glass_active() {
                 let bounds = scale_about_center(bounds, scale);
                 let (tint, backing) = role.colors(cx.theme());
-                FRAME.with(|f| {
-                    f.borrow_mut().insert(
-                        id.clone(),
-                        GlassRegion {
-                            bounds,
-                            style: role.style(),
-                            corner_radius: role.corner_radius(bounds, cx.theme()),
-                            tint,
-                            backing,
-                            contained: role.contained(),
-                            top: role.top(),
-                            scroll_clip: None,
-                        },
-                    );
-                });
+                record(
+                    id,
+                    GlassRegion {
+                        bounds,
+                        style: role.style(),
+                        corner_radius: role.corner_radius(bounds, cx.theme()),
+                        tint,
+                        backing,
+                        contained: role.contained(),
+                        top: role.top(),
+                        scroll_clip: None,
+                    },
+                    window,
+                    cx,
+                );
             }
         },
         |_, _, _, _| {},
@@ -331,26 +343,26 @@ pub fn region_in_viewport_scaled(
     let id = id.into();
     let group = group.into();
     canvas(
-        move |bounds, _window, cx| {
+        move |bounds, window, cx| {
             if super::backdrop::glass_active() {
                 let bounds = scale_about_center(bounds, scale);
                 let (role_tint, backing) = role.colors(cx.theme());
                 let tint = tint_override.unwrap_or(role_tint);
-                FRAME.with(|f| {
-                    f.borrow_mut().insert(
-                        id.clone(),
-                        GlassRegion {
-                            bounds,
-                            style: role.style(),
-                            corner_radius: role.corner_radius(bounds, cx.theme()),
-                            tint,
-                            backing,
-                            contained: role.contained(),
-                            top: role.top(),
-                            scroll_clip: Some((group.clone(), viewport)),
-                        },
-                    );
-                });
+                record(
+                    id,
+                    GlassRegion {
+                        bounds,
+                        style: role.style(),
+                        corner_radius: role.corner_radius(bounds, cx.theme()),
+                        tint,
+                        backing,
+                        contained: role.contained(),
+                        top: role.top(),
+                        scroll_clip: Some((group, viewport)),
+                    },
+                    window,
+                    cx,
+                );
             }
         },
         |_, _, _, _| {},
