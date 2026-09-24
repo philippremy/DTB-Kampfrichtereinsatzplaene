@@ -167,6 +167,11 @@ pub fn start(cx: &mut App) {
         let Some((store, sidebar, detail, detail_view)) = targets else { return };
         cx.update(|cx| store.update(cx, |s, cx| s.seed_many(dtos, big, cx)));
         cx.background_executor().timer(SETTLE).await;
+        // `DTB_KE_STRESS=idle`: just seed and select, then leave the app alone (idle CPU checks).
+        if std::env::var("DTB_KE_STRESS").as_deref() == Ok("idle") {
+            info!("stress: idle mode, driver not started");
+            return;
+        }
 
         let run = Rc::new(RefCell::new(Run {
             started: Instant::now(),
