@@ -467,13 +467,19 @@ fn sidebar_row(
                     (this.store.read(cx).selected_id() == Some(id))
                         .then(|| save_indicator(this, c, cx)),
                 );
+            // The actions grow out of the row's right edge inside its 4 px margin, each a rounded
+            // pill sharing the revealed width.
+            let revealed = (swipe_offset - 8.).max(0.);
             let action = |label: gpui_kit::SharedString, fill: gpui_kit::Hsla, text: gpui_kit::Hsla| {
                 div()
                     .flex()
+                    .flex_1()
+                    .min_w(px(0.))
                     .items_center()
                     .justify_center()
-                    .h_full()
-                    .w(px(SWIPE_ACTIONS_W / 2.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .rounded(radius)
                     .bg(fill)
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
@@ -489,14 +495,16 @@ fn sidebar_row(
                 .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _window, cx| {
                     this.swipe_scroll(id, event, cx);
                 }))
-                .when(swipe_offset > 0., |el| {
+                .when(revealed > 0., |el| {
                     el.child(
                         div()
                             .absolute()
                             .top_0()
                             .bottom_0()
-                            .right_0()
+                            .right(px(4.))
+                            .w(px(revealed))
                             .flex()
+                            .gap(px(4.))
                             .child(
                                 action(cx.t("sidebar.context-duplicate"), c.primary, c.primary_foreground)
                                     .id(gpui_kit::SharedString::from(format!("swipe-duplicate-{id}")))
