@@ -91,20 +91,8 @@ pub fn selection_fill(theme: &Theme) -> (Hsla, Hsla) {
     }
 }
 
-/// The `(fill, foreground)` a selected **sidebar row** uses. Same as
-/// [`selection_fill`] except on the macOS skin, where a sidebar selection is a
-/// neutral translucent capsule (Finder / Xcode on Tahoe) rather than the solid
-/// accent fill — the accent stays reserved for controls.
+/// The `(fill, foreground)` a selected **sidebar row** uses — the accent on every skin (the
+/// system accent on macOS, the regular blue on iPadOS), as in Finder / Messages.
 pub fn sidebar_selection_fill(theme: &Theme) -> (Hsla, Hsla) {
-    let c = &theme.color;
-    match theme.skin.selection_style {
-        SelectionStyle::GlassTint => {
-            let alpha = match theme.appearance {
-                Appearance::Light => 0.10,
-                Appearance::Dark => 0.16,
-            };
-            (Hsla { a: alpha, ..c.foreground }, c.foreground)
-        }
-        _ => selection_fill(theme),
-    }
+    selection_fill(theme)
 }

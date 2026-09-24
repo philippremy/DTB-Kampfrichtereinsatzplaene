@@ -676,6 +676,23 @@ mod ios {
         )
     }
 
+    /// While UIKit resizes the window, gpui re-lays-out a frame later; regions anchored to the
+    /// window's edges keep following those edges meanwhile instead of flickering.
+    fn edge_mask(b: Bounds<Pixels>, window: CGSize) -> UIViewAutoresizing {
+        let f = |p: Pixels| f64::from(f32::from(p));
+        let (x, y, w, h) = (f(b.origin.x), f(b.origin.y), f(b.size.width), f(b.size.height));
+        let mut mask = UIViewAutoresizing::None;
+        if x + w >= window.width - 0.5 {
+            mask |= UIViewAutoresizing::FlexibleWidth;
+        }
+        if y <= 0.5 && y + h >= window.height - 0.5 {
+            mask |= UIViewAutoresizing::FlexibleHeight;
+        } else if y + h >= window.height - 24.0 {
+            mask |= UIViewAutoresizing::FlexibleTopMargin;
+        }
+        mask
+    }
+
     fn ui_color(c: gpui_kit::Hsla) -> Retained<UIColor> {
         let rgba = gpui_kit::Rgba::from(c);
         UIColor::colorWithRed_green_blue_alpha(
@@ -812,6 +829,7 @@ mod ios {
                 return;
             };
 
+            let window_size = host.content.bounds().size;
             begin_no_actions();
             for (id, entry) in host.views.iter_mut() {
                 if entry.shown && !regions.contains_key(id) {
@@ -860,13 +878,16 @@ mod ios {
                     continue;
                 }
                 let frame = cg_rect(region.bounds);
+                let mask = edge_mask(region.bounds, window_size);
                 entry.backing.setFrame(frame);
+                entry.backing.setAutoresizingMask(mask);
 
                 if let Some(clip) = &entry.clip {
                     clip.setHidden(false);
                     match &region.scroll_clip {
                         Some((_, viewport)) => {
                             clip.setFrame(cg_rect(*viewport));
+                            clip.setAutoresizingMask(UIViewAutoresizing::None);
                             entry.glass.setFrame(CGRect::new(
                                 CGPoint::new(
                                     f64::from(f32::from(
@@ -881,13 +902,16 @@ mod ios {
                         }
                         None => {
                             clip.setFrame(frame);
+                            clip.setAutoresizingMask(mask);
                             entry
                                 .glass
                                 .setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+                            entry.glass.setAutoresizingMask(fill_mask());
                         }
                     }
                 } else {
                     entry.glass.setFrame(frame);
+                    entry.glass.setAutoresizingMask(mask);
                 }
                 entry.backing.setHidden(region.backing.a <= 0.0);
                 entry

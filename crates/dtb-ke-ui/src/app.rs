@@ -1036,13 +1036,19 @@ impl AppShell {
         // filled like the sidebar so it reads as part of it.
         let sidebar_top = window.insets().window_controls.top + cx.theme().skin.sidebar_top_padding_px();
         let sidebar_fill = material::sidebar_fill(cx.theme(), cx);
+        // Fullscreen there is nothing behind the window for the glass to frost (it just reads
+        // white), so the sidebar is a plain opaque column then.
+        let glass_sidebar = glass::active() && !window.is_fullscreen();
         let sidebar = div()
             .relative()
             .size_full()
             .when(sidebar_top > px(0.), |el| el.pt(sidebar_top).bg(sidebar_fill))
+            .when(glass::active() && !glass_sidebar, |el| el.bg(cx.theme().color.chrome))
             // The native glass behind the whole sidebar column, padding included (macOS 26+ /
             // iPadOS 26+; a no-op elsewhere).
-            .child(glass::region("sidebar", GlassRole::Sidebar))
+            .when(glass_sidebar, |el| {
+                el.child(glass::region("sidebar", GlassRole::Sidebar))
+            })
             .child(cached_or_plain(self.sidebar.clone()))
             .with_animation(
                 "sidebar-fade",
