@@ -3,7 +3,7 @@
 # competitions, the large one selected, nothing focused), lets it settle, and reports the process's
 # CPU use over a window. Compare variants with the usual env switches, e.g.
 #   scripts/perf-idle.sh
-#   DTB_KE_VIEW_CACHE=1 scripts/perf-idle.sh
+#   DTB_KE_VIEW_CACHE=0 scripts/perf-idle.sh   # without the view cache (on by default)
 #   DTB_KE_PERF_HUD=0 scripts/perf-idle.sh      # the debug FPS HUD redraws every 500 ms while shown
 #   DTB_KE_STRESS=empty scripts/perf-idle.sh    # nothing selected
 # WINDOW=<secs> sets the measured window (default 10); PROFILE=release measures the release build.

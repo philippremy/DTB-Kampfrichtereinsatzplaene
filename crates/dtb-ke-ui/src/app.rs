@@ -76,9 +76,22 @@ fn select_then_act(
         .detach();
 }
 
-/// Experiment (`DTB_KE_VIEW_CACHE=1`): embed a child view through gpui's view cache.
+/// Whether the sidebar and detail panes go through gpui's view cache, so a frame that changes
+/// neither reuses their layout, paint and hit-testing instead of rebuilding them. On by default;
+/// `DTB_KE_VIEW_CACHE=0` (also `off` / `false`) turns it off. Read once — `render` runs every frame.
+fn view_cache_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !matches!(
+            std::env::var("DTB_KE_VIEW_CACHE").as_deref(),
+            Ok("0" | "off" | "false")
+        )
+    })
+}
+
+/// Embeds a child view through the view cache (unless disabled); see [`view_cache_enabled`].
 fn cached_or_plain<T: Render>(view: Entity<T>) -> gpui_kit::AnyElement {
-    if std::env::var_os("DTB_KE_VIEW_CACHE").is_some() {
+    if view_cache_enabled() {
         view.cached(gpui_kit::StyleRefinement::default().size_full())
             .into_any_element()
     } else {

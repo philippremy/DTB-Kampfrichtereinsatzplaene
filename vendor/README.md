@@ -83,3 +83,21 @@ Local changes:
 
 To update: check out the new tag in `vendor/gpui-kit`, re-apply the change, refresh
 `vendor/gpui-base-shim/Cargo.toml` from the published crate.
+
+## Runtime switches for the rendering optimizations
+
+The optimizations that live in the vendored gpui / taffy are on by default and each has an
+environment variable that turns it off, for comparing against the unoptimized behavior or ruling
+one out while debugging. (With every one of them off the debug build is back at its original
+~225 ms per scrolled frame; `scripts/perf-stress.sh` measures it.)
+
+| Optimization | Off-switch | Where |
+|---|---|---|
+| View cache for the sidebar and detail panes (reuse layout, paint and hit-testing of unchanged views) | `DTB_KE_VIEW_CACHE=0` (`off` / `false`) | `crates/dtb-ke-ui/src/app.rs` |
+| Retained layout (taffy nodes kept across frames, only changed ones recomputed) | `DTB_KE_LAYOUT_RETAIN=0` | `vendor/zed` `gpui/src/taffy.rs` |
+| Wider taffy layout cache (4 entries per slot instead of 1) | `DTB_KE_TAFFY_CACHE_WAYS=1` | `vendor/taffy` `src/tree/cache.rs` |
+
+Debugging aids (off by default): `DTB_KE_VIEW_CACHE_VERIFY=1` re-renders every cached view that
+would be reused and logs any difference; `DTB_KE_LAYOUT_VERIFY=1` recomputes every layout from
+scratch and compares; `DTB_KE_NO_NATIVE=1` disables the native window backdrop (Liquid Glass /
+vibrancy); `DTB_KE_PERF_HUD=0` hides the debug FPS HUD.
