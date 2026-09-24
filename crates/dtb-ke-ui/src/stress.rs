@@ -26,12 +26,14 @@ enum Phase {
     DetailScroll,
     SidebarScroll,
     SelectChurn,
+    EditChurn,
 }
 
-const PHASES: [(Phase, &str); 3] = [
+const PHASES: [(Phase, &str); 4] = [
     (Phase::DetailScroll, "detail-scroll"),
     (Phase::SidebarScroll, "sidebar-scroll"),
     (Phase::SelectChurn, "select-churn"),
+    (Phase::EditChurn, "edit-churn"),
 ];
 
 fn fixture() -> (Vec<CompetitionDTO>, Uuid) {
@@ -125,6 +127,8 @@ struct Run {
     store: gpui_kit::Entity<AppStore>,
     detail: (gpui_kit::EntityId, ScrollHandle),
     sidebar: (gpui_kit::EntityId, ScrollHandle),
+    detail_view: gpui_kit::Entity<crate::detail::DetailView>,
+    edit_step: usize,
     ids: Vec<Uuid>,
     phase_ix: usize,
     frames: Vec<f32>,
@@ -160,7 +164,7 @@ pub fn start(cx: &mut App) {
                 .update(cx, |shell: &mut AppShell, _, cx| shell.stress_targets(cx))
                 .ok()
         });
-        let Some((store, sidebar, detail)) = targets else { return };
+        let Some((store, sidebar, detail, detail_view)) = targets else { return };
         cx.update(|cx| store.update(cx, |s, cx| s.seed_many(dtos, big, cx)));
         cx.background_executor().timer(SETTLE).await;
 
@@ -170,6 +174,8 @@ pub fn start(cx: &mut App) {
             store,
             detail,
             sidebar,
+            detail_view,
+            edit_step: 0,
             ids,
             phase_ix: 0,
             frames: Vec::new(),
@@ -232,6 +238,14 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window) {
             match PHASES[r.phase_ix].0 {
                 Phase::DetailScroll => drive(&r.detail, t, 1.6, cx),
                 Phase::SidebarScroll => drive(&r.sidebar, t, 1.2, cx),
+                Phase::EditChurn => {
+                    if now.duration_since(r.last_select) > Duration::from_millis(200) {
+                        r.last_select = now;
+                        r.edit_step += 1;
+                        let (view, step) = (r.detail_view.clone(), r.edit_step);
+                        view.update(cx, |view, cx| view.stress_step(step, window, cx));
+                    }
+                }
                 Phase::SelectChurn => {
                     if now.duration_since(r.last_select) > Duration::from_millis(300) {
                         r.last_select = now;

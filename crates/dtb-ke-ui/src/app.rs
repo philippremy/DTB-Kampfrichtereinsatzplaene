@@ -289,11 +289,13 @@ impl AppShell {
         Entity<AppStore>,
         (gpui_kit::EntityId, gpui_kit::ScrollHandle),
         (gpui_kit::EntityId, gpui_kit::ScrollHandle),
+        Entity<DetailView>,
     ) {
         (
             self.store.clone(),
             (self.sidebar.entity_id(), self.sidebar.read(cx).scroll_handle()),
             (self.detail.entity_id(), self.detail.read(cx).scroll_handle()),
+            self.detail.clone(),
         )
     }
 }

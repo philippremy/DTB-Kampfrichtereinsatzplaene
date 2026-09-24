@@ -101,6 +101,22 @@ pub struct DetailView {
 }
 
 impl DetailView {
+    /// Perf stress test only (`stress.rs`): one step of a fixed cycle of interactions.
+    pub(crate) fn stress_step(&mut self, step: usize, window: &mut Window, cx: &mut Context<Self>) {
+        match step % 5 {
+            0 => self.set_phase(Phase::Finale, window, cx),
+            1 => {
+                if let Some(card) = self.cards.first() {
+                    let id = card.read(cx).editor_id();
+                    self.select_table(id, cx);
+                }
+            }
+            2 => self.open_meta_dialog(window, cx),
+            3 => self.meta_dialog.update(cx, |dialog, cx| dialog.close(cx)),
+            _ => self.set_phase(Phase::Qualification, window, cx),
+        }
+    }
+
     pub(crate) fn scroll_handle(&self) -> ScrollHandle {
         self.scroll.clone()
     }
