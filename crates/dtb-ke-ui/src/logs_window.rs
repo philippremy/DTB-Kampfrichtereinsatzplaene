@@ -634,7 +634,7 @@ fn human_size(bytes: u64) -> String {
 
 fn mono_family() -> &'static str {
     if cfg!(target_os = "macos") {
-        "Menlo"
+        "SF Mono"
     } else if cfg!(target_os = "windows") {
         "Consolas"
     } else {

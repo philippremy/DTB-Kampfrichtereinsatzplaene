@@ -8,7 +8,7 @@
 use dtb_ke_types::MeetingTimeDTO;
 use gpui_kit::{
     Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Subscription, Window,
-    div, px,
+    div, prelude::FluentBuilder, px,
 };
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ use crate::actions::window::TogglePreview;
 use crate::components::button::{Button, ButtonTone};
 use crate::components::icon::Icon;
 use crate::components::org_emblem::OrgEmblem;
+use crate::components::segmented::Segmented;
 use crate::components::toolbar_group::ToolbarGroup;
 use crate::detail::DetailView;
 use crate::i18n::{ActiveLocale, Locale};
@@ -113,6 +114,7 @@ impl Render for CompetitionToolbar {
         let has_table = self.detail.read(cx).has_table_selection();
         // The preview pane hides the editor, so the table buttons have nothing to act on.
         let previewing = cx.try_global::<PreviewPane>().is_some_and(|pane| pane.showing);
+        let pane_mode = crate::skin::window::secondary_windows_as_sheets();
         let label = |key: &str| cx.t(&format!("detail.toolbar-{key}"));
 
         row.child(OrgEmblem::new(meta.organization))
@@ -166,30 +168,42 @@ impl Render for CompetitionToolbar {
                         || Box::new(DeleteJudgingTable),
                     )),
             )
-            .child(
-                ToolbarGroup::new("toolbar-competition")
-                    .button(action(
-                        "toolbar-settings",
-                        Icon::Settings,
-                        label("settings"),
+            .child({
+                let group = ToolbarGroup::new("toolbar-competition").button(action(
+                    "toolbar-settings",
+                    Icon::Settings,
+                    label("settings"),
+                    false,
+                    || Box::new(CompetitionSettings),
+                ));
+                // Where the preview replaces the editor in place (iPadOS), it is a two-state pill
+                // switch showing both modes; elsewhere it opens a window, so a plain button.
+                if pane_mode {
+                    group
+                } else {
+                    group.button(action(
+                        "toolbar-preview",
+                        Icon::Preview,
+                        label("preview"),
                         false,
-                        || Box::new(CompetitionSettings),
+                        || Box::new(TogglePreview),
                     ))
-                    .button({
-                        let toggle = action(
-                            "toolbar-preview",
-                            Icon::Preview,
-                            if previewing { label("edit") } else { label("preview") },
-                            false,
-                            || Box::new(TogglePreview),
-                        );
-                        if previewing {
-                            toggle.tone(ButtonTone::Primary).foreground(c.primary_foreground)
-                        } else {
-                            toggle
+                }
+            })
+            .when(pane_mode, |row| {
+                row.child(
+                    Segmented::new(
+                        "toolbar-mode",
+                        [label("edit"), label("preview")],
+                        usize::from(previewing),
+                    )
+                    .on_select(move |index, window, cx| {
+                        if (index == 1) != previewing {
+                            window.dispatch_action(Box::new(TogglePreview), cx);
                         }
                     }),
-            )
+                )
+            })
             .child(
                 ToolbarGroup::new("toolbar-export").prominent().button(
                     action(

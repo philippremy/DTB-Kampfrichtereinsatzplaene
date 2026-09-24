@@ -192,9 +192,16 @@ impl Render for AboutWindow {
             .overflow_hidden()
             .bg(c.background)
             .text_color(c.foreground)
-            .pt(px(48.))
+            // The desktop window's transparent title bar overlaps the top; a sheet has its own
+            // bar above the content. Its top padding is smaller than the bottom because the icon
+            // image carries transparent margin of its own, which would otherwise read as extra
+            // space above the content.
+            .when_else(
+                crate::sheet::enabled(),
+                |el| el.pt(px(18.)).pb(px(28.)),
+                |el| el.pt(px(48.)).pb(px(20.)),
+            )
             .px(px(28.))
-            .pb(px(20.))
             .flex()
             .gap(px(24.))
             .child(app_icon(cx, 128.))
