@@ -84,6 +84,36 @@ Local changes:
 To update: check out the new tag in `vendor/gpui-kit`, re-apply the change, refresh
 `vendor/gpui-base-shim/Cargo.toml` from the published crate.
 
+## iOS support (`vendor/zed` PR #63068 + `vendor/gpui-kit` facade patch)
+
+iPadOS runs on the upstream iOS backend, [zed-industries/zed#63068](https://github.com/zed-industries/zed/pull/63068)
+(`gpui_ios`, the dispatcher moved into `gpui_apple`, touch/text-input in `gpui`). It is merged into
+the `dtb-ke-patches` branch of the `vendor/zed` fork (the merge commit is titled "Merge
+zed-industries/zed#63068"), with two local follow-ups: Metal 4 and `renderer_select` stay
+macOS-only (iOS uses the Metal 3 renderer), and the Metal 4 renderer skips sprites whose atlas
+texture was released (upstream `#64623` made the lookup an `Option`).
+
+- `vendor/gpui-pre-shims/gpui_ios` is a **hand-written** manifest (no published `gpui-pre-ios`
+  yet); `gpui_apple`/`gpui_platform` shims gained the iOS target deps. Once the PR lands and gpui-pre
+  publishes `gpui_ios`, replace it with the published manifest and drop the merge commit by
+  rebasing the fork onto upstream.
+- **iPadOS menu bar** (our addition on top of the PR, in the `vendor/zed` fork; not upstream):
+  `gpui_ios/src/ios/menu.rs` implements `Platform::set_menus` / `get_menus` / the menu callbacks with
+  `UIMenuBuilder`. `AppDelegate` is now a `UIResponder` implementing `buildMenuWithBuilder:`,
+  `handleGPUIMenuItem:`, `validateCommand:` and `canPerformAction:withSender:`. The gpui `Menu` model becomes
+  `UIMenu`/`UICommand`/`UIKeyCommand`s (separators → inline groups, key equivalents from the keymap, cut/copy/
+  paste/select-all → the standard responder selectors); enablement is the same `is_action_available` rule as
+  macOS. It replaces the system File/Edit/Format/View/Window/Help menus, and the first gpui menu replaces the
+  children of the system application menu. The PR has no hardware-key handling, so these key commands are the
+  only path for shortcuts on iPadOS. Drop this when upstream gains its own menu support.
+- `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
+  Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
+  downstream `with_platform`; the patch drops that exclusion (Android stays excluded) so iOS is
+  handled like every other platform. Drop the shim if upstream does the same.
+
+Check with `cargo check -p dtb-ke-ui --target aarch64-apple-ios-sim` (needs Xcode's iPhoneSimulator SDK;
+`gpui_apple`'s build script compiles the Metal shaders with `xcrun -sdk iphonesimulator`).
+
 ## Runtime switches for the rendering optimizations
 
 The optimizations that live in the vendored gpui / taffy are on by default and each has an

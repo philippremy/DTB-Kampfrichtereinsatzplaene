@@ -163,6 +163,7 @@ gpui-pre-macros = { opt-level = 3 }
 gpui-pre-platform = { opt-level = 3 }
 gpui-pre-apple = { opt-level = 3 }
 gpui-pre-macos = { opt-level = 3 }
+gpui-pre-ios = { opt-level = 3 }
 gpui-base = { opt-level = 3 }
 gpui-fps = { opt-level = 3 }
 taffy = { opt-level = 3 }
@@ -189,6 +190,11 @@ taffy = { path = "vendor/taffy-shim" }
 # v0.6.6 (the commit 0.6.6 was published from), wrapped by a shim crate carrying the
 # published Cargo.toml. Local patch: only blink an input's caret while it has focus.
 gpui-base = { path = "vendor/gpui-base-shim" }
+
+# Vendored gpui-kit facade (same submodule as gpui-base, crates/kit; shim carries the published
+# Cargo.toml). Local patch: `gpui_platform` / `platform::application` are available on iOS like
+# on every other platform (upstream excludes iOS and expects a downstream `with_platform`).
+gpui-kit = { path = "vendor/gpui-kit-shim" }
 
 # Vendored gpui (see vendor/README.md): the whole gpui-pre* family redirected
 # to a git submodule of zed-industries/zed (vendor/zed), pinned at the same

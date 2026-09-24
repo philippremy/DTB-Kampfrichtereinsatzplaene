@@ -39,7 +39,10 @@ bench-support = [
 default = []
 font-kit = ["gpui_macos/font-kit"]
 inspector = ["gpui/inspector"]
-runtime_shaders = ["gpui_macos/runtime_shaders"]
+runtime_shaders = [
+    "gpui_macos/runtime_shaders",
+    "gpui_ios/runtime_shaders",
+]
 screen-capture = [
     "gpui/screen-capture",
     "gpui_macos/screen-capture",
@@ -86,6 +89,11 @@ package = "gpui-pre-web"
 version = "=0.3.6"
 default-features = false
 package = "gpui-pre-macos"
+
+[target.'cfg(target_os = "ios")'.dependencies.gpui_ios]
+version = "=0.3.6"
+package = "gpui-pre-ios"
+path = "../gpui_ios"
 
 [target.'cfg(target_os = "windows")'.dependencies.gpui]
 version = "=0.3.6"

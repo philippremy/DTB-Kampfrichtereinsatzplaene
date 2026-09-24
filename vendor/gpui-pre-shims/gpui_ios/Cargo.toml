@@ -1,0 +1,81 @@
+# Hand-written shim manifest (there is no published gpui-pre-ios): resolves the
+# `workspace = true` dependencies of vendor/zed/crates/gpui_ios/Cargo.toml (the iOS
+# platform from zed-industries/zed#63068) against the same versions gpui-pre-macos uses.
+# Once the PR lands and gpui-pre publishes a gpui_ios crate, replace this with the
+# published manifest like the other shims (see vendor/README.md).
+
+[package]
+edition = "2024"
+name = "gpui-pre-ios"
+version = "0.3.6"
+publish = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Zed's `gpui_ios` crate (zed#63068)"
+readme = false
+license = "Apache-2.0"
+repository = "https://github.com/zed-industries/zed"
+resolver = "2"
+
+[features]
+runtime_shaders = ["gpui_apple/runtime_shaders"]
+
+[lib]
+name = "gpui_ios"
+path = "src/gpui_ios.rs"
+crate-type = ["staticlib", "rlib"]
+doctest = false
+
+[dependencies.gpui]
+version = "=0.3.6"
+default-features = false
+package = "gpui-pre"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow = "1.0.86"
+block2 = "0.6"
+core-foundation = "0.10"
+core-foundation-sys = "0.8.6"
+core-graphics = "0.24"
+core-text = "21"
+futures = "0.3.34"
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+metal = "0.33"
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3.2", default-features = true }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSThread", "NSOperation", "NSValue", "NSArray", "NSString", "block2"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CADisplayLink", "CALayer", "CAMetalLayer"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
+parking_lot = "0.12.1"
+pathfinder_geometry = "0.5"
+raw-window-handle = "0.6"
+smallvec = { version = "1.6", features = ["union", "const_new"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+
+[target.'cfg(target_os = "ios")'.dependencies.font-kit]
+version = "0.14.1-zed"
+package = "zed-font-kit"
+
+[target.'cfg(target_os = "ios")'.dependencies.gpui_apple]
+version = "=0.3.6"
+package = "gpui-pre-apple"
+
+[target.'cfg(target_os = "ios")'.dependencies.objc2-ui-kit]
+version = "0.3.2"
+default-features = false
+features = [
+    "std", "block2", "objc2-quartz-core", "objc2-core-foundation",
+    "NSText", "UIApplication", "UIAction", "UICommand", "UIKeyCommand", "UIMenu", "UIMenuBuilder", "UIMenuElement", "UIMenuSystem", "UIEditMenuInteraction", "UIImage", "UIEvent", "UIGeometry",
+    "UIInteraction", "UIInterface", "UIOpenURLContext", "UIPasteboard", "UIResponder",
+    "UIScene", "UISceneConfiguration", "UISceneDefinitions", "UISceneOptions",
+    "UISceneSession", "UIScreen", "UITextInput", "UITextInputTraits", "UITouch",
+    "UITraitCollection", "UIView", "UIViewController", "UIWindow", "UIWindowScene",
+]
+
+[lints.rust.warnings]
+level = "allow"
+priority = -1
