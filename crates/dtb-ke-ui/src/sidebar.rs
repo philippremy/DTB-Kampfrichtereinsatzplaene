@@ -257,7 +257,7 @@ impl Sidebar {
             Some(&detail),
             &[
                 gpui_kit::PromptButton::new(delete_label),
-                gpui_kit::PromptButton::new(cancel_label),
+                gpui_kit::PromptButton::Cancel((cancel_label).into()),
             ],
             cx,
         );

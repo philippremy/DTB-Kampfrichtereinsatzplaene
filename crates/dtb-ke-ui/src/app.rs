@@ -782,7 +782,7 @@ impl AppShell {
                         Some(&detail),
                         &[
                             gpui_kit::PromptButton::new(cx.t("app.import-overwrite-button")),
-                            gpui_kit::PromptButton::new(cx.t("app.import-overwrite-cancel-button")),
+                            gpui_kit::PromptButton::Cancel((cx.t("app.import-overwrite-cancel-button")).into()),
                         ],
                         cx,
                     )

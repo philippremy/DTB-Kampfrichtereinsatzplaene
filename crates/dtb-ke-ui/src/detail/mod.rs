@@ -347,7 +347,7 @@ impl DetailView {
             Some(&detail),
             &[
                 gpui_kit::PromptButton::new(cx.t("detail.delete-table-delete-button")),
-                gpui_kit::PromptButton::new(cx.t("detail.delete-table-cancel-button")),
+                gpui_kit::PromptButton::Cancel((cx.t("detail.delete-table-cancel-button")).into()),
             ],
             cx,
         );

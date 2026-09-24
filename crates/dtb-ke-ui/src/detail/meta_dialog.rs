@@ -287,7 +287,7 @@ impl MetaDialog {
             Some(&detail),
             &[
                 gpui_kit::PromptButton::new(cx.t("detail.meta.delete-button")),
-                gpui_kit::PromptButton::new(cx.t("detail.meta.delete-cancel-button")),
+                gpui_kit::PromptButton::Cancel((cx.t("detail.meta.delete-cancel-button")).into()),
             ],
             cx,
         );
