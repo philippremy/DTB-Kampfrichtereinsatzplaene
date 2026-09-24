@@ -67,6 +67,13 @@ resvg = { version = "0.47" }
 # `skin/backdrop.rs` reaches gpui's `NSView` through its `HasWindowHandle` impl.
 raw-window-handle = { version = "0.6", default-features = false }
 
+# iPadOS Liquid Glass views (`skin/backdrop.rs`, same version gpui_ios pins)
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std", "objc2-core-foundation", "UIView", "UIResponder", "UIWindow", "UIColor",
+    "UIVisualEffect", "UIVisualEffectView", "UIGlassEffect", "UICornerConfiguration",
+    "UICornerRadius", "UITraitCollection", "UIInterface",
+] }
+
 # macOS save-panel FFI (matches gpui's objc2 pin)
 block2 = { version = "0.6" }
 objc2 = { version = "0.6" }

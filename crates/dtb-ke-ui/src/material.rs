@@ -64,6 +64,8 @@ fn effective(theme: &Theme, cx: &App) -> Effective {
     match theme.skin.material {
         WindowMaterial::Opaque => Effective::Opaque,
         WindowMaterial::Blurred if crate::skin::backdrop::available() => Effective::Native,
+        // iPadOS before glass: there is no window blur to fall back to.
+        WindowMaterial::Blurred if crate::skin::backdrop::blur_unsupported() => Effective::Opaque,
         WindowMaterial::Blurred => Effective::Blurred,
         WindowMaterial::Mica => match crate::skin::window::windows_backdrop_support() {
             WindowsBackdropSupport::Mica => Effective::Mica,
@@ -137,6 +139,9 @@ pub fn apply_background_to_all_windows(cx: &mut App) {
 /// Installs or removes the main window's native backdrop to match
 /// [`effective`] — a no-op off macOS, where nothing resolves to `Native`.
 pub fn sync_native_backdrop(window: &gpui_kit::Window, cx: &App) {
+    // iOS applies transparency to the Metal layer here; elsewhere it is already what the window
+    // was opened with.
+    window.set_background_appearance(window_background(cx.theme(), cx));
     if effective(cx.theme(), cx) == Effective::Native {
         crate::skin::backdrop::install(window, cx.theme().mode);
     } else {

@@ -1,11 +1,15 @@
 # iPadOS skin — the pre-Tahoe macOS look on an opaque window.
 #
-# iOS cannot make a window translucent, so every surface (sidebar included) is fully opaque.
-# Structural metrics only; colours come from the active palette. The Liquid Glass tier (UIKit's
-# own glass) is a later follow-up, so none of the `glass-*` keys apply here.
+# Structural metrics only; colours come from the active palette. On iOS 26+ the chrome is UIKit
+# Liquid Glass (`UIGlassEffect` views beneath gpui's view, see `skin/backdrop.rs`); before that
+# there is no glass and `material = "blurred"` steps down to fully opaque surfaces.
 
-material           = "opaque"       # iOS has no window backdrop: opaque everywhere
+material           = "blurred"      # glass on iOS 26+, opaque before (iOS has no window blur)
 material-opacity   = 1.0
+glass-tint-opacity    = 0.35
+glass-backing-opacity = 0.75
+glass-tint-opacity-dark    = 0.5
+glass-backing-opacity-dark = 0.92
 window-decorations = "server"       # UIKit owns the window; we never draw a frame
 menu-bar           = "native"       # gpui_ios builds the iPadOS menu bar with UIMenuBuilder
 title-bar-height   = 52.0

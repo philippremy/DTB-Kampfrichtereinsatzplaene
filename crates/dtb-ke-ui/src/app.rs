@@ -1037,8 +1037,12 @@ impl AppShell {
         let sidebar_top = window.insets().window_controls.top + cx.theme().skin.sidebar_top_padding_px();
         let sidebar_fill = material::sidebar_fill(cx.theme(), cx);
         let sidebar = div()
+            .relative()
             .size_full()
             .when(sidebar_top > px(0.), |el| el.pt(sidebar_top).bg(sidebar_fill))
+            // The native glass behind the whole sidebar column, padding included (macOS 26+ /
+            // iPadOS 26+; a no-op elsewhere).
+            .child(glass::region("sidebar", GlassRole::Sidebar))
             .child(cached_or_plain(self.sidebar.clone()))
             .with_animation(
                 "sidebar-fade",

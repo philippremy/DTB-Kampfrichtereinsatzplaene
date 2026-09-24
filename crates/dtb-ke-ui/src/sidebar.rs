@@ -712,8 +712,6 @@ impl Render for Sidebar {
             .flex_col()
             // Width is owned by the enclosing resizable panel in `AppShell`.
             .size_full()
-            // The native glass behind the sidebar (macOS 26+; a no-op elsewhere).
-            .child(glass::region("sidebar", GlassRole::Sidebar))
             .bg(material::sidebar_fill(theme, cx))
             // Clears the macOS traffic lights (0 elsewhere) and, beside them,
             // holds the sidebar toggle.

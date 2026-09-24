@@ -128,6 +128,7 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   two-finger scroll → `ScrollWheel`) and `ios/pointer.rs` (a `UIPointerInteraction` whose style follows
   `Platform::set_cursor_style`: text beam for `IBeam`, system pointer otherwise). `gpui-kit`'s resize handle grabs a
   14 px strip on iOS (4 px elsewhere).
+- **Window transparency** (ours, `gpui_ios`): `set_background_appearance(anything but Opaque)` makes the Metal layer/view non-opaque (`MetalRenderer::update_transparency`), so an app can put `UIVisualEffectView`s beneath the gpui view (`dtb-ke-ui`'s Liquid Glass backdrop). **Native prompts**: `PlatformWindow::prompt` shows a `UIAlertController`. `gpui_ios::ios::set_status_bar_style` is what the app calls to keep the bar text readable.
 - `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
   Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
   downstream `with_platform`; the patch drops that exclusion (Android stays excluded) so iOS is

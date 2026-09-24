@@ -1,4 +1,4 @@
-//! The native window backdrop (macOS).
+//! The native window backdrop (macOS, and iPadOS's UIKit glass — see the `ios` module).
 //!
 //! gpui's own `WindowBackgroundAppearance::Blurred` stacks an
 //! `NSVisualEffectView` (material `Selection`) under its view and strips the
@@ -30,7 +30,20 @@ use super::glass::Regions;
 
 /// Whether this platform can host a native backdrop at all.
 pub fn available() -> bool {
-    cfg!(target_os = "macos")
+    #[cfg(target_os = "ios")]
+    {
+        ios::available()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        cfg!(target_os = "macos")
+    }
+}
+
+/// A blurred material was requested but this platform has no way to provide it (iPadOS before
+/// glass) — the caller should fall back to opaque surfaces rather than gpui's own blur.
+pub fn blur_unsupported() -> bool {
+    cfg!(target_os = "ios") && !available()
 }
 
 /// Whether the installed backdrop is the glass tier — i.e. whether glass
@@ -40,7 +53,11 @@ pub fn glass_active() -> bool {
     {
         mac::glass_active()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    {
+        ios::glass_active()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         false
     }
@@ -51,7 +68,9 @@ pub fn glass_active() -> bool {
 pub fn install(window: &Window, mode: ThemeMode) {
     #[cfg(target_os = "macos")]
     mac::install(window, mode);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    ios::install(window, mode);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let _ = (window, mode);
 }
 
@@ -59,13 +78,17 @@ pub fn install(window: &Window, mode: ThemeMode) {
 pub fn remove() {
     #[cfg(target_os = "macos")]
     mac::remove();
+    #[cfg(target_os = "ios")]
+    ios::remove();
 }
 
 /// Re-pins the installed backdrop's appearance after a theme-mode change.
 pub fn set_mode(mode: ThemeMode) {
     #[cfg(target_os = "macos")]
     mac::set_mode(mode);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    ios::set_mode(mode);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let _ = mode;
 }
 
@@ -73,7 +96,9 @@ pub fn set_mode(mode: ThemeMode) {
 pub(super) fn apply_regions(regions: &Regions) {
     #[cfg(target_os = "macos")]
     mac::apply_regions(regions);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "ios")]
+    ios::apply_regions(regions);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let _ = regions;
 }
 
@@ -583,6 +608,328 @@ mod mac {
                 host.direct_holder.setAppearance(appearance.as_deref());
                 host.top_holder.setAppearance(appearance.as_deref());
                 host.backing_holder.setAppearance(appearance.as_deref());
+            }
+        }
+    }
+}
+
+/// iPadOS: the glass tier only. `UIVisualEffectView`s carrying a `UIGlassEffect` sit beneath
+/// gpui's Metal view (a sibling inside the `UIWindow`), one per [`GlassRegion`] exactly like the
+/// macOS `NSGlassEffectView`s; before iOS 26 there is no glass class, [`available`] is false and
+/// the opaque skin applies.
+#[cfg(target_os = "ios")]
+mod ios {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use gpui_kit::{Bounds, Pixels, SharedString, Window};
+    use log::{debug, warn};
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyClass;
+    use objc2::{MainThreadMarker, msg_send};
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_ui_kit::{
+        UIColor, UICornerConfiguration, UICornerRadius, UIGlassContainerEffect, UIGlassEffect,
+        UIGlassEffectStyle, UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIVisualEffectView,
+    };
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    use super::Regions;
+    use crate::skin::glass::{GlassRegion, GlassStyle};
+    use crate::theme::ThemeMode;
+
+    struct GlassEntry {
+        backing: Retained<UIView>,
+        glass: Retained<UIVisualEffectView>,
+        clip: Option<Retained<UIView>>,
+        last: GlassRegion,
+        shown: bool,
+    }
+
+    struct Host {
+        /// The window the views live in (gpui's Metal view is its child).
+        content: Retained<UIView>,
+        container: Retained<UIVisualEffectView>,
+        direct_holder: Retained<UIView>,
+        top_holder: Retained<UIView>,
+        backing_holder: Retained<UIView>,
+        views: HashMap<SharedString, GlassEntry>,
+    }
+
+    thread_local! {
+        static STATE: RefCell<Option<Host>> = const { RefCell::new(None) };
+    }
+
+    pub fn available() -> bool {
+        std::env::var_os("DTB_KE_NO_GLASS").is_none() && AnyClass::get(c"UIGlassEffect").is_some()
+    }
+
+    pub fn glass_active() -> bool {
+        STATE.with(|s| s.borrow().is_some())
+    }
+
+    fn cg_rect(b: Bounds<Pixels>) -> CGRect {
+        let f = |p: Pixels| f64::from(f32::from(p));
+        CGRect::new(
+            CGPoint::new(f(b.origin.x), f(b.origin.y)),
+            CGSize::new(f(b.size.width), f(b.size.height)),
+        )
+    }
+
+    fn ui_color(c: gpui_kit::Hsla) -> Retained<UIColor> {
+        let rgba = gpui_kit::Rgba::from(c);
+        UIColor::colorWithRed_green_blue_alpha(
+            f64::from(rgba.r),
+            f64::from(rgba.g),
+            f64::from(rgba.b),
+            f64::from(rgba.a),
+        )
+    }
+
+    fn fill_mask() -> UIViewAutoresizing {
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight
+    }
+
+    fn plain_holder(mtm: MainThreadMarker, frame: CGRect) -> Retained<UIView> {
+        let view = UIView::initWithFrame(mtm.alloc(), frame);
+        view.setAutoresizingMask(fill_mask());
+        view.setUserInteractionEnabled(false);
+        view
+    }
+
+    fn style_of(mode: ThemeMode) -> UIUserInterfaceStyle {
+        match mode {
+            ThemeMode::System => UIUserInterfaceStyle::Unspecified,
+            ThemeMode::Light => UIUserInterfaceStyle::Light,
+            ThemeMode::Dark => UIUserInterfaceStyle::Dark,
+        }
+    }
+
+    pub fn install(window: &Window, mode: ThemeMode) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            warn!("native backdrop: not on the main thread");
+            return;
+        };
+        remove();
+        if !available() {
+            debug!("native backdrop: no UIGlassEffect, staying opaque");
+            return;
+        }
+        let Ok(handle) = HasWindowHandle::window_handle(window) else {
+            warn!("native backdrop: window has no raw handle");
+            return;
+        };
+        let RawWindowHandle::UiKit(handle) = handle.as_raw() else {
+            warn!("native backdrop: unexpected raw window handle kind");
+            return;
+        };
+        // SAFETY: gpui documents the UiKit handle as a pointer to its own (live) `UIView`; we are
+        // on the main thread and only retain it.
+        let Some(gpui_view) =
+            (unsafe { Retained::retain(handle.ui_view.as_ptr().cast::<UIView>()) })
+        else {
+            return;
+        };
+        let Some(content) = gpui_view.superview() else {
+            warn!("native backdrop: gpui view has no superview");
+            return;
+        };
+        let frame = content.bounds();
+
+        let container_effect = UIGlassContainerEffect::new(mtm);
+        container_effect.setSpacing(0.0);
+        let container =
+            UIVisualEffectView::initWithEffect(mtm.alloc(), Some(&container_effect));
+        container.setFrame(frame);
+        container.setAutoresizingMask(fill_mask());
+        container.setUserInteractionEnabled(false);
+
+        // Bottom → top: backings, standalone glass, the merged container, the top layer — each
+        // inserted just beneath gpui's view.
+        let backing_holder = plain_holder(mtm, frame);
+        let direct_holder = plain_holder(mtm, frame);
+        let top_holder = plain_holder(mtm, frame);
+        content.insertSubview_belowSubview(&backing_holder, &gpui_view);
+        content.insertSubview_belowSubview(&direct_holder, &gpui_view);
+        content.insertSubview_belowSubview(&container, &gpui_view);
+        content.insertSubview_belowSubview(&top_holder, &gpui_view);
+
+        let host = Host {
+            content,
+            container,
+            direct_holder,
+            top_holder,
+            backing_holder,
+            views: HashMap::new(),
+        };
+        pin_appearance(&host, mode);
+        debug!("native backdrop installed (iPadOS glass tier)");
+        STATE.with(|s| *s.borrow_mut() = Some(host));
+    }
+
+    pub fn remove() {
+        STATE.with(|s| {
+            if let Some(host) = s.borrow_mut().take() {
+                host.container.removeFromSuperview();
+                host.direct_holder.removeFromSuperview();
+                host.top_holder.removeFromSuperview();
+                host.backing_holder.removeFromSuperview();
+                debug!("native backdrop removed");
+            }
+        });
+    }
+
+    pub fn set_mode(mode: ThemeMode) {
+        STATE.with(|s| {
+            if let Some(host) = s.borrow().as_ref() {
+                pin_appearance(host, mode);
+            }
+        });
+    }
+
+    fn pin_appearance(host: &Host, mode: ThemeMode) {
+        let style = style_of(mode);
+        host.container.setOverrideUserInterfaceStyle(style);
+        host.direct_holder.setOverrideUserInterfaceStyle(style);
+        host.top_holder.setOverrideUserInterfaceStyle(style);
+        host.backing_holder.setOverrideUserInterfaceStyle(style);
+    }
+
+    fn set_corner_radius(view: &UIView, radius: f64) {
+        let corners = UICornerConfiguration::configurationWithUniformRadius(
+            &UICornerRadius::fixedRadius(radius),
+        );
+        view.setCornerConfiguration(&corners);
+    }
+
+    pub fn apply_regions(regions: &Regions) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        STATE.with(|s| {
+            let mut s = s.borrow_mut();
+            let Some(host) = s.as_mut() else {
+                return;
+            };
+
+            begin_no_actions();
+            for (id, entry) in host.views.iter_mut() {
+                if entry.shown && !regions.contains_key(id) {
+                    entry.backing.setHidden(true);
+                    entry.glass.setHidden(true);
+                    if let Some(clip) = &entry.clip {
+                        clip.setHidden(true);
+                    }
+                    entry.shown = false;
+                }
+            }
+            for (id, region) in regions {
+                if !host.views.contains_key(id) {
+                    let frame = cg_rect(region.bounds);
+                    let backing = UIView::initWithFrame(mtm.alloc(), frame);
+                    let glass = UIVisualEffectView::initWithEffect(mtm.alloc(), None);
+                    glass.setFrame(frame);
+                    host.backing_holder.addSubview(&backing);
+                    let clip = if region.contained {
+                        host.container.contentView().addSubview(&glass);
+                        None
+                    } else {
+                        let clip = UIView::initWithFrame(mtm.alloc(), frame);
+                        clip.setClipsToBounds(true);
+                        clip.addSubview(&glass);
+                        if region.top {
+                            host.top_holder.addSubview(&clip);
+                        } else {
+                            host.direct_holder.addSubview(&clip);
+                        }
+                        Some(clip)
+                    };
+                    host.views.insert(
+                        id.clone(),
+                        GlassEntry {
+                            backing,
+                            glass,
+                            clip,
+                            last: region.clone(),
+                            shown: false,
+                        },
+                    );
+                }
+                let entry = host.views.get_mut(id).expect("just inserted");
+                if entry.shown && entry.last == *region {
+                    continue;
+                }
+                let frame = cg_rect(region.bounds);
+                entry.backing.setFrame(frame);
+
+                if let Some(clip) = &entry.clip {
+                    clip.setHidden(false);
+                    match &region.scroll_clip {
+                        Some((_, viewport)) => {
+                            clip.setFrame(cg_rect(*viewport));
+                            entry.glass.setFrame(CGRect::new(
+                                CGPoint::new(
+                                    f64::from(f32::from(
+                                        region.bounds.origin.x - viewport.origin.x,
+                                    )),
+                                    f64::from(f32::from(
+                                        region.bounds.origin.y - viewport.origin.y,
+                                    )),
+                                ),
+                                frame.size,
+                            ));
+                        }
+                        None => {
+                            clip.setFrame(frame);
+                            entry
+                                .glass
+                                .setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+                        }
+                    }
+                } else {
+                    entry.glass.setFrame(frame);
+                }
+                entry.backing.setHidden(region.backing.a <= 0.0);
+                entry
+                    .backing
+                    .setBackgroundColor(Some(&ui_color(region.backing)));
+
+                entry.glass.setHidden(region.style.is_none());
+                if let Some(style) = region.style {
+                    let effect = UIGlassEffect::effectWithStyle(
+                        match style {
+                            GlassStyle::Clear => UIGlassEffectStyle::Clear,
+                            GlassStyle::Regular => UIGlassEffectStyle::Regular,
+                        },
+                        mtm,
+                    );
+                    effect.setTintColor((region.tint.a > 0.0).then(|| ui_color(region.tint)).as_deref());
+                    entry.glass.setEffect(Some(&effect));
+                }
+                set_corner_radius(&entry.glass, f64::from(f32::from(region.corner_radius)));
+                entry.last = region.clone();
+                entry.shown = true;
+            }
+            end_no_actions();
+            let _ = &host.content;
+        });
+    }
+
+    fn begin_no_actions() {
+        if let Some(class) = AnyClass::get(c"CATransaction") {
+            // SAFETY: documented CATransaction class methods, balanced by `end_no_actions`.
+            unsafe {
+                let _: () = msg_send![class, begin];
+                let _: () = msg_send![class, setDisableActions: true];
+            }
+        }
+    }
+
+    fn end_no_actions() {
+        if let Some(class) = AnyClass::get(c"CATransaction") {
+            // SAFETY: pairs with `begin_no_actions`.
+            unsafe {
+                let _: () = msg_send![class, commit];
             }
         }
     }

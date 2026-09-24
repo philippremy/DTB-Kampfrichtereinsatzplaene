@@ -66,6 +66,11 @@ raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "ios")'.dependencies]
 gpui-ios.workspace = true
+objc2.workspace = true
+objc2-core-foundation.workspace = true
+objc2-foundation.workspace = true
+objc2-ui-kit.workspace = true
+raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
