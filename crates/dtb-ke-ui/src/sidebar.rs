@@ -422,9 +422,9 @@ fn sidebar_row(
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .mx(px(4.))
                 .px(px(8.))
                 .rounded(radius)
+                .when(swipe_offset > 0., |el| el.rounded_tr_none().rounded_br_none())
                 .cursor_pointer()
                 .when(highlight, |el| el.bg(sel_fill).text_color(sel_fg))
                 .when(!highlight, |el| el.hover(|el| el.bg(c.surface)))
@@ -467,9 +467,9 @@ fn sidebar_row(
                     (this.store.read(cx).selected_id() == Some(id))
                         .then(|| save_indicator(this, c, cx)),
                 );
-            // The actions grow out of the row's right edge inside its 4 px margin, each a rounded
-            // pill sharing the revealed width.
-            let revealed = (swipe_offset - 8.).max(0.);
+            // The actions grow out of the row's right edge and join it into one group: only the row's
+            // left and the last action's right are rounded.
+            let revealed = swipe_offset;
             let action = |label: gpui_kit::SharedString, fill: gpui_kit::Hsla, text: gpui_kit::Hsla| {
                 div()
                     .flex()
@@ -479,7 +479,6 @@ fn sidebar_row(
                     .justify_center()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .rounded(radius)
                     .bg(fill)
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
@@ -491,6 +490,7 @@ fn sidebar_row(
                 .relative()
                 .h(px(SB_COMP_H))
                 .w_full()
+                .px(px(4.))
                 .overflow_hidden()
                 .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _window, cx| {
                     this.swipe_scroll(id, event, cx);
@@ -504,7 +504,6 @@ fn sidebar_row(
                             .right(px(4.))
                             .w(px(revealed))
                             .flex()
-                            .gap(px(4.))
                             .child(
                                 action(cx.t("sidebar.context-duplicate"), c.primary, c.primary_foreground)
                                     .id(gpui_kit::SharedString::from(format!("swipe-duplicate-{id}")))
@@ -515,6 +514,7 @@ fn sidebar_row(
                             )
                             .child(
                                 action(cx.t("sidebar.context-delete"), c.critical, c.destructive_foreground)
+                                    .rounded_r(radius)
                                     .id(gpui_kit::SharedString::from(format!("swipe-delete-{id}")))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.swipe = None;
