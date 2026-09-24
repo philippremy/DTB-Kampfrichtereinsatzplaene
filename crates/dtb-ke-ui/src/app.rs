@@ -817,8 +817,10 @@ impl AppShell {
         let theme = cx.theme();
         let bar_height = theme.skin.title_bar_height_px();
         let (fill, border) = (material::toolbar_fill(theme, cx), theme.color.border);
+        // With the sidebar collapsed the toolbar starts at the window's left edge, where iPadOS
+        // floats its window controls in a windowed (resized) window.
         let leading = if self.sidebar_collapsed {
-            titlebar::content_leading_inset(window)
+            titlebar::content_leading_inset(window) + window.insets().window_controls.left
         } else {
             px(12.)
         };
@@ -1038,8 +1040,14 @@ impl AppShell {
         }
 
         let motion = cx.theme().skin.motion(Duration::from_millis(500));
+        // The window controls float over the sidebar's top-left corner in a windowed iPadOS
+        // window; the padding sits on this wrapper (the sidebar view itself is cached) and is
+        // filled like the sidebar so it reads as part of it.
+        let controls_top = window.insets().window_controls.top;
+        let sidebar_fill = material::sidebar_fill(cx.theme(), cx);
         let sidebar = div()
             .size_full()
+            .when(controls_top > px(0.), |el| el.pt(controls_top).bg(sidebar_fill))
             .child(cached_or_plain(self.sidebar.clone()))
             .with_animation(
                 "sidebar-fade",
@@ -1105,6 +1113,7 @@ impl Render for AppShell {
         // on-screen keyboard; zero on the desktop platforms. The shell is inset by them so no
         // control sits underneath, and the status-bar strip is painted in the chrome colour.
         let insets = window.insets().effective();
+        let fullscreen = window.is_fullscreen();
         let status_strip = (insets.top > Pixels::ZERO).then(|| {
             div()
                 .absolute()
@@ -1113,6 +1122,10 @@ impl Render for AppShell {
                 .right_0()
                 .h(insets.top)
                 .bg(theme.color.chrome)
+                // Only while the window fills the screen — then the native menu bar / status area
+                // sits directly above it, and a line keeps our sidebar and toolbar chrome from
+                // merging into it. A resized window has nothing above it to tell apart from.
+                .when(fullscreen, |el| el.border_b_1().border_color(theme.color.border))
         });
 
         let shell = div()
@@ -1403,7 +1416,7 @@ pub(crate) fn debug_show_preview(cx: &mut App) {
     .detach();
 }
 
-/// Debug aid (`DTB_KE_ACTION=ExportAll|ImportCompetition|ExportCompetition`): dispatch one of the
+/// Debug aid (`DTB_KE_ACTION=ExportAll|ImportCompetition|ExportCompetition|ToggleSidebar`): dispatch one of the
 /// file commands shortly after launch (with the first competition selected), so the file flows
 /// can be exercised without touching the UI.
 pub(crate) fn debug_dispatch_file_action(name: &str, cx: &mut App) {
@@ -1435,6 +1448,7 @@ pub(crate) fn debug_dispatch_file_action(name: &str, cx: &mut App) {
                     let action: Box<dyn gpui_kit::Action> = match name.as_str() {
                         "ExportAll" => Box::new(ExportAll),
                         "ImportCompetition" => Box::new(crate::actions::file::ImportCompetition),
+                        "ToggleSidebar" => Box::new(ToggleSidebar),
                         _ => Box::new(ExportCompetition),
                     };
                     window.dispatch_action(action, cx);

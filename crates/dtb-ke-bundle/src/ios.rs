@@ -123,7 +123,7 @@ fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
 	<key>CFBundleName</key>
 	<string>{name}</string>
 	<key>CFBundleDisplayName</key>
-	<string>{name}</string>
+	<string>{display_name}</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -211,6 +211,7 @@ fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
         exe = meta::MACOS_EXECUTABLE_NAME,
         id = meta::RDNS_ID,
         name = meta::DISPLAY_NAME,
+        display_name = meta::IOS_DISPLAY_NAME,
         version = meta::numeric_version(),
         sdk = sdk_name,
         platform = platform,

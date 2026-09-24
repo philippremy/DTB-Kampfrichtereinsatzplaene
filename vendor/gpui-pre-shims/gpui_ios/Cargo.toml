@@ -73,7 +73,7 @@ features = [
     "UIInteraction", "UIInterface", "UIOpenURLContext", "UIPasteboard", "UIResponder",
     "UIScene", "UISceneConfiguration", "UISceneDefinitions", "UISceneOptions",
     "UISceneSession", "UIScreen", "UITextInput", "UITextInputTraits", "UITouch",
-    "UITraitCollection", "UIView", "UIViewController", "UIWindow", "UIWindowScene",
+    "UITraitCollection", "UIView", "UIViewController", "UIViewLayoutRegion", "UIWindow", "UIWindowScene",
 ]
 
 [lints.rust.warnings]

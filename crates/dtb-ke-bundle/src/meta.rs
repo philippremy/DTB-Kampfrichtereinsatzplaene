@@ -21,6 +21,11 @@ pub const RAW_DSYM_NAME: &str = "dtb_ke_ui";
 /// [`MACOS_EXECUTABLE_NAME`].
 pub const DISPLAY_NAME: &str = "DTB Kampfrichtereinsatzpläne";
 
+/// The iPadOS home-screen label (`CFBundleDisplayName`). The full name is cut off after about 13
+/// characters under the icon ("DTBKampfrichte…"), so iOS gets an abbreviation: KE for
+/// KampfrichterEinsatzpläne, which is how the sport shortens it.
+pub const IOS_DISPLAY_NAME: &str = "DTB KE-Pläne";
+
 /// The file name of the executable inside the macOS `.app`
 /// (`Contents/MacOS/`), and its `CFBundleExecutable`. An ASCII
 /// transliteration of [`DISPLAY_NAME`] rather than the name itself: `codesign`
