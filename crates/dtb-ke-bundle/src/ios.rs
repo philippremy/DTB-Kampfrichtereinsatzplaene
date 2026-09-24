@@ -49,12 +49,22 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
 
-    std::fs::write(app.join("Info.plist"), info_plist(platform, sdk_name)).map_err(io)?;
+    let document_icons = match write_document_icons(&app) {
+        Ok(written) => written,
+        Err(e) => {
+            eprintln!("dtb-ke-bundle: warning — bundling without a document icon: {e}");
+            false
+        }
+    };
 
-    if cx.have_icon {
+    std::fs::write(app.join("Info.plist"), info_plist(platform, sdk_name, document_icons)).map_err(io)?;
+
+    if icon::master_dir().exists() {
         if let Err(e) = compile_icon(&app, platform) {
             eprintln!("dtb-ke-bundle: warning — bundling without an app icon: {e}");
         }
+    } else {
+        eprintln!("dtb-ke-bundle: warning — no icon master at {}", icon::master_dir().display());
     }
 
     let profile = flag_env(&cx.provisioning_profile, "DTB_KE_PROVISIONING_PROFILE");
@@ -94,7 +104,7 @@ fn flag_env(flag: &Option<String>, var: &str) -> Option<String> {
     flag.clone().or_else(|| std::env::var(var).ok())
 }
 
-fn info_plist(platform: &str, sdk_name: &str) -> String {
+fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
     // The bundle id must be ASCII on iOS (`meta::IDENTIFIER` carries an "ä"), hence RDNS_ID.
     // iPad only (UIDeviceFamily 2); multitasking is allowed (no UIRequiresFullScreen).
     format!(
@@ -158,10 +168,12 @@ fn info_plist(platform: &str, sdk_name: &str) -> String {
 	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>{category}</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
-			<key>CFBundleTypeName</key>
+{document_icon_files}			<key>CFBundleTypeName</key>
 			<string>{doc_name}</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
@@ -176,7 +188,7 @@ fn info_plist(platform: &str, sdk_name: &str) -> String {
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
+{ut_icon_files}			<key>UTTypeIdentifier</key>
 			<string>{uti}</string>
 			<key>UTTypeDescription</key>
 			<string>{doc_name}</string>
@@ -207,61 +219,121 @@ fn info_plist(platform: &str, sdk_name: &str) -> String {
         doc_name = meta::DOC_TYPE_NAME,
         uti = meta::DOC_UTI,
         doc_ext = meta::DOC_EXTENSION,
+        document_icon_files = icon_files_entry("CFBundleTypeIconFiles", document_icons),
+        ut_icon_files = icon_files_entry("UTTypeIconFiles", document_icons),
     )
 }
 
-/// Compile the flat 1024² master into `Assets.car` with `actool` and merge the icon keys it
-/// reports (`CFBundleIcons~ipad`) into `Info.plist`.
+/// Compile the Icon Composer master (`AppIcon.icon`) with `actool` straight into the app: the
+/// `Assets.car` carrying the real icon — Liquid Glass with its light / dark / tinted variants on
+/// iOS 26 — plus the flattened fallback PNGs older systems use, and merge the icon keys it reports
+/// (`CFBundleIcons~ipad`, `CFBundleIconName`) into `Info.plist`.
+///
+/// The `.icon` package, not the flat `AppIcon.png`: that one is the *macOS* icon (inset with a
+/// margin and transparent squircle corners), and iOS masks its icons itself, so it showed a white
+/// outline around the pre-rounded art.
 fn compile_icon(app: &Path, platform: &str) -> Result<(), String> {
-    let master = icon::flat_png_path();
-    if !master.exists() {
-        return Err(format!("{} not found", master.display()));
-    }
+    let master = icon::master_dir();
     let work = app.parent().unwrap().join("ios-icon-work");
     fresh_dir(&work).map_err(io)?;
-    let set = work.join("Assets.xcassets/AppIcon.appiconset");
-    copy(&master, &set.join("icon-1024.png")).map_err(io)?;
-    std::fs::write(
-        work.join("Assets.xcassets/Contents.json"),
-        r#"{ "info" : { "author" : "xcode", "version" : 1 } }"#,
-    )
-    .map_err(io)?;
-    std::fs::write(
-        set.join("Contents.json"),
-        r#"{
-  "images" : [ { "filename" : "icon-1024.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" } ],
-  "info" : { "author" : "xcode", "version" : 1 }
-}"#,
-    )
-    .map_err(io)?;
-
     let partial = work.join("partial.plist");
-    let out = Command::new("xcrun")
-        .args(["actool", "--platform", platform, "--minimum-deployment-target", meta::IOS_MIN_VERSION])
+    let output = Command::new("xcrun")
+        .args(["actool", "--compile"])
+        .arg(app)
+        .args(["--platform", platform, "--minimum-deployment-target", meta::IOS_MIN_VERSION])
         .args(["--target-device", "ipad", "--app-icon", icon::APP_ICON_NAME])
+        .args(["--include-all-app-icons", "--errors", "--warnings", "--notices"])
         .arg("--output-partial-info-plist")
         .arg(&partial)
-        .arg("--compile")
-        .arg(app)
-        .arg(work.join("Assets.xcassets"))
+        .arg(&master)
         .output()
         .map_err(|e| format!("failed to spawn actool: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("actool failed: {}", String::from_utf8_lossy(&out.stdout)));
+    // actool can exit 0 having written nothing, so check for the outputs themselves.
+    if !output.status.success() || !app.join("Assets.car").exists() || !partial.exists() {
+        return Err(format!(
+            "actool did not compile {} (exit {}): {}",
+            master.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout)
+        ));
     }
-    if partial.exists() {
-        let status = Command::new("/usr/libexec/PlistBuddy")
-            .arg("-c")
-            .arg(format!("Merge \"{}\"", partial.display()))
-            .arg(app.join("Info.plist"))
-            .status()
-            .map_err(|e| format!("failed to spawn PlistBuddy: {e}"))?;
-        if !status.success() {
-            return Err("merging the actool icon keys into Info.plist failed".into());
-        }
+    let status = Command::new("/usr/libexec/PlistBuddy")
+        .arg("-c")
+        .arg(format!("Merge \"{}\"", partial.display()))
+        .arg(app.join("Info.plist"))
+        .status()
+        .map_err(|e| format!("failed to spawn PlistBuddy: {e}"))?;
+    if !status.success() {
+        return Err("merging the actool icon keys into Info.plist failed".into());
     }
     std::fs::remove_dir_all(&work).ok();
     Ok(())
+}
+
+/// Sizes of the `.dtbke` document icon shipped in the bundle (points; each also as `@2x`), the two
+/// Apple recommends for document types.
+const DOCUMENT_ICON_POINTS: [u32; 2] = [64, 320];
+
+fn document_icon_names() -> Vec<String> {
+    DOCUMENT_ICON_POINTS
+        .iter()
+        .map(|points| format!("DocumentIcon-{points}.png"))
+        .collect()
+}
+
+/// Write the document icon (`assets/icons/FileIcon.png`) into the bundle as square, transparent
+/// PNGs at each size and scale, named for `CFBundleTypeIconFiles` / `UTTypeIconFiles`. `Ok(false)`
+/// when there is no master yet (the system then shows its generic document icon).
+fn write_document_icons(app: &Path) -> Result<bool, String> {
+    let master = icon::doc_master_path();
+    if !master.exists() {
+        return Ok(false);
+    }
+    let source = image::open(&master).map_err(|e| format!("reading {}: {e}", master.display()))?;
+    for points in DOCUMENT_ICON_POINTS {
+        for (scale, suffix) in [(1, ""), (2, "@2x")] {
+            let side = points * scale;
+            let canvas = fit_in_square(&source, side);
+            let path = app.join(format!("DocumentIcon-{points}{suffix}.png"));
+            canvas
+                .save_with_format(&path, image::ImageFormat::Png)
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
+    }
+    Ok(true)
+}
+
+/// `source` scaled to fit a `side`² transparent canvas (4 % margin), centred, aspect preserved.
+fn fit_in_square(source: &image::DynamicImage, side: u32) -> image::RgbaImage {
+    let inner = (side as f32 * 0.92).round().max(1.0);
+    let scale = inner / source.width().max(source.height()) as f32;
+    let (width, height) = (
+        (source.width() as f32 * scale).round().max(1.0) as u32,
+        (source.height() as f32 * scale).round().max(1.0) as u32,
+    );
+    let resized = source
+        .resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    let mut canvas = image::RgbaImage::new(side, side);
+    image::imageops::overlay(
+        &mut canvas,
+        &resized,
+        i64::from((side - width) / 2),
+        i64::from((side - height) / 2),
+    );
+    canvas
+}
+
+/// A plist `<key>` + array of the document icon file names (empty when there are none).
+fn icon_files_entry(key: &str, present: bool) -> String {
+    if !present {
+        return String::new();
+    }
+    let names: String = document_icon_names()
+        .iter()
+        .map(|name| format!("\t\t\t\t<string>{name}</string>\n"))
+        .collect();
+    format!("\t\t\t<key>{key}</key>\n\t\t\t<array>\n{names}\t\t\t</array>\n")
 }
 
 /// Extract the `Entitlements` dict of a provisioning profile into a plist file.

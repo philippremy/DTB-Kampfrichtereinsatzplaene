@@ -194,13 +194,12 @@ impl Render for AboutWindow {
             .overflow_hidden()
             .bg(c.background)
             .text_color(c.foreground)
-            // The desktop window's transparent title bar overlaps the top; a sheet has its own
-            // bar above the content. Its top padding is smaller than the bottom because the icon
-            // image carries transparent margin of its own, which would otherwise read as extra
-            // space above the content.
+            // The desktop window's transparent title bar overlaps the top; a sheet has its own bar
+            // above the content and the panel's corner gutter adds a few points below it, so the
+            // bottom padding is a little smaller to leave equal visible space.
             .when_else(
                 crate::sheet::enabled(),
-                |el| el.pt(px(18.)).pb(px(28.)),
+                |el| el.pt(px(28.)).pb(px(24.)),
                 |el| el.pt(px(48.)).pb(px(20.)),
             )
             .px(px(28.))
@@ -270,10 +269,25 @@ impl Render for AboutWindow {
 /// [`AppIcon`] fetches the real, live, appearance-adaptive icon natively
 /// instead (see `skin::app_icon`), so embedding a second flat copy would
 /// only cost binary size for an asset macOS never uses.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 const APP_ICON_PNG: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../assets/icons/generated/AppIcon.png"
+));
+
+/// iOS: Icon Composer's own Default and Dark renditions of the icon (`ictool`, see
+/// `dtb-ke-bundle`'s `icon.rs`), edge to edge with only the squircle corners transparent — the
+/// flat `AppIcon.png` above is the macOS icon, inset with a margin and a shadow. The About window
+/// shows whichever matches the app's appearance, like the native macOS icon does.
+#[cfg(target_os = "ios")]
+const APP_ICON_IOS_PNG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/icons/generated/AppIcon-ios.png"
+));
+#[cfg(target_os = "ios")]
+const APP_ICON_IOS_DARK_PNG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/icons/generated/AppIcon-ios-dark.png"
 ));
 
 /// The About window's app icon, as a `Global` so
@@ -286,7 +300,11 @@ const APP_ICON_PNG: &[u8] = include_bytes!(concat!(
 /// the `image` crate's PNG/JPEG/… format decoders never need linking in for
 /// this path; Windows/Linux, with no native fetch to mirror, still decode
 /// the embedded flat PNG the ordinary way.
-struct AppIcon(gpui_kit::ImageSource);
+struct AppIcon {
+    light: gpui_kit::ImageSource,
+    /// A rendition for the dark appearance, where the platform has one to embed (iOS).
+    dark: Option<gpui_kit::ImageSource>,
+}
 
 impl gpui_kit::Global for AppIcon {}
 
@@ -294,7 +312,7 @@ impl gpui_kit::Global for AppIcon {}
 /// fetches the icon and — macOS-only, no-op elsewhere — starts watching for
 /// live appearance changes.
 pub fn install_icon(cx: &mut App) {
-    cx.set_global(AppIcon(fetch_icon()));
+    cx.set_global(fetch_icon());
     crate::skin::app_icon::watch(cx);
 }
 
@@ -304,7 +322,7 @@ pub fn install_icon(cx: &mut App) {
 /// notification handler; a no-op call off macOS never happens since the
 /// watch itself is a no-op there.
 pub(crate) fn refresh_icon(cx: &mut App) {
-    cx.set_global(AppIcon(fetch_icon()));
+    cx.set_global(fetch_icon());
     cx.refresh_windows();
 }
 
@@ -313,7 +331,15 @@ pub(crate) fn refresh_icon(cx: &mut App) {
 /// than ever being blank — see `skin::app_icon`'s module doc). Windows/
 /// Linux: the embedded flat PNG, decoded normally.
 #[cfg(target_os = "macos")]
-fn fetch_icon() -> gpui_kit::ImageSource {
+fn fetch_icon() -> AppIcon {
+    AppIcon {
+        light: fetch_native_icon(),
+        dark: None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn fetch_native_icon() -> gpui_kit::ImageSource {
     match crate::skin::app_icon::current_icon_bgra() {
         Some((width, height, bgra)) => {
             log::debug!("about: fetched native app icon ({width}x{height}, raw BGRA8)");
@@ -331,15 +357,33 @@ fn fetch_icon() -> gpui_kit::ImageSource {
         }
     }
 }
-#[cfg(not(target_os = "macos"))]
-fn fetch_icon() -> gpui_kit::ImageSource {
-    Arc::new(Image::from_bytes(ImageFormat::Png, APP_ICON_PNG.to_vec())).into()
+#[cfg(target_os = "ios")]
+fn fetch_icon() -> AppIcon {
+    let png = |bytes: &[u8]| -> gpui_kit::ImageSource {
+        Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())).into()
+    };
+    AppIcon {
+        light: png(APP_ICON_IOS_PNG),
+        dark: Some(png(APP_ICON_IOS_DARK_PNG)),
+    }
+}
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn fetch_icon() -> AppIcon {
+    AppIcon {
+        light: Arc::new(Image::from_bytes(ImageFormat::Png, APP_ICON_PNG.to_vec())).into(),
+        dark: None,
+    }
 }
 
 /// The app icon, masked to the macOS rounded-square silhouette (a no-op if the
 /// art already carries transparent corners).
 fn app_icon(cx: &App, size: f32) -> impl IntoElement {
-    let icon = cx.global::<AppIcon>().0.clone();
+    let icons = cx.global::<AppIcon>();
+    let dark = cx.theme().appearance == crate::theme::Appearance::Dark;
+    let icon = match (&icons.dark, dark) {
+        (Some(dark_icon), true) => dark_icon.clone(),
+        _ => icons.light.clone(),
+    };
     div()
         .flex_none()
         .size(px(size))

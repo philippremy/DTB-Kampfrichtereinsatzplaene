@@ -41,7 +41,7 @@ use crate::meta;
 use crate::util::{self, workspace_root};
 
 /// The Icon Composer master package.
-fn master_dir() -> PathBuf {
+pub fn master_dir() -> PathBuf {
     workspace_root().join("assets/icons/AppIcon.icon")
 }
 
@@ -183,8 +183,61 @@ fn generate_app_icon() -> Result<bool, String> {
     write_png(&flat.resize_exact(512, 512, FilterType::Lanczos3).to_rgba8(), &png_512_path())?;
     build_ico(&flat, &ico_path())?;
     build_hicolor_named(&flat, "apps", meta::RDNS_ID)?;
+    generate_ios_about_icons(&master, &scratch)?;
 
     Ok(true)
+}
+
+/// The About window's iOS icons: the Default and Dark renditions of the Icon Composer master,
+/// rendered by Icon Composer's own `ictool` edge to edge with only the squircle corners transparent
+/// (unlike `AppIcon.png`, which is the macOS icon with its margin and shadow). At [`IOS_ABOUT_ICON_PX`]
+/// they are more than enough for the 128 pt icon and cheap to embed.
+pub fn ios_about_icon_path(dark: bool) -> PathBuf {
+    generated_dir().join(if dark { "AppIcon-ios-dark.png" } else { "AppIcon-ios.png" })
+}
+
+const IOS_ABOUT_ICON_PX: u32 = 320;
+
+/// Icon Composer's command-line renderer, shipped inside Xcode (`Icon Composer.app` in the
+/// developer directory's parent `Applications/`).
+fn ictool_path() -> Option<PathBuf> {
+    let developer = Command::new("xcode-select").arg("-p").output().ok()?;
+    let developer = PathBuf::from(String::from_utf8_lossy(&developer.stdout).trim());
+    [
+        developer.join("../Applications/Icon Composer.app/Contents/Executables/ictool"),
+        PathBuf::from("/Applications/Icon Composer.app/Contents/Executables/ictool"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn generate_ios_about_icons(master: &Path, scratch: &Path) -> Result<(), String> {
+    let ictool = ictool_path().ok_or("Icon Composer's `ictool` was not found (needs Xcode 26+)")?;
+    util::fresh_dir(scratch).map_err(io("icon scratch dir"))?;
+    for (rendition, dark) in [("Default", false), ("Dark", true)] {
+        let full = scratch.join(format!("ios-{rendition}.png"));
+        let output = Command::new(&ictool)
+            .arg(master)
+            .args(["--export-image", "--output-file"])
+            .arg(&full)
+            .args(["--platform", "iOS", "--rendition", rendition])
+            .args(["--width", "1024", "--height", "1024", "--scale", "1"])
+            .output()
+            .map_err(|e| format!("failed to spawn ictool: {e}"))?;
+        if !output.status.success() || !full.exists() {
+            return Err(format!(
+                "ictool did not render the {rendition} iOS icon:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let image = image::open(&full).map_err(|e| format!("reading the {rendition} render: {e}"))?;
+        let small = image
+            .resize_exact(IOS_ABOUT_ICON_PX, IOS_ABOUT_ICON_PX, FilterType::Lanczos3)
+            .to_rgba8();
+        write_png(&small, &ios_about_icon_path(dark))?;
+    }
+    util::remove(scratch).ok();
+    Ok(())
 }
 
 /// The document-icon half of [`generate`] — [`doc_master_path`] → `.icns` /

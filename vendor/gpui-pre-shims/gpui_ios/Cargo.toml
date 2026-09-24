@@ -18,7 +18,6 @@ description = "Zed's `gpui_ios` crate (zed#63068)"
 readme = false
 license = "Apache-2.0"
 repository = "https://github.com/zed-industries/zed"
-resolver = "2"
 
 [features]
 runtime_shaders = ["gpui_apple/runtime_shaders"]
