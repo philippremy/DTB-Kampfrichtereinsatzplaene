@@ -270,6 +270,24 @@ impl AppShell {
     }
 }
 
+impl AppShell {
+    /// Perf stress test only (`stress.rs`): the store plus both scroll panes.
+    pub(crate) fn stress_targets(
+        &self,
+        cx: &App,
+    ) -> (
+        Entity<AppStore>,
+        (gpui_kit::EntityId, gpui_kit::ScrollHandle),
+        (gpui_kit::EntityId, gpui_kit::ScrollHandle),
+    ) {
+        (
+            self.store.clone(),
+            (self.sidebar.entity_id(), self.sidebar.read(cx).scroll_handle()),
+            (self.detail.entity_id(), self.detail.read(cx).scroll_handle()),
+        )
+    }
+}
+
 impl Drop for AppShell {
     fn drop(&mut self) {
         // The main window is gone — let `open_main_window` (and the macOS dock
@@ -1189,6 +1207,10 @@ pub fn is_main_window(handle: AnyWindowHandle) -> bool {
 /// `on_open_urls` hook) and the Windows/Linux command-line argument a file
 /// association launches the app with (`open_files::argv_paths`) both funnel
 /// here.
+pub(crate) fn main_window_handle() -> Option<WindowHandle<AppShell>> {
+    MAIN_WINDOW.with(|m| *m.borrow()).and_then(|h| h.downcast::<AppShell>())
+}
+
 pub fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
     let paths: Vec<PathBuf> = paths
         .into_iter()

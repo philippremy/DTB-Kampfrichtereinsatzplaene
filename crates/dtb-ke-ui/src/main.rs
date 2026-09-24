@@ -28,6 +28,7 @@ mod settings_window;
 mod sidebar;
 mod skin;
 mod store;
+mod stress;
 mod theme;
 mod toolbar;
 mod trash_window;
@@ -231,6 +232,10 @@ fn main() {
                     std::thread::spawn(fault);
                 }
             }
+        }
+
+        if std::env::var_os("DTB_KE_STRESS").is_some() {
+            stress::start(cx);
         }
 
         cx.activate(true);

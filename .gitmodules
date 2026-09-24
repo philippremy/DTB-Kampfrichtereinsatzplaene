@@ -2,3 +2,6 @@
 	path = vendor/zed
 	url = https://github.com/zed-industries/zed.git
 	shallow = true
+[submodule "vendor/taffy"]
+	path = vendor/taffy
+	url = https://github.com/DioxusLabs/taffy.git

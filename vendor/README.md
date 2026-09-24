@@ -40,3 +40,23 @@ Each entry here is:
   ambiguous bare one. One `Command::new(...)` call changed; everything else
   in the crate is untouched. Upstream: `github.com/tursodatabase/turso`,
   `sdk-kit/build.rs`.
+
+## Vendored taffy (`vendor/taffy` + `vendor/taffy-shim`)
+
+`vendor/taffy` is a shallow git submodule of `DioxusLabs/taffy` pinned at the
+`v0.13.0` tag (gpui pins `taffy = "=0.13.0"`); `vendor/taffy-shim` is a wrapper
+crate carrying the published `Cargo.toml` with `src` symlinked into the
+submodule, wired in through `[patch.crates-io]` — the same scheme as
+`gpui-pre-shims`. Local changes (all inside the submodule, marked "Local
+change/addition (not upstream)"), needed by gpui's retained layout engine
+(`vendor/zed/crates/gpui/src/taffy.rs`):
+
+- `tree/cache.rs`: 4 ways per cache slot (upstream: 1). With one, two queries
+  that share a slot evict each other every pass and no layout survives to the
+  next frame, so every frame recomputed whole subtrees.
+- `tree/taffy_tree.rs`: `TaffyTree::remove_detached` — order-free node removal
+  that never clobbers a re-parented child's parent link.
+- `compute/mod.rs`: cache hit/miss counters (`take_cache_stats`).
+
+To update: check out the new tag in `vendor/taffy`, re-apply the three changes,
+refresh `vendor/taffy-shim/Cargo.toml` from the published crate.

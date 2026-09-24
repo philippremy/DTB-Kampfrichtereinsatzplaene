@@ -44,25 +44,38 @@ impl FilesystemHelper {
         self
     }
 
+    fn default_log_dir(data_dir: &Path) -> PathBuf {
+        cfg_select! {
+            target_os = "macos" => {
+                let _ = data_dir;
+                dirs::data_local_dir()
+                    .expect("data_local_dir is always defined")
+                    .parent()
+                    .expect("/Users/<USER>/Library always exists on macOS")
+                    .join("Logs")
+                    .join(APPLICATION_IDENTIFIER)
+            }
+            _ => {
+                data_dir.join("Logs")
+            }
+        }
+    }
+
     /// Returns the global instance of the filesystem helper.
     pub fn instance() -> &'static Self {
         FS_HELPER.get_or_init(|| {
-            let data_dir = dirs::data_local_dir()
-                .expect("data_local_dir is always defined")
-                .join(APPLICATION_IDENTIFIER);
-            let log_dir = cfg_select! {
-                target_os = "macos" => {
-                    dirs::data_local_dir()
-                        .expect("data_local_dir is always defined")
-                        .parent()
-                        .expect("/Users/<USER>/Library always exists on macOS")
-                        .join("Logs")
-                        .join(APPLICATION_IDENTIFIER)
-                }
-                _ => {
-                    data_dir
-                        .join("Logs")
-                }
+            // Debug aid (`DTB_KE_DATA_DIR`): an isolated data root, so the perf
+            // stress test never seeds fixtures into the user's real database.
+            let override_dir = std::env::var_os("DTB_KE_DATA_DIR").map(PathBuf::from);
+            let data_dir = override_dir.clone().unwrap_or_else(|| {
+                dirs::data_local_dir()
+                    .expect("data_local_dir is always defined")
+                    .join(APPLICATION_IDENTIFIER)
+            });
+            let log_dir = if let Some(dir) = &override_dir {
+                dir.join("Logs")
+            } else {
+                Self::default_log_dir(&data_dir)
             };
             let now = chrono::Local::now();
             let log_file = log_dir.join(format!(

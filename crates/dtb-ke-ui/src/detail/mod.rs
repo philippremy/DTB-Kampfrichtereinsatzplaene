@@ -101,6 +101,10 @@ pub struct DetailView {
 }
 
 impl DetailView {
+    pub(crate) fn scroll_handle(&self) -> ScrollHandle {
+        self.scroll.clone()
+    }
+
     pub fn new(store: Entity<AppStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let card_viewport: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::new(Cell::new(None));
         let spare = cx.new(|cx| SpareJudgesSection::new(card_viewport.clone(), window, cx));
