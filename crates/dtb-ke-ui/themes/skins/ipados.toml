@@ -9,6 +9,7 @@ material-opacity   = 1.0
 window-decorations = "server"       # UIKit owns the window; we never draw a frame
 menu-bar           = "native"       # gpui_ios builds the iPadOS menu bar with UIMenuBuilder
 title-bar-height   = 52.0
+toolbar-control-height = 32.0   # toolbar capsules and their buttons (36 elsewhere): smaller for touch chrome
 radius             = 8.0
 radius-lg          = 12.0           # cards, dialogs, popovers
 radius-control     = 10.0

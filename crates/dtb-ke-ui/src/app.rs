@@ -815,7 +815,9 @@ impl AppShell {
     /// row's leading edge, so it keeps the OS inset then.
     fn toolbar_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let bar_height = theme.skin.title_bar_height_px();
+        // In a resized window the top inset is dropped (`content_insets`); the band takes over that
+        // height so the toolbar items centre in the freed space.
+        let bar_height = theme.skin.title_bar_height_px() + skin_window::dropped_top_inset(window);
         let (fill, border) = (material::toolbar_fill(theme, cx), theme.color.border);
         // With the sidebar collapsed the toolbar starts at the window's left edge, where iPadOS
         // floats its window controls in a windowed (resized) window.

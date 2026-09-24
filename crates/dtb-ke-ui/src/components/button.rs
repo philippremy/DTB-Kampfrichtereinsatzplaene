@@ -218,8 +218,13 @@ impl RenderOnce for Button {
 
         let fg = self.foreground.unwrap_or(fg);
         // An oval icon button is shorter than a round one and wider than tall.
+        let toolbar_scale = if self.oval && icon_only {
+            theme.skin.toolbar_scale()
+        } else {
+            1.0
+        };
         let (height, width) = if self.oval && icon_only {
-            (px(28.), px(36.))
+            (px(28. * toolbar_scale), px(36. * toolbar_scale))
         } else {
             (height, height)
         };
@@ -265,7 +270,7 @@ impl RenderOnce for Button {
                     ButtonSize::Xsmall => 11.,
                     ButtonSize::Small => 13.,
                     ButtonSize::Medium => 15.,
-                } * self.scale))
+                } * self.scale * toolbar_scale))
                 .color(fg),
             )
         })

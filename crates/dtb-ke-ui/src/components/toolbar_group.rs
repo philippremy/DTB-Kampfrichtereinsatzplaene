@@ -25,7 +25,8 @@ use crate::components::button::Button;
 use crate::skin::glass::{self, GlassRole};
 use crate::theme::ActiveTheme;
 
-/// Capsule height. Buttons inside are 28 px, leaving 4 px of margin.
+/// Default capsule height (a skin can override it with `toolbar-control-height`). Buttons inside
+/// are 28 px, leaving 4 px of margin.
 pub const GROUP_HEIGHT: f32 = 36.0;
 
 /// How long a press bump lasts, before the skin's motion scale.
@@ -176,7 +177,7 @@ impl RenderOnce for ToolbarGroup {
         div()
             .relative()
             .flex_none()
-            .h(px(GROUP_HEIGHT))
+            .h(theme.skin.toolbar_control_height_px())
             .rounded_full()
             .on_mouse_down(MouseButton::Left, bump.on_press())
             .when(native, |el| {

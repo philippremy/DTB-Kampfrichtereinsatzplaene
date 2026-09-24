@@ -52,6 +52,12 @@ pub fn content_insets(window: &gpui_kit::Window) -> gpui_kit::Edges<gpui_kit::Pi
     insets
 }
 
+/// The top inset [`content_insets`] gave up because the window is not fullscreen. The toolbar
+/// band grows by this much so its items centre in the freed space instead of hugging the edge.
+pub fn dropped_top_inset(window: &gpui_kit::Window) -> gpui_kit::Pixels {
+    window.insets().effective().top - content_insets(window).top
+}
+
 /// Whether secondary windows (About, Settings, Logs, Feedback, Trash) are presented as sheets
 /// inside the main window — and the live preview replaces the editor pane — instead of as OS
 /// windows. True where the platform has a single window scene (iPadOS); see [`crate::sheet`].

@@ -199,6 +199,10 @@ pub struct SkinMetrics {
     pub window_decorations: WindowDecorations,
     pub menu_bar: MenuStyle,
     pub title_bar_height: f32,
+    /// Height of a toolbar capsule ([`crate::components::toolbar_group::ToolbarGroup`]); the oval
+    /// buttons inside and their icons scale with it (28 px buttons at the default 36).
+    #[serde(default = "default_toolbar_control_height")]
+    pub toolbar_control_height: f32,
     pub radius: f32,
     pub radius_lg: f32,
     pub radius_control: f32,
@@ -214,6 +218,10 @@ pub struct SkinMetrics {
     /// Empty string means "the platform generic monospace".
     pub mono_font_family: String,
     pub motion_scale: f32,
+}
+
+fn default_toolbar_control_height() -> f32 {
+    36.0
 }
 
 impl SkinMetrics {
@@ -248,6 +256,15 @@ impl SkinMetrics {
 
     pub fn title_bar_height_px(&self) -> Pixels {
         px(self.title_bar_height)
+    }
+
+    pub fn toolbar_control_height_px(&self) -> Pixels {
+        px(self.toolbar_control_height)
+    }
+
+    /// How much smaller (or larger) than the default the toolbar controls are.
+    pub fn toolbar_scale(&self) -> f32 {
+        self.toolbar_control_height / default_toolbar_control_height()
     }
 
     /// The chrome-fill alpha to use for a translucent window right now —

@@ -80,6 +80,7 @@ impl Render for CompetitionToolbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let c = &theme.color;
+        let pane_mode = crate::skin::window::secondary_windows_as_sheets();
 
         let row = div().flex().flex_1().items_center().gap(px(10.)).min_w_0().ml_1();
 
@@ -93,7 +94,18 @@ impl Render for CompetitionToolbar {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(cx.t("toolbar.no-selection")),
                 )
-                .child(
+                .child(if pane_mode {
+                    // Same construction as the other groups (a filled oval in a plain capsule), so
+                    // it is no bigger than they are.
+                    ToolbarGroup::new("toolbar-new").button(
+                        Button::new("new-competition", cx.t("toolbar.new-competition-button"))
+                            .tone(ButtonTone::Primary)
+                            .small()
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(NewCompetition), cx);
+                            }),
+                    )
+                } else {
                     // Same prominent glass capsule as the Export action.
                     ToolbarGroup::new("toolbar-new").prominent().button(
                         Button::new("new-competition", cx.t("toolbar.new-competition-button"))
@@ -102,8 +114,8 @@ impl Render for CompetitionToolbar {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(NewCompetition), cx);
                             }),
-                    ),
-                );
+                    )
+                });
         };
 
         let doc = doc.read(cx);
@@ -113,7 +125,6 @@ impl Render for CompetitionToolbar {
         let has_table = self.detail.read(cx).has_table_selection();
         // The preview pane hides the editor, so the table buttons have nothing to act on.
         let previewing = cx.try_global::<PreviewPane>().is_some_and(|pane| pane.showing);
-        let pane_mode = crate::skin::window::secondary_windows_as_sheets();
         let label = |key: &str| cx.t(&format!("detail.toolbar-{key}"));
 
         row.child(OrgEmblem::new(meta.organization))
@@ -212,7 +223,21 @@ impl Render for CompetitionToolbar {
                         .button(mode("toolbar-preview", Icon::Preview, label("preview"), previewing)),
                 )
             })
-            .child(
+            .child(if pane_mode {
+                // A filled oval in a plain capsule, like the selected mode button — not a solid
+                // capsule, which would read bigger than every other control.
+                ToolbarGroup::new("toolbar-export").button(
+                    action(
+                        "toolbar-export",
+                        Icon::Export,
+                        label("export"),
+                        false,
+                        || Box::new(ExportCompetition),
+                    )
+                    .tone(ButtonTone::Primary)
+                    .foreground(c.primary_foreground),
+                )
+            } else {
                 ToolbarGroup::new("toolbar-export").prominent().button(
                     action(
                         "toolbar-export",
@@ -222,8 +247,8 @@ impl Render for CompetitionToolbar {
                         || Box::new(ExportCompetition),
                     )
                     .foreground(c.primary_foreground),
-                ),
-            )
+                )
+            })
     }
 }
 
