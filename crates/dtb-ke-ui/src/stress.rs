@@ -132,6 +132,8 @@ struct Run {
     last_select: Instant,
     select_ix: usize,
     keep: bool,
+    phase_started: Instant,
+    phase_cpu: Duration,
 }
 
 pub fn start(cx: &mut App) {
@@ -175,6 +177,8 @@ pub fn start(cx: &mut App) {
             last_select: Instant::now(),
             select_ix: 0,
             keep,
+            phase_started: Instant::now(),
+            phase_cpu: process_cpu_time(),
         }));
         info!("stress: phase {} begins", PHASES[0].1);
         cx.update(|cx| {
@@ -243,7 +247,23 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window) {
     });
 }
 
+/// User + system CPU time of this process (all threads).
+fn process_cpu_time() -> Duration {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `ts` is a valid out-pointer for the duration of the call.
+    unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
+    Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
 fn report(r: &mut Run) {
+    let wall = r.phase_started.elapsed();
+    let cpu = process_cpu_time().saturating_sub(r.phase_cpu);
+    r.phase_started = Instant::now();
+    r.phase_cpu = process_cpu_time();
+    info!(
+        "stress:   process CPU {:.0}% of one core over the phase",
+        cpu.as_secs_f64() * 100.0 / wall.as_secs_f64().max(1e-9)
+    );
     let mut f = std::mem::take(&mut r.frames);
     if f.len() < 2 {
         return;
