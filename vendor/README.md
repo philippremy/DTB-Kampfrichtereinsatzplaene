@@ -106,6 +106,10 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   macOS. It replaces the system File/Edit/Format/View/Window/Help menus, and the first gpui menu replaces the
   children of the system application menu. The PR has no hardware-key handling, so these key commands are the
   only path for shortcuts on iPadOS. Drop this when upstream gains its own menu support.
+- **Geometry reconciliation** (ours, `gpui_ios/src/ios/window.rs::sync_geometry`): a window created before its scene reports
+  the scene's real size (a Stage Manager window resized before the app was launched) keeps the screen-sized frame it was
+  given and UIKit never re-lays it out. Every few frames the window is fitted to its scene's coordinate space and any
+  size / inset change GPUI missed is reported.
 - **Window controls / fullscreen** (ours, `gpui` + `gpui_ios`): `WindowInsets` gains `window_controls`, computed in `gpui_ios`
   from `edgeInsetsForLayoutRegion:` with the corner-adapted safe-area regions (iOS 26; zero before) minus the plain safe
   area, and `PlatformWindow::is_fullscreen` / `is_maximized` report whether the window covers the screen instead of

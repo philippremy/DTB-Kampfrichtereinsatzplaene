@@ -203,6 +203,10 @@ pub struct SkinMetrics {
     /// buttons inside and their icons scale with it (28 px buttons at the default 36).
     #[serde(default = "default_toolbar_control_height")]
     pub toolbar_control_height: f32,
+    /// Space above the sidebar's content (a full-height sidebar on macOS clears the traffic lights
+    /// instead; a touch skin wants some air below the native bar).
+    #[serde(default)]
+    pub sidebar_top_padding: f32,
     pub radius: f32,
     pub radius_lg: f32,
     pub radius_control: f32,
@@ -256,6 +260,10 @@ impl SkinMetrics {
 
     pub fn title_bar_height_px(&self) -> Pixels {
         px(self.title_bar_height)
+    }
+
+    pub fn sidebar_top_padding_px(&self) -> Pixels {
+        px(self.sidebar_top_padding)
     }
 
     pub fn toolbar_control_height_px(&self) -> Pixels {

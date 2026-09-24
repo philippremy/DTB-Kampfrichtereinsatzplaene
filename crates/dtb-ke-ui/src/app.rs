@@ -1043,13 +1043,17 @@ impl AppShell {
 
         let motion = cx.theme().skin.motion(Duration::from_millis(500));
         // The window controls float over the sidebar's top-left corner in a windowed iPadOS
-        // window; the padding sits on this wrapper (the sidebar view itself is cached) and is
+        // window (and a touch skin leaves some air under the native bar); the padding sits on this wrapper (the sidebar view itself is cached) and is
         // filled like the sidebar so it reads as part of it.
-        let controls_top = window.insets().window_controls.top;
+        let sidebar_top = window
+            .insets()
+            .window_controls
+            .top
+            .max(cx.theme().skin.sidebar_top_padding_px());
         let sidebar_fill = material::sidebar_fill(cx.theme(), cx);
         let sidebar = div()
             .size_full()
-            .when(controls_top > px(0.), |el| el.pt(controls_top).bg(sidebar_fill))
+            .when(sidebar_top > px(0.), |el| el.pt(sidebar_top).bg(sidebar_fill))
             .child(cached_or_plain(self.sidebar.clone()))
             .with_animation(
                 "sidebar-fade",
