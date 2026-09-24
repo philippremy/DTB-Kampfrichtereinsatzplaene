@@ -39,6 +39,19 @@ pub fn main_window_options(cx: &mut App) -> WindowOptions {
     }
 }
 
+/// The room the system takes from the window edges that content should keep clear of: the safe
+/// area plus the on-screen keyboard. The top edge only counts while the window fills the screen —
+/// that is when the native menu bar / status area sits above it. A resized window (iPadOS Stage
+/// Manager) has nothing there, so content starts at its top edge and toolbar items centre in
+/// their bar; the inset returns as soon as the window goes back to full size.
+pub fn content_insets(window: &gpui_kit::Window) -> gpui_kit::Edges<gpui_kit::Pixels> {
+    let mut insets = window.insets().effective();
+    if !window.is_fullscreen() {
+        insets.top = px(0.);
+    }
+    insets
+}
+
 /// Whether secondary windows (About, Settings, Logs, Feedback, Trash) are presented as sheets
 /// inside the main window — and the live preview replaces the editor pane — instead of as OS
 /// windows. True where the platform has a single window scene (iPadOS); see [`crate::sheet`].

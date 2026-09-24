@@ -128,7 +128,7 @@ pub fn overlay(window: &Window, cx: &mut App) -> Option<impl IntoElement> {
     let c = cx.theme().color;
     let radius = cx.theme().skin.radius_lg_px();
     let corner_inset = px((f32::from(radius) * (1. - std::f32::consts::FRAC_1_SQRT_2)).ceil() + 1.);
-    let insets = window.insets().effective();
+    let insets = crate::skin::window::content_insets(window);
     let (back_label, done_label) = (cx.t("sheet.back"), cx.t("sheet.done"));
 
     let header = div()

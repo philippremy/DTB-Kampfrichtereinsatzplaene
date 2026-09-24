@@ -1112,8 +1112,7 @@ impl Render for AppShell {
         // Regions of the window covered by system UI (iPadOS status bar / home indicator) and the
         // on-screen keyboard; zero on the desktop platforms. The shell is inset by them so no
         // control sits underneath, and the status-bar strip is painted in the chrome colour.
-        let insets = window.insets().effective();
-        let fullscreen = window.is_fullscreen();
+        let insets = skin_window::content_insets(window);
         let status_strip = (insets.top > Pixels::ZERO).then(|| {
             div()
                 .absolute()
@@ -1122,10 +1121,11 @@ impl Render for AppShell {
                 .right_0()
                 .h(insets.top)
                 .bg(theme.color.chrome)
-                // Only while the window fills the screen — then the native menu bar / status area
-                // sits directly above it, and a line keeps our sidebar and toolbar chrome from
-                // merging into it. A resized window has nothing above it to tell apart from.
-                .when(fullscreen, |el| el.border_b_1().border_color(theme.color.border))
+                // The strip only exists while the window fills the screen (see `content_insets`),
+                // when the native menu bar / status area sits directly above it; a line keeps our
+                // sidebar and toolbar chrome from merging into it.
+                .border_b_1()
+                .border_color(theme.color.border)
         });
 
         let shell = div()
