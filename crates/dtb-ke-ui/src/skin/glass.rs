@@ -156,6 +156,7 @@ impl GlassRole {
         !matches!(
             self,
             GlassRole::Sidebar
+                | GlassRole::SidebarBacking
                 | GlassRole::Card
                 | GlassRole::SelectionThumb
                 | GlassRole::Track
