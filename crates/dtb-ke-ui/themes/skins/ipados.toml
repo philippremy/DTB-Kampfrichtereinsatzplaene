@@ -1,0 +1,21 @@
+# iPadOS skin — the pre-Tahoe macOS look on an opaque window.
+#
+# iOS cannot make a window translucent, so every surface (sidebar included) is fully opaque.
+# Structural metrics only; colours come from the active palette. The Liquid Glass tier (UIKit's
+# own glass) is a later follow-up, so none of the `glass-*` keys apply here.
+
+material           = "opaque"       # iOS has no window backdrop: opaque everywhere
+material-opacity   = 1.0
+window-decorations = "server"       # UIKit owns the window; we never draw a frame
+menu-bar           = "native"       # gpui_ios builds the iPadOS menu bar with UIMenuBuilder
+title-bar-height   = 52.0
+radius             = 8.0
+radius-lg          = 12.0           # cards, dialogs, popovers
+radius-control     = 10.0
+control-shape      = "capsule"      # buttons and segmented tracks, as on macOS
+focus-ring         = "outline"
+selection-style    = "glass-tint"   # accent-tinted rounded row, like the macOS/iPadOS sidebar
+shadow             = "soft"
+font-family        = ".SystemUIFont"  # gpui_ios maps this to San Francisco
+mono-font-family   = "Menlo"
+motion-scale       = 1.0

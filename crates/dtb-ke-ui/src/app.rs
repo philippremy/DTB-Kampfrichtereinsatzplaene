@@ -11,7 +11,7 @@ use futures::channel::oneshot;
 use gpui_kit::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, ClickEvent, Context, Entity,
     FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, PathPromptOptions,
-    PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
+    PromptLevel, Pixels, Render, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
     WindowControlArea, WindowHandle, div, ease_out_quint, prelude::FluentBuilder, px,
 };
 use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
@@ -138,6 +138,7 @@ pub struct AppShell {
     /// — `cx.refresh_windows()` alone re-renders gpui views but not the
     /// push-based native macOS menu.
     _locale_sub: Subscription,
+    _focus_lost_sub: Subscription,
     /// The in-app updater — background checks + the corner toast.
     updater: Entity<Updater>,
     _updater_sub: Subscription,
@@ -253,6 +254,17 @@ impl AppShell {
             cx.notify();
         });
 
+        // When the focused element disappears (a dialog closing, a card deleted) nothing in the
+        // window has focus, and window-scoped commands — every menu item that needs the shell's
+        // `on_action` handlers — would read as unavailable until the next click. Hand focus back
+        // to the nearest surviving ancestor, or to the shell itself.
+        let focus_lost_sub = cx.on_focus_lost(window, |this, window, cx| {
+            let target = window
+                .focus_lost_restore_target(cx)
+                .unwrap_or_else(|| this.focus_handle.clone());
+            window.focus(&target, cx);
+        });
+
         // Closing the main window on macOS doesn't quit the app (so the
         // per-document `on_app_quit` flush won't run) — flush any pending edits
         // while the store is still alive. (The `MAIN_WINDOW` handle is cleared
@@ -285,6 +297,7 @@ impl AppShell {
             _detail_sub: detail_sub,
             _appearance_sub: appearance_sub,
             _locale_sub: locale_sub,
+            _focus_lost_sub: focus_lost_sub,
             updater,
             _updater_sub: updater_sub,
             _updater_loop: updater_loop,
@@ -986,12 +999,30 @@ impl Render for AppShell {
         let root_fill = material::root_fill(theme, cx);
         let content_fill = material::content_fill(theme);
 
+        // Regions of the window covered by system UI (iPadOS status bar / home indicator) and the
+        // on-screen keyboard; zero on the desktop platforms. The shell is inset by them so no
+        // control sits underneath, and the status-bar strip is painted in the chrome colour.
+        let insets = window.insets().effective();
+        let status_strip = (insets.top > Pixels::ZERO).then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(insets.top)
+                .bg(theme.color.chrome)
+        });
+
         let shell = div()
             .track_focus(&self.focus_handle)
             .key_context("AppShell")
             .size_full()
             .flex()
             .flex_col()
+            .pt(insets.top)
+            .pr(insets.right)
+            // .pb(insets.bottom) // Temporarily disabled
+            .pl(insets.left)
             .bg(root_fill)
             .text_color(theme.color.foreground)
             .when_some(font, |el, family| el.font_family(family))
@@ -1062,6 +1093,7 @@ impl Render for AppShell {
                     },
                 ))
             })
+            .children(status_strip)
             .when(skin_menu::in_app(cx), |el| {
                 el.child(self.menu_bar_row(window, cx))
             })

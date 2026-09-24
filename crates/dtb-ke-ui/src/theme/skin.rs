@@ -7,13 +7,15 @@ use serde::Deserialize;
 use super::ThemeError;
 
 /// The platform skin. Chosen once at startup by [`Skin::detect`]; overridable
-/// with the `DTB_KE_SKIN` env var (`mac` | `win` | `linux`) for previewing one
+/// with the `DTB_KE_SKIN` env var (`mac` | `win` | `linux` | `ipad`) for previewing one
 /// skin on another OS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Skin {
     MacLiquidGlass,
     WinUi3,
     LinuxNeutral,
+    /// iPadOS: the pre-Tahoe macOS look, fully opaque (iOS has no window translucency).
+    IPadOs,
 }
 
 impl Skin {
@@ -27,6 +29,7 @@ impl Skin {
                 "mac" | "macos" => return Self::MacLiquidGlass,
                 "win" | "windows" => return Self::WinUi3,
                 "linux" => return Self::LinuxNeutral,
+                "ipad" | "ipados" | "ios" => return Self::IPadOs,
                 "" => {}
                 other => {
                     eprintln!("DTB_KE_SKIN: unknown value {other:?}, using the platform default");
@@ -45,7 +48,11 @@ impl Skin {
         {
             Self::WinUi3
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(target_os = "ios")]
+        {
+            Self::IPadOs
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
         {
             Self::LinuxNeutral
         }
@@ -56,6 +63,7 @@ impl Skin {
             Self::MacLiquidGlass => "macos",
             Self::WinUi3 => "windows",
             Self::LinuxNeutral => "linux",
+            Self::IPadOs => "ipados",
         }
     }
 
@@ -65,6 +73,7 @@ impl Skin {
             Self::MacLiquidGlass => include_str!("../../themes/skins/macos.toml"),
             Self::WinUi3 => include_str!("../../themes/skins/windows.toml"),
             Self::LinuxNeutral => include_str!("../../themes/skins/linux.toml"),
+            Self::IPadOs => include_str!("../../themes/skins/ipados.toml"),
         }
     }
 

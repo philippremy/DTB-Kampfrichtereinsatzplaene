@@ -135,19 +135,26 @@ fn app_menu(state: MenuState, locale: &Locale) -> Menu {
         ));
     }
 
-    items.extend([
-        MenuItem::separator(),
-        MenuItem::action(
-            locale.t_fmt("actions.app::HideApp", &[("app_name", APP_NAME)]),
-            app::HideApp,
-        ),
-        MenuItem::action(locale.t("actions.app::HideOthers"), app::HideOthers),
-        MenuItem::separator(),
-        MenuItem::action(
-            locale.t_fmt("actions.app::Quit", &[("app_name", APP_NAME)]),
-            app::Quit,
-        ),
-    ]);
+    if crate::skin::menu::has_window_commands() {
+        items.extend([
+            MenuItem::separator(),
+            MenuItem::action(
+                locale.t_fmt("actions.app::HideApp", &[("app_name", APP_NAME)]),
+                app::HideApp,
+            ),
+            MenuItem::action(locale.t("actions.app::HideOthers"), app::HideOthers),
+        ]);
+    }
+    // iPadOS apps do not quit themselves; the system decides when they end.
+    if crate::skin::menu::has_window_commands() {
+        items.extend([
+            MenuItem::separator(),
+            MenuItem::action(
+                locale.t_fmt("actions.app::Quit", &[("app_name", APP_NAME)]),
+                app::Quit,
+            ),
+        ]);
+    }
 
     let _ = state;
     Menu::new(APP_NAME).items(items)
@@ -291,13 +298,18 @@ fn window_menu(state: MenuState, locale: &Locale) -> Menu {
     } else {
         locale.t("menu.window.enter-fullscreen")
     };
-    Menu::new(locale.t("menu.window.title")).items(vec![
+    let mut items = vec![
         MenuItem::action(preview_label, window::TogglePreview),
         MenuItem::action(locale.t("actions.window::ToggleSidebar"), window::ToggleSidebar),
-        MenuItem::action(fullscreen_label, window::ToggleFullscreen),
-        MenuItem::separator(),
-        MenuItem::action(locale.t("actions.window::Minimize"), window::Minimize),
-    ])
+    ];
+    if crate::skin::menu::has_window_commands() {
+        items.extend([
+            MenuItem::action(fullscreen_label, window::ToggleFullscreen),
+            MenuItem::separator(),
+            MenuItem::action(locale.t("actions.window::Minimize"), window::Minimize),
+        ]);
+    }
+    Menu::new(locale.t("menu.window.title")).items(items)
 }
 
 fn help_menu(_state: MenuState, locale: &Locale) -> Menu {

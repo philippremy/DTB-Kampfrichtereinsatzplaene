@@ -5,6 +5,8 @@
 //!
 //! * **macOS** — [`App::set_menus`] builds a real `NSMenu` in the system menu
 //!   bar, deriving each item's key equivalent from the active keymap.
+//! * **iPadOS** — gpui_ios builds the system menu bar with `UIMenuBuilder` from the same model
+//!   (native, like macOS; item enablement comes from `validateCommand:`).
 //! * **Windows / Linux** — gpui only *stores* the model on these platforms; it
 //!   does not draw a bar. Phases 7/8 add an in-app menu bar that renders the
 //!   same [`crate::menu::build`] output. We still hand gpui the model so the
@@ -28,4 +30,11 @@ pub fn install(state: MenuState, cx: &mut App) {
 /// macOS uses the system bar installed by [`install`].
 pub fn in_app(cx: &App) -> bool {
     cx.theme().skin.menu_bar != MenuStyle::Native
+}
+
+/// Whether the platform has app-level window commands (hide, hide others, quit, minimize, full
+/// screen). iPadOS windows are managed by the system (Stage Manager), so those menu items would do
+/// nothing there.
+pub const fn has_window_commands() -> bool {
+    !cfg!(target_os = "ios")
 }

@@ -368,6 +368,13 @@ mod tests {
         assert!(linux.font_family().is_none());
         assert_eq!(win.control_shape, ControlShape::Rounded);
         assert_eq!(linux.control_shape, ControlShape::Rounded);
+
+        let ipad = SkinMetrics::parse(Skin::IPadOs.embedded_toml()).unwrap();
+        assert_eq!(ipad.material, WindowMaterial::Opaque);
+        assert_eq!(ipad.window_decorations, WindowDecorations::Server);
+        assert_eq!(ipad.selection_style, SelectionStyle::GlassTint);
+        assert_eq!(ipad.menu_bar, MenuStyle::Native);
+        assert_eq!(ipad.control_shape, ControlShape::Capsule);
     }
 
     #[test]
@@ -394,6 +401,7 @@ mod tests {
             Skin::from_env_or_platform(Some("linux")),
             Skin::LinuxNeutral
         );
+        assert_eq!(Skin::from_env_or_platform(Some("iPadOS")), Skin::IPadOs);
         assert_eq!(
             Skin::from_env_or_platform(Some("bogus")),
             Skin::platform_default()

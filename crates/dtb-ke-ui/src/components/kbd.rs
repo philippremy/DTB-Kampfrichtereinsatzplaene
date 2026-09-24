@@ -112,7 +112,7 @@ fn chord_label(ks: &Keystroke, cx: &App) -> String {
     let mut out = String::new();
     let m = &ks.modifiers;
 
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
         // Apple order: fn ⌃ ⌥ ⇧ ⌘, glyphs butted together, then the key.
         if m.function {
             out.push_str("fn ");
@@ -164,7 +164,7 @@ fn platform_word(cx: &App) -> String {
 
 /// Human-readable name for a single key.
 fn key_label(key: &str, cx: &App) -> String {
-    let mac = cfg!(target_os = "macos");
+    let mac = cfg!(any(target_os = "macos", target_os = "ios"));
     let named: Option<String> = match key {
         "backspace" => Some(if mac {
             "⌫".to_string()

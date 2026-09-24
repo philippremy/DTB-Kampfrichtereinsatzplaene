@@ -44,7 +44,7 @@ impl DefaultKey {
     pub fn resolve(self) -> Option<&'static str> {
         match self {
             DefaultKey::All(k) => Some(k),
-            DefaultKey::Split { mac, other } => Some(if cfg!(target_os = "macos") {
+            DefaultKey::Split { mac, other } => Some(if cfg!(any(target_os = "macos", target_os = "ios")) {
                 mac
             } else {
                 other
@@ -321,7 +321,7 @@ impl Conflict {
 /// second element of each pair is a translation key (`reserved.*`), not
 /// literal text — resolved by [`Conflict::message`].
 fn reserved_keystrokes() -> &'static [(&'static str, &'static str)] {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         &[
             ("cmd-q", "reserved.quit"),
@@ -342,7 +342,7 @@ fn reserved_keystrokes() -> &'static [(&'static str, &'static str)] {
             ("cmd-shift-5", "reserved.screen-recording"),
         ]
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         &[
             ("ctrl-w", "reserved.close-window"),
@@ -539,7 +539,7 @@ mod tests {
     fn same_keystroke_normalises_spellings() {
         assert!(same_keystroke(
             "secondary-n",
-            if cfg!(target_os = "macos") {
+            if cfg!(any(target_os = "macos", target_os = "ios")) {
                 "cmd-n"
             } else {
                 "ctrl-n"
@@ -581,7 +581,7 @@ mod tests {
     fn conflict_flags_a_reserved_shortcut() {
         let locale = crate::i18n::test_locale();
         let target = file::NewCompetition.name();
-        let reserved = if cfg!(target_os = "macos") {
+        let reserved = if cfg!(any(target_os = "macos", target_os = "ios")) {
             "cmd-q"
         } else {
             "ctrl-w"
