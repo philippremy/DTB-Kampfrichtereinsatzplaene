@@ -117,6 +117,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
@@ -174,6 +175,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
@@ -216,6 +218,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         # Not shell: bash — a bare Windows Server install has no bash at all
@@ -316,6 +319,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         # Not shell: bash — a bare Windows Server install has no bash at all
@@ -388,6 +392,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
