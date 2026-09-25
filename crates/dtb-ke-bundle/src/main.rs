@@ -81,6 +81,7 @@ fn main() {
             let universal = has("--universal");
             let target = flag_value(&rest, "--target");
             let provisioning_profile = flag_value(&rest, "--provisioning-profile");
+            let mac_wrapper = has("--mac-wrapper");
             if let Err(e) = bundle::run(bundle::Options {
                 release,
                 formats: formats.map(parse_formats),
@@ -88,6 +89,7 @@ fn main() {
                 universal,
                 target,
                 provisioning_profile,
+                mac_wrapper,
             }) {
                 eprintln!("dtb-ke-bundle: {e}");
                 exit(1);

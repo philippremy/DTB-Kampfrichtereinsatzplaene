@@ -31,6 +31,8 @@ pub struct Options {
     pub target: Option<String>,
     /// iOS device builds: the `.mobileprovision` to embed (entitlements are derived from it).
     pub provisioning_profile: Option<String>,
+    /// iOS device builds: wrap the `.app` in the layout macOS launches iOS apps from.
+    pub mac_wrapper: bool,
 }
 
 /// Inputs every packager needs.
@@ -45,6 +47,7 @@ pub struct Context {
     /// packaging derives its arch labels (`amd64`/`arm64`, …) from it.
     pub target: Option<String>,
     pub provisioning_profile: Option<String>,
+    pub mac_wrapper: bool,
     /// Whether an icon master was found and the icon cache is populated.
     pub have_icon: bool,
 }
@@ -113,6 +116,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         sign: opts.sign,
         target: opts.target,
         provisioning_profile: opts.provisioning_profile,
+        mac_wrapper: opts.mac_wrapper,
         have_icon,
     };
 

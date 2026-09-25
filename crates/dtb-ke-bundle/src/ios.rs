@@ -36,6 +36,9 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     }
     let target = cx.target.as_deref().ok_or("iOS bundling needs --target <ios triple>")?;
     let simulator = is_simulator(target);
+    if cx.mac_wrapper && simulator {
+        return Err("--mac-wrapper needs a device build (--target aarch64-apple-ios)".into());
+    }
     let (platform, sdk_name) = if simulator {
         ("iphonesimulator", "iphonesimulator")
     } else {
@@ -88,7 +91,16 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     }
     codesign(&app, identity.as_deref().unwrap_or("-"), entitlements.as_deref())?;
 
+    let app = if cx.mac_wrapper { wrap_for_mac(&app)? } else { app };
+
     report(&app);
+    if cx.mac_wrapper {
+        eprintln!(
+            "dtb-ke-bundle: Mac wrapper layout written — the profile must allow Apple Silicon Macs \
+             (\"Designed for iPad\"); run it with `open \"{}\"`",
+            app.display()
+        );
+    }
     if simulator {
         eprintln!(
             "dtb-ke-bundle: install with `xcrun simctl install booted \"{}\"` and launch with \
@@ -141,6 +153,12 @@ fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
 	<key>UIDeviceFamily</key>
 	<array>
 		<integer>2</integer>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
@@ -379,9 +397,45 @@ fn codesign(app: &Path, identity: &str, entitlements: Option<&Path>) -> Result<(
     }
 }
 
+/// Rearrange a finished (already signed) iOS `.app` into the layout macOS launches iOS apps from:
+/// `<Name>.app/{Wrapper/<Name>.app, WrappedBundle -> Wrapper/<Name>.app}`. Returns the outer bundle.
+fn wrap_for_mac(app: &Path) -> Result<std::path::PathBuf, String> {
+    let name = app.file_name().ok_or("bad app path")?.to_owned();
+    let parent = app.parent().ok_or("bad app path")?;
+    let staged = parent.join(".wrap-inner");
+    fresh_dir(&staged).map_err(io)?;
+    let inner_tmp = staged.join(&name);
+    std::fs::rename(app, &inner_tmp).map_err(io)?;
+    let outer = parent.join(&name);
+    let wrapper = outer.join("Wrapper");
+    std::fs::create_dir_all(&wrapper).map_err(io)?;
+    std::fs::rename(&inner_tmp, wrapper.join(&name)).map_err(io)?;
+    std::fs::remove_dir_all(&staged).ok();
+    let link = format!("Wrapper/{}", name.to_string_lossy());
+    symlink(link, &outer.join("WrappedBundle"))?;
+    Ok(outer)
+}
+
+#[cfg(unix)]
 fn make_executable(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(io)
+}
+
+// iOS bundles are only built on macOS (`bundle` bails first); this only keeps other hosts compiling.
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), String> {
+    Err("iOS bundles can only be built on macOS".into())
+}
+
+#[cfg(unix)]
+fn symlink(target: String, link: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, link).map_err(io)
+}
+
+#[cfg(not(unix))]
+fn symlink(_target: String, _link: &Path) -> Result<(), String> {
+    Err("iOS bundles can only be built on macOS".into())
 }
 
 fn io(e: std::io::Error) -> String {
