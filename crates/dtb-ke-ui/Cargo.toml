@@ -25,6 +25,7 @@ path = "src/main.rs"
 dtb-ke-crash = { workspace = true, features = ["as-library"] }
 dtb-ke-export.workspace = true
 dtb-ke-log.workspace = true
+dtb-ke-syms.workspace = true
 dtb-ke-persist.workspace = true
 dtb-ke-resource.workspace = true
 dtb-ke-types.workspace = true

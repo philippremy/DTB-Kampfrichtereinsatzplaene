@@ -11,6 +11,7 @@ pub mod app;
 pub mod build_info;
 pub mod components;
 pub mod crash_countdown;
+pub mod crash_hints;
 pub mod crash_report;
 pub mod debug;
 pub mod detail;

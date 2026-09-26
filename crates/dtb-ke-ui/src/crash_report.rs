@@ -24,7 +24,7 @@ use gpui_kit::Subscription;
 use gpui_kit::{
     App, AppContext, Bounds, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollHandle, Size, StatefulInteractiveElement, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder,
     px,
 };
 use gpui_kit::base::Scrollbar;
@@ -32,14 +32,12 @@ use gpui_kit::base::Scrollbar;
 use dtb_ke_crash::report;
 
 use crate::build_info;
+use crate::crash_hints::HintsRun;
+use crate::i18n::ActiveLocale;
 use crate::components::checkbox::Checkbox;
 use crate::components::{Button, ButtonTone, Icon, Spinner};
 use crate::mail;
 use crate::theme::{ActiveTheme, Appearance, Theme, ThemeMode};
-
-const INTRO: &str = "DTB Kampfrichtereinsatzpläne ist abgestürzt. Es kann ein Fehlerbericht zur Problembehebung gesendet werden. \
-Der Bericht enthält ausschließlich technische Angaben zum Absturz (Speicheradressen, geladene Programmbibliotheken, Funktionsstack), \
-keine personenbezogenen oder wettkampfbezogene Daten.";
 
 /// Are we a crash-reporter relaunch? True iff our parent process is the crash
 /// helper (a binary called [`dtb_ke_crash::HELPER_FILE_NAME`]).
@@ -204,8 +202,11 @@ pub fn run() -> i32 {
     if std::env::var_os("DTB_KE_CRASH_REPORT_DUMP").is_some() {
         let (subject, body) = compose(&digest);
         eprintln!(
-            "--- REPORT ---\nSubject: {subject}\n\n{body}\n--- dmp: {} B · log: {} B · mail::available = {} ---",
+            "--- REPORT ---\nSubject: {subject}\n\n{body}\n--- dmp: {} B ({}) · frames: {} · os build: {:?} · log: {} B · mail::available = {} ---",
             digest.minidump.len(),
+            digest.dump_path,
+            digest.frames.len(),
+            digest.os_build,
             newest_log().len(),
             mail::available()
         );
@@ -220,6 +221,7 @@ pub fn run() -> i32 {
     let mut autosend = false;
     if let Ok(v) = std::env::var("DTB_KE_CRASH_REPORT_TEST") {
         match v.as_str() {
+            "hints" => {} // handled above (before this match would be reached)
             "sent" => return report::SENT,
             "queued" => return report::QUEUED,
             "declined" => return report::DECLINED,
@@ -237,6 +239,21 @@ pub fn run() -> i32 {
             }
             _ => return report::DECLINED,
         }
+    }
+
+    let hints = start_hints(&digest);
+
+    // Test hook: `DTB_KE_CRASH_REPORT_TEST=hints` resolves the system symbols, saves them into the dump and
+    // exits — the whole pipeline without a GUI. (Set on the crashed app, like the other test hooks.)
+    if std::env::var("DTB_KE_CRASH_REPORT_TEST").as_deref() == Ok("hints") {
+        if let Some(h) = &hints {
+            let start = std::time::Instant::now();
+            while !h.job().is_done() && start.elapsed() < std::time::Duration::from_secs(120) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        finish_hints(&hints, report::DECLINED);
+        return report::DECLINED;
     }
 
     let summary = Summary::build(&digest);
@@ -262,19 +279,39 @@ pub fn run() -> i32 {
             NSApp(mtm).setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
         gpui_kit::base::init(cx);
+        // The reporter is its own process: load the user's saved settings (for their language choice — not `Settings::init`,
+        // whose developer-option hooks have no business here) and install the locale.
+        cx.set_global(crate::settings::Settings::load());
+        crate::i18n::Locale::install(cx);
         Theme::install(
             ThemeMode::System,
             Appearance::from(cx.window_appearance()),
             cx,
         );
         // Closing the window == declining.
-        cx.on_window_closed(|_, _| std::process::exit(report::DECLINED))
-            .detach();
+        let on_close_hints = hints.clone();
+        cx.on_window_closed(move |_, _| {
+            finish_hints(&on_close_hints, report::DECLINED);
+            std::process::exit(report::DECLINED)
+        })
+        .detach();
 
         let opts = window_options(cx);
         let opened = cx.open_window(opts, move |window, cx| {
             cx.new(|cx| {
-                ReportWindow::new(summary, subject, body, dmp, log, autosend, exit_verdict(), false, window, cx)
+                ReportWindow::new(
+                    summary,
+                    subject,
+                    body,
+                    dmp,
+                    log,
+                    autosend,
+                    exit_verdict(hints.clone()),
+                    hints.clone(),
+                    false,
+                    window,
+                    cx,
+                )
             })
         });
         if opened.is_err() {
@@ -335,7 +372,7 @@ fn newest_log_before(cutoff: Option<std::time::SystemTime>) -> Vec<u8> {
 }
 
 /// The helper's digest — `reason` `\0` `address` `\0` `crashing_tid` `\0`
-/// `panic_msg` `\0` `stack` `\0` `<minidump bytes>`.
+/// `panic_msg` `\0` `stack` `\0` `frames` `\0` `dump_path` `\0` `os_build` `\0` `<minidump bytes>`.
 struct Digest {
     /// Human-readable crash reason from the minidump (`minidump::CrashReason`
     /// Display), e.g. `EXC_BAD_ACCESS / KERN_INVALID_ADDRESS`. Empty if unknown.
@@ -349,6 +386,12 @@ struct Digest {
     /// Symbol-free stack walk of the crashing thread + the module table (no
     /// process memory) — goes into the report body.
     stack: String,
+    /// Every thread's frames as (image UUID, offset) — what the system-symbol hints are computed from.
+    frames: Vec<dtb_ke_crash::syshints::FrameRef>,
+    /// Where the helper kept the dump (the reporter rewrites it with the hints), or empty.
+    dump_path: String,
+    /// The OS build the dump ran on (`26A428`), or empty.
+    os_build: String,
     /// The raw minidump — attached to the report only if the user opts in.
     minidump: Vec<u8>,
 }
@@ -358,7 +401,7 @@ fn read_digest_from_stdin() -> Option<Digest> {
     let mut buf = Vec::new();
     std::io::stdin().read_to_end(&mut buf).ok()?;
 
-    let mut fields = buf.splitn(6, |&b| b == 0);
+    let mut fields = buf.splitn(9, |&b| b == 0);
     let mut next = || {
         fields
             .next()
@@ -369,6 +412,9 @@ fn read_digest_from_stdin() -> Option<Digest> {
     let crashing_tid = next()?;
     let panic_msg = next()?;
     let stack = next()?;
+    let frames = dtb_ke_crash::syshints::parse_frames(&next()?);
+    let dump_path = next()?;
+    let os_build = next()?;
     let minidump = fields.next().map(<[u8]>::to_vec).unwrap_or_default();
     Some(Digest {
         reason,
@@ -376,6 +422,9 @@ fn read_digest_from_stdin() -> Option<Digest> {
         crashing_tid,
         panic_msg,
         stack,
+        frames,
+        dump_path,
+        os_build,
         minidump,
     })
 }
@@ -388,7 +437,7 @@ fn window_options(cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("DTB-Kampfrichtereinsatzpläne ist abgestürzt".into()),
+            title: Some(cx.t("crash-report.window-title")),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -401,25 +450,58 @@ fn window_options(cx: &mut App) -> WindowOptions {
 
 // ── the pre-digested view of a dump ──────────────────────────────────────
 
+/// What the dialog's headline says — translated when rendered (the summary is built before a locale exists).
+#[derive(Clone)]
+enum Kind {
+    Panic,
+    Crash,
+    /// The crash reason as the OS words it (`EXC_BAD_ACCESS / KERN_INVALID_ADDRESS`).
+    Reason(String),
+}
+
+/// The labels of the detail rows — translated when rendered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Row {
+    Location,
+    Signal,
+    Address,
+    Thread,
+    Time,
+}
+
+impl Row {
+    fn key(self) -> &'static str {
+        match self {
+            Row::Location => "crash-report.row-location",
+            Row::Signal => "crash-report.row-signal",
+            Row::Address => "crash-report.row-address",
+            Row::Thread => "crash-report.row-thread",
+            Row::Time => "crash-report.row-time",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Summary {
-    kind: String,
+    kind: Kind,
     message: Option<String>,
-    rows: Vec<(&'static str, String)>,
+    rows: Vec<(Row, String)>,
+    /// When the report was shown; formatted with the locale's own date format at render time.
+    at: chrono::DateTime<chrono::Local>,
 }
 
 impl Summary {
     fn build(d: &Digest) -> Self {
         let is_panic = !d.panic_msg.trim().is_empty();
         let kind = if is_panic {
-            "Programmfehler (Panic)".to_string()
+            Kind::Panic
         } else if d.reason.is_empty() {
-            "Absturz".to_string()
+            Kind::Crash
         } else {
-            d.reason.clone()
+            Kind::Reason(d.reason.clone())
         };
 
-        let mut rows: Vec<(&'static str, String)> = Vec::new();
+        let mut rows: Vec<(Row, String)> = Vec::new();
 
         // The panic hook records `PanicHookInfo`'s Display:
         // "panicked at <file>:<line>:<col>:\n<payload>". Show the payload as the
@@ -436,7 +518,7 @@ impl Summary {
                     .map(|l| l.trim_end_matches(':'))
                     .filter(|l| !l.is_empty());
                 if let Some(loc) = loc {
-                    rows.push(("Ort", loc.to_string()));
+                    rows.push((Row::Location, loc.to_string()));
                 }
                 let payload = payload.trim().replace('\n', " ");
                 Some(truncate(&payload, 240))
@@ -446,24 +528,16 @@ impl Summary {
         // Show the technical reason for a panic too (as a row, since `kind` is
         // the friendlier label there).
         if is_panic && !d.reason.is_empty() {
-            rows.push(("Signal", d.reason.clone()));
+            rows.push((Row::Signal, d.reason.clone()));
         }
         if !d.address.is_empty() && d.address != "0x0000000000000000" {
-            rows.push(("Adresse", d.address.clone()));
+            rows.push((Row::Address, d.address.clone()));
         }
         if !d.crashing_tid.is_empty() {
-            rows.push(("Thread", d.crashing_tid.clone()));
+            rows.push((Row::Thread, d.crashing_tid.clone()));
         }
-        rows.push((
-            "Zeitpunkt",
-            chrono::Local::now().format("%d.%m.%Y %H:%M:%S").to_string(),
-        ));
 
-        Self {
-            kind,
-            message,
-            rows,
-        }
+        Self { kind, message, rows, at: chrono::Local::now() }
     }
 }
 
@@ -535,8 +609,27 @@ impl SendState {
 /// with it (the helper acts on the code); on iOS it is a sheet in the running app and just closes.
 type Verdict = std::rc::Rc<dyn Fn(i32, &mut App)>;
 
-fn exit_verdict() -> Verdict {
-    std::rc::Rc::new(|code, _| std::process::exit(code))
+fn exit_verdict(hints: Option<std::sync::Arc<HintsRun>>) -> Verdict {
+    std::rc::Rc::new(move |code, _| {
+        finish_hints(&hints, code);
+        std::process::exit(code)
+    })
+}
+
+/// Begin resolving the system-library frames of `digest` (macOS / iOS only).
+fn start_hints(digest: &Digest) -> Option<std::sync::Arc<HintsRun>> {
+    let path = (!digest.dump_path.is_empty()).then(|| std::path::PathBuf::from(&digest.dump_path));
+    HintsRun::start(digest.frames.clone(), digest.os_build.clone(), digest.minidump.clone(), path)
+}
+
+/// The report is being closed with `code`: stop any running resolution and, unless the report was delivered (the
+/// dump is deleted then), save what was resolved into the dump kept on disk.
+fn finish_hints(hints: &Option<std::sync::Arc<HintsRun>>, code: i32) {
+    let Some(h) = hints else { return };
+    h.job().cancel();
+    if code != report::SENT {
+        h.persist();
+    }
 }
 
 struct ReportWindow {
@@ -554,6 +647,8 @@ struct ReportWindow {
     /// non-empty).
     attach_log: bool,
     state: SendState,
+    /// The system-symbol run for this crash, if the platform has one (macOS: the dyld cache; iOS: `dladdr`).
+    hints: Option<std::sync::Arc<HintsRun>>,
     /// The detail card's own scroll position (kind/message/rows) — a long
     /// value (e.g. the panic location, a deep path inside a dependency
     /// rather than a short local one) or a long message can overflow the
@@ -572,6 +667,7 @@ impl ReportWindow {
         log: Vec<u8>,
         autosend: bool,
         verdict: Verdict,
+        hints: Option<std::sync::Arc<HintsRun>>,
         simulate_send: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -595,8 +691,23 @@ impl ReportWindow {
             .detach();
         }
 
+        // Repaint while the system symbols resolve, so the progress line moves; stops once the run ends or is skipped.
+        if let Some(h) = hints.clone() {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+                    let over = h.job().is_done() || h.job().is_cancelled();
+                    if this.update(cx, |_, cx| cx.notify()).is_err() || over {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+
         Self {
             verdict,
+            hints,
             simulate_send,
             summary,
             subject,
@@ -620,12 +731,22 @@ impl ReportWindow {
         self.state = SendState::Sending;
         cx.notify();
 
+        // Sending does not wait for the system symbols: stop the run and send what it has. The stream in the dump
+        // (and the section in the body) say if that is incomplete.
+        let mut body = self.body.clone();
+        let mut dmp = self.dmp.clone();
+        if let Some(h) = &self.hints {
+            h.job().cancel();
+            body.push_str(&h.body_section());
+            dmp = h.patched_dump();
+        }
+
         let mut attachments = Vec::new();
         if self.attach_dump {
             attachments.push((
                 "crash.dmp".to_owned(),
                 "application/x-dmp",
-                self.dmp.clone(),
+                dmp,
             ));
         }
         if self.attach_log {
@@ -637,7 +758,7 @@ impl ReportWindow {
         }
         let report = mail::Report {
             subject: self.subject.clone(),
-            body: self.body.clone(),
+            body,
             attachments,
         };
         let verdict = self.verdict.clone();
@@ -697,13 +818,13 @@ impl Render for ReportWindow {
                 div()
                     .text_size(px(15.))
                     .font_weight(FontWeight::BOLD)
-                    .child("DTB Kampfrichtereinsatzpläne wurde unerwartet beendet :("),
+                    .child(cx.t("crash-report.title")),
             )
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(INTRO),
+                    .child(cx.t("crash-report.intro")),
             )
             .child(
                 // The outer frame (border/bg/rounding) stays a fixed box;
@@ -735,7 +856,11 @@ impl Render for ReportWindow {
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(13.))
-                                    .child(s.kind.clone()),
+                                    .child(match &s.kind {
+                                        Kind::Panic => cx.t("crash-report.kind-panic").to_string(),
+                                        Kind::Crash => cx.t("crash-report.kind-crash").to_string(),
+                                        Kind::Reason(r) => r.clone(),
+                                    }),
                             )
                             .when_some(s.message.clone(), |el, m| {
                                 el.child(
@@ -745,6 +870,11 @@ impl Render for ReportWindow {
                             .children(
                                 s.rows
                                     .iter()
+                                    .map(|(k, v)| (cx.t(k.key()).to_string(), v.clone()))
+                                    .chain(std::iter::once((
+                                        cx.t(Row::Time.key()).to_string(),
+                                        s.at.format(&cx.t("crash-report.time-format")).to_string(),
+                                    )))
                                     .map(|(k, v)| detail_row(k, v, c.muted_foreground)),
                             ),
                     )
@@ -760,24 +890,77 @@ impl ReportWindow {
         let c = cx.theme().color;
         let weak = cx.entity().downgrade();
 
+        // Status of the system-symbol run: a spinner with a way to skip it while it works; afterwards the *result* stays
+        // (it often finishes too fast to see the spinner, and a failure should not vanish).
+        let hints_row = self.hints.as_ref().map(|h| {
+            let (examined, total, finished) = h.job().progress();
+            let cancelled = h.job().is_cancelled();
+            let snap = h.snapshot();
+            let counts = [
+                ("resolved", snap.frames_resolved.to_string()),
+                ("total", snap.frames_total.to_string()),
+            ];
+            let counts: Vec<(&str, &str)> = counts.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let skip_weak = weak.clone();
+            if !finished && !cancelled {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(Spinner::new().size(px(13.)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(11.))
+                            .text_color(c.muted_foreground)
+                            .child(cx.t_fmt(
+                                "crash-report.hints-running",
+                                &[("done", &examined.to_string()), ("total", &total.to_string())],
+                            )),
+                    )
+                    .child(Button::new("cr-skip-hints", cx.t("crash-report.hints-skip")).tone(ButtonTone::Ghost).on_click(
+                        move |_, _, cx| {
+                            skip_weak
+                                .update(cx, |this, cx| {
+                                    if let Some(h) = &this.hints {
+                                        h.job().cancel();
+                                    }
+                                    cx.notify();
+                                })
+                                .ok();
+                        },
+                    ))
+                    .into_any_element()
+            } else {
+                let (text, color) = if finished && snap.complete {
+                    (cx.t_fmt("crash-report.hints-done", &counts), c.muted_foreground)
+                } else if finished && snap.incomplete_reason == "no-cache" {
+                    (cx.t("crash-report.hints-failed-no-cache").to_string(), c.warn)
+                } else if finished {
+                    (cx.t_fmt("crash-report.hints-failed-error", &[("reason", &snap.incomplete_reason)]), c.warn)
+                } else {
+                    (cx.t_fmt("crash-report.hints-skipped", &counts), c.muted_foreground)
+                };
+                div().text_size(px(11.)).text_color(color).child(text).into_any_element()
+            }
+        });
+
         // Transport not compiled in → nothing to do but close.
         if !mail::available() && !self.simulate_send {
             return div()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
+                .children(hints_row)
                 .child(
                     div()
                         .text_size(px(11.))
                         .text_color(c.muted_foreground)
-                        .child(
-                            "Der Versand von Fehlerberichten ist in dieser Programmversion nicht möglich. \
-                             Das Speicherabbild liegt unter „Protokolle“.",
-                        ),
+                        .child(cx.t("crash-report.no-transport")),
                 )
                 .child(
                     div().flex().justify_end().child(
-                        Button::new("cr-close", "Schließen")
+                        Button::new("cr-close", cx.t("crash-report.close"))
                             .on_click(move |_, _, cx| verdict(report::DECLINED, cx)),
                     ),
                 );
@@ -794,7 +977,7 @@ impl ReportWindow {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(c.ok)
                     .child(Icon::Check.size(px(15.)).color(c.ok))
-                    .child("Gesendet! Vielen Dank."),
+                    .child(cx.t("crash-report.sent-thanks")),
             );
         }
 
@@ -803,7 +986,7 @@ impl ReportWindow {
 
         let dump_row = self.attach_row(
             "cr-attach-dump",
-            "Speicherabbild anhängen (Kann Teilwettkampfdaten enthalten)",
+            cx.t("crash-report.attach-dump"),
             self.attach_dump,
             Attach::Dump,
             busy,
@@ -813,7 +996,7 @@ impl ReportWindow {
         let log_row = (!self.log.is_empty()).then(|| {
             self.attach_row(
                 "cr-attach-log",
-                "Protokoll anhängen (Kann Wettkampfnamen enthalten)",
+                cx.t("crash-report.attach-log"),
                 self.attach_log,
                 Attach::Log,
                 busy,
@@ -825,11 +1008,7 @@ impl ReportWindow {
         let send_weak = weak.clone();
         let send_btn = Button::new(
             "cr-send",
-            if failed {
-                "Erneut senden"
-            } else {
-                "Bericht senden"
-            },
+            if failed { cx.t("crash-report.retry") } else { cx.t("crash-report.send") },
         )
         .tone(ButtonTone::Primary)
         .disabled(busy)
@@ -838,10 +1017,10 @@ impl ReportWindow {
         });
 
         let left_btn = if failed {
-            Button::new("cr-keep", "Nur lokal behalten")
+            Button::new("cr-keep", cx.t("crash-report.keep-local"))
                 .on_click(move |_, _, cx| verdict(report::QUEUED, cx))
         } else {
-            Button::new("cr-decline", "Nicht senden")
+            Button::new("cr-decline", cx.t("crash-report.decline"))
                 .disabled(busy)
                 .on_click(move |_, _, cx| verdict(report::DECLINED, cx))
         };
@@ -850,6 +1029,7 @@ impl ReportWindow {
             .flex()
             .flex_col()
             .gap(px(6.))
+            .children(hints_row)
             .child(dump_row)
             .children(log_row)
             .when(failed, |el| {
@@ -877,7 +1057,7 @@ impl ReportWindow {
                                 .flex_1()
                                 .text_size(px(11.))
                                 .text_color(c.muted_foreground)
-                                .child("Wird gesendet …"),
+                                .child(cx.t("crash-report.sending")),
                         )
                     })
                     .child(left_btn)
@@ -889,7 +1069,7 @@ impl ReportWindow {
     fn attach_row(
         &self,
         id: &'static str,
-        label: &'static str,
+        label: SharedString,
         checked: bool,
         which: Attach,
         busy: bool,
@@ -942,7 +1122,7 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-fn detail_row(label: &str, value: &str, muted: Hsla) -> impl IntoElement {
+fn detail_row(label: String, value: String, muted: Hsla) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
@@ -960,13 +1140,13 @@ fn detail_row(label: &str, value: &str, muted: Hsla) -> impl IntoElement {
                 .flex_none()
                 .w(px(84.))
                 .text_color(muted)
-                .child(label.to_string()),
+                .child(label),
         )
         // A location/address/thread value is one technical token (a path,
         // not prose) — keep it on one line rather than wrapping mid-path;
         // the detail card's own scroll (see `Render for ReportWindow`)
         // handles the overflow that leaves for a long one.
-        .child(div().flex_none().whitespace_nowrap().child(value.to_string()))
+        .child(div().flex_none().whitespace_nowrap().child(value))
 }
 
 #[cfg(test)]
@@ -980,7 +1160,53 @@ mod tests {
             crashing_tid: String::new(),
             panic_msg: panic_msg.to_string(),
             stack: String::new(),
+            frames: Vec::new(),
+            dump_path: String::new(),
+            os_build: String::new(),
             minidump: Vec::new(),
+        }
+    }
+
+    /// The reporter is its own process with no log, so a missing key would just show the raw key name to the user:
+    /// every `crash-report.*` key this file uses must exist in every catalog — and the hints strings must keep the
+    /// placeholders the code fills in.
+    #[test]
+    fn every_key_the_dialog_uses_exists_in_every_catalog() {
+        let source = include_str!("crash_report.rs");
+        let mut keys: Vec<String> = Vec::new();
+        for (i, _) in source.match_indices("\"crash-report.") {
+            let rest = &source[i + 1..];
+            let end = rest.find('"').unwrap();
+            // (The scan also sees this test's own `"crash-report."` literals — those have no key after the dot.)
+            if rest[..end].len() > "crash-report.".len() {
+                keys.push(rest[..end].to_owned());
+            }
+        }
+        assert!(keys.len() > 20, "found only {} keys — the scan is broken", keys.len());
+
+        let catalogs = [
+            ("de-DE", include_str!("../locales/de-DE.toml")),
+            ("en-US", include_str!("../locales/en-US.toml")),
+        ];
+        let placeholders = [
+            ("hints-running", &["{done}", "{total}"][..]),
+            ("hints-done", &["{resolved}", "{total}"][..]),
+            ("hints-skipped", &["{resolved}", "{total}"][..]),
+            ("hints-failed-error", &["{reason}"][..]),
+        ];
+        for (tag, src) in catalogs {
+            let table: toml::Table = src.parse().unwrap();
+            let section = table["crash-report"].as_table().unwrap_or_else(|| panic!("{tag}: no [crash-report]"));
+            for key in &keys {
+                let name = key.strip_prefix("crash-report.").unwrap();
+                assert!(section.get(name).and_then(|v| v.as_str()).is_some(), "{tag}: missing {key}");
+            }
+            for (name, wanted) in placeholders {
+                let text = section[name].as_str().unwrap();
+                for p in wanted {
+                    assert!(text.contains(p), "{tag}.{name} lacks {p}: {text}");
+                }
+            }
         }
     }
 
@@ -996,7 +1222,7 @@ mod tests {
         assert!(
             s.rows
                 .iter()
-                .any(|(k, v)| *k == "Ort" && v == "crates/dtb-ke-ui/src/main.rs:129:73")
+                .any(|(k, v)| *k == Row::Location && v == "crates/dtb-ke-ui/src/main.rs:129:73")
         );
     }
 
@@ -1004,7 +1230,7 @@ mod tests {
     fn no_message_or_location_for_a_non_panic() {
         let s = Summary::build(&digest(""));
         assert_eq!(s.message, None);
-        assert!(s.rows.iter().all(|(k, _)| *k != "Ort"));
+        assert!(s.rows.iter().all(|(k, _)| *k != Row::Location));
     }
 
     #[test]
@@ -1107,8 +1333,32 @@ fn digest_of(snap: &dtb_ke_crash::snapshot::CrashSnapshotDTO) -> Digest {
         },
         panic_msg: d.panic_message,
         stack,
+        frames: snapshot_frames(snap),
+        dump_path: String::new(),
+        os_build: snap.session.os_build.clone(),
         minidump: Vec::new(),
     }
+}
+
+/// Every thread's frames of a snapshot as (image UUID, offset) — the input of the system-symbol hints. A caller
+/// frame's address is a return address, so its *call instruction* (one byte earlier) is what names the function.
+fn snapshot_frames(snap: &dtb_ke_crash::snapshot::CrashSnapshotDTO) -> Vec<dtb_ke_crash::syshints::FrameRef> {
+    use dtb_ke_crash::snapshot::summary::{module_for, walk};
+    let mut out = Vec::new();
+    for thread in &snap.threads {
+        for (i, pc) in walk(thread).into_iter().enumerate() {
+            let at = if i == 0 { pc } else { pc.saturating_sub(1) };
+            if let Some(m) = module_for(&snap.session, at) {
+                out.push(dtb_ke_crash::syshints::FrameRef {
+                    thread: thread.id,
+                    uuid: m.uuid,
+                    offset: at - m.base,
+                    path: m.path.clone(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Convert any crash left by a previous launch and offer to send the newest. Call once, a moment after
@@ -1134,6 +1384,7 @@ pub fn offer_pending(cx: &mut App) {
 fn present_ready(ready: Ready, cx: &mut App) {
     let Ready { mut digest, dmp_path, crashed_at } = ready;
     digest.minidump = std::fs::read(&dmp_path).unwrap_or_default();
+    digest.dump_path = dmp_path.to_string_lossy().into_owned();
     // The next launch's own log is newer than the crash; take the newest one written up to then.
     let log = newest_log_before(Some(crashed_at + std::time::Duration::from_secs(2)));
     // Delivered → the `.dmp` has served its purpose. Any other answer keeps it, as on the desktop.
@@ -1161,6 +1412,15 @@ fn open_reporter(
     on_close: Box<dyn Fn(i32)>,
     cx: &mut App,
 ) {
+    let hints = start_hints(&digest);
+    // Whatever closes the report (any verdict) first stops the run and saves what it found into the kept dump.
+    let on_close: Box<dyn Fn(i32)> = {
+        let hints = hints.clone();
+        Box::new(move |code| {
+            finish_hints(&hints, code);
+            on_close(code);
+        })
+    };
     let summary = Summary::build(&digest);
     let (subject, body) = compose(&digest);
     let subject = if simulate_send {
@@ -1174,7 +1434,7 @@ fn open_reporter(
     if crate::sheet::enabled() {
         // The desktop window title is too long for a sheet header.
         if let Some(titlebar) = options.titlebar.as_mut() {
-            titlebar.title = Some("Absturzbericht".into());
+            titlebar.title = Some(cx.t("crash-report.sheet-title"));
         }
         let verdict: Verdict = std::rc::Rc::new(move |code, cx| {
             on_close(code);
@@ -1182,7 +1442,7 @@ fn open_reporter(
         });
         crate::sheet::present(cx, "crash-report", &options, move |window, cx| {
             cx.new(|cx| {
-                ReportWindow::new(summary, subject, body, dmp, log, false, verdict, simulate_send, window, cx)
+                ReportWindow::new(summary, subject, body, dmp, log, false, verdict, hints.clone(), simulate_send, window, cx)
             })
         });
         return;
@@ -1199,7 +1459,7 @@ fn open_reporter(
         })
     };
     match cx.open_window(options, move |window, cx| {
-        cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, false, verdict, simulate_send, window, cx))
+        cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, false, verdict, hints.clone(), simulate_send, window, cx))
     }) {
         Ok(handle) => handle_cell.set(Some(handle.into())),
         Err(err) => log::error!("cannot open the crash report window: {err}"),
@@ -1214,6 +1474,9 @@ pub fn show_sample(cx: &mut App) {
         crashing_tid: "main (0x103)".into(),
         panic_msg: "panicked at crates/dtb-ke-ui/src/beispiel.rs:42:9:\nBeispielhafter Fehler für die Vorschau".into(),
         stack: "#0 DTB-Kampfrichtereinsatzplaene +0x1234\n#1 DTB-Kampfrichtereinsatzplaene +0x5678\n\nModules:\n(Beispiel)\n".into(),
+        frames: Vec::new(),
+        dump_path: String::new(),
+        os_build: String::new(),
         minidump: vec![0; 2048],
     };
     open_reporter(digest, b"Beispiel-Protokoll\n".to_vec(), true, Box::new(|_| {}), cx);
