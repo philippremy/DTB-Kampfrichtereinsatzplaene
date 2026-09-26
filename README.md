@@ -1,7 +1,8 @@
 <h1 align="center">DTB Kampfrichtereinsatzpläne</h1>
 
 <p align="center">
-  <img src="assets/icons/AppIcon.png" alt="App icon" width="128" height="128">
+  <img src="assets/icons/generated/AppIcon.png" alt="Main app icon" width="128" height="128">
+  <img src="assets/icons/debugger/generated/AppIcon.png" alt="Debugger app icon" width="128" height="128">
 </p>
 
 <p align="center">
@@ -12,7 +13,7 @@
 <p align="center">
   <a href="https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/releases">Releases</a> ·
   <a href="https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/releases/tag/tip">Nightly (Tip)</a> ·
-  <a href="LICENSE">AGPL-3.0-or-later</a>
+  <a href="./LICENSE">AGPL-3.0-or-later</a>
 </p>
 
 ---
