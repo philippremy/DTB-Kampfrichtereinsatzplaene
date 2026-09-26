@@ -2047,8 +2047,10 @@ dependencies = [
  "libc",
  "mach2 0.5.0",
  "minidump",
+ "minidump-common 0.27.0",
  "minidump-unwind",
  "minidump-writer",
+ "scroll 0.13.0",
 ]
 
 [[package]]

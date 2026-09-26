@@ -20,6 +20,7 @@ default = ["as-binary"]
 # `as-binary` = the two bins. It pulls the minidump stack; the `as-library` path
 # (linked into `dtb-ke-ui`) stays tiny — just the exception handoff.
 as-binary = [
+    "snapshot",
     "dep:minidump",
     "dep:minidump-unwind",
     "dep:minidump-writer",
@@ -28,7 +29,11 @@ as-binary = [
 ]
 # The thin in-process half. `dtb-ke-log` is pulled in only here — the helper
 # binary (`as-binary` alone) stays free of it.
-as-library = ["dep:dtb-ke-log"]
+as-library = ["dep:dtb-ke-log", "snapshot"]
+# Platform-neutral crash snapshot: the crash-time wire format, its parser and the
+# minidump assembler that turns a snapshot into a `.dmp` on the client at the next
+# launch (iOS cannot spawn a helper). Pure Rust, no OS calls.
+snapshot = ["dep:minidump-common", "dep:scroll"]
 
 [dependencies]
 # Signal-safe `fault!` logging on the in-process crash path (`as-library` only).
@@ -40,6 +45,9 @@ minidump = { version = "0.27", optional = true }
 minidump-unwind = { version = "0.27", default-features = false, features = [
     "framehop",
 ], optional = true }
+# Raw minidump structs (`Pwrite`) for the snapshot assembler. Already pulled in by `minidump`.
+minidump-common = { version = "0.27", optional = true }
+scroll = { version = "0.13", optional = true }
 # Writing minidumps out-of-process (helper). Cross-platform: mach on macOS,
 # `MiniDumpWriteDump` on Windows, ptrace/procfs on Linux.
 minidump-writer = { version = "0.13", optional = true }
@@ -47,7 +55,7 @@ crash-context = { version = "0.8", optional = true }
 # `block_on` for `minidump-unwind`'s async `walk_stack` in `dtb-ke-symbolize`.
 futures = { workspace = true, optional = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 libc.workspace = true
 mach2.workspace = true
 

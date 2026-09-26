@@ -37,6 +37,14 @@ pub mod report {
     pub const ERROR: i32 = 12;
 }
 
+#[cfg(feature = "snapshot")]
+pub mod snapshot;
+
+/// Signal-safe crash-record writer + launch-time session snapshot (Apple arm64: iOS handler, macOS tests).
+#[cfg(all(feature = "snapshot", any(target_os = "macos", target_os = "ios"), target_arch = "aarch64"))]
+#[doc(hidden)]
+pub mod apple;
+
 #[cfg(feature = "as-library")]
 mod panic;
 
