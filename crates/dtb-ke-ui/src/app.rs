@@ -1224,6 +1224,7 @@ impl Render for AppShell {
             .child(glass::end_frame())
             .children(self.updater_toast(cx))
             .children(crate::sheet::overlay(window, cx))
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             // Debug FPS HUD — inserted *last* so it always paints above the rest
             // of the shell (it used to sit ahead of `self.body`, so its own
             // content silently painted over it). `gpui_fps::FpsOverlay`
@@ -1391,7 +1392,7 @@ pub fn is_main_window(handle: AnyWindowHandle) -> bool {
 /// here.
 /// Debug aid (`DTB_KE_PREVIEW=1`): once the database is up, select the first competition and show
 /// the preview, so the pane can be checked without touching the UI.
-pub(crate) fn debug_show_preview(cx: &mut App) {
+pub fn debug_show_preview(cx: &mut App) {
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_secs(2)).await;
         cx.update(|cx| {
@@ -1415,7 +1416,7 @@ pub(crate) fn debug_show_preview(cx: &mut App) {
 /// Debug aid (`DTB_KE_ACTION=ExportAll|ImportCompetition|ExportCompetition|ToggleSidebar`): dispatch one of the
 /// file commands shortly after launch (with the first competition selected), so the file flows
 /// can be exercised without touching the UI.
-pub(crate) fn debug_dispatch_file_action(name: &str, cx: &mut App) {
+pub fn debug_dispatch_file_action(name: &str, cx: &mut App) {
     let name = name.to_owned();
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_secs(2)).await;

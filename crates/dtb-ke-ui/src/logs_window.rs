@@ -430,6 +430,8 @@ impl Render for LogsWindow {
             .track_focus(&self.focus)
             .key_context("LogsWindow")
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .flex()
             .flex_col()
             .bg(c.background)

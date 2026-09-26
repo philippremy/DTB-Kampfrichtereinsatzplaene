@@ -95,6 +95,9 @@ services = "Dienste"
 "open-logs-button" = "Protokolle öffnen"
 
 [settings.debug]
+"countdown-title" = "Absturz-Simulation in"
+"countdown-cancel" = "Abbrechen"
+"countdown-hint" = "Esc bricht ab — bis dahin ist die gesamte Oberfläche gesperrt."
 "crash-section" = "Absturz simulieren"
 "crash-thread-title" = "Thread"
 "crash-thread-description" = "Thread, in dem der Fehler ausgelöst wird. Der Absturz erfolgt {seconds} Sekunden nach der Bestätigung."

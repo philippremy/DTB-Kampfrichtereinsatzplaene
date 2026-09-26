@@ -13,6 +13,9 @@ build = "build.rs"
 # .app/portable folder, in Task Manager, etc. — is meta::DISPLAY_NAME
 # ("DTB Kampfrichtereinsatzpläne"), applied by dtb-ke-bundle's packagers at
 # package time, not by cargo at build time.
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "dtb-ke-ui"
 path = "src/main.rs"

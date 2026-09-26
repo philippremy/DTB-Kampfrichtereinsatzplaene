@@ -290,7 +290,7 @@ impl Focusable for FeedbackWindow {
 }
 
 impl Render for FeedbackWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
         let radius = cx.theme().skin.radius_control_px();
 
@@ -298,6 +298,8 @@ impl Render for FeedbackWindow {
             .track_focus(&self.focus)
             .key_context("FeedbackWindow")
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .bg(c.background)
             .text_color(c.foreground)
             .flex()

@@ -34,7 +34,7 @@ impl Gallery {
 }
 
 impl Render for Gallery {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.color.muted_foreground;
 
@@ -64,6 +64,8 @@ impl Render for Gallery {
 
         div()
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .bg(theme.color.background)
             .text_color(theme.color.foreground)
             .p(px(28.))

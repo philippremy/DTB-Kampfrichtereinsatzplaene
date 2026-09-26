@@ -1141,6 +1141,8 @@ impl Render for SettingsWindow {
             .track_focus(&self.focus)
             .key_context("SettingsWindow")
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Controller))
             .flex()
             .flex_col()
             .bg(c.background)

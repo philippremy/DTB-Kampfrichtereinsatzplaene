@@ -26,7 +26,7 @@ static FS_HELPER: OnceLock<FilesystemHelper> = OnceLock::new();
 
 /// A global filesystem helper: resolves and creates the per-OS data and log
 /// directories for the application.
-pub(crate) struct FilesystemHelper {
+pub struct FilesystemHelper {
     data_dir: PathBuf,
     log_dir: PathBuf,
     log_file: PathBuf,

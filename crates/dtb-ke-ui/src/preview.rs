@@ -266,6 +266,8 @@ impl gpui_kit::Render for PreviewWindow {
             .flex()
             .flex_col()
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .bg(c.background)
             .text_color(c.foreground)
             .child(

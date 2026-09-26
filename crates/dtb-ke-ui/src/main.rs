@@ -1,47 +1,15 @@
-// The UI layer is still being built out — the backend and theme layer expose
-// more API than the current (stub) views consume.
-#![allow(dead_code)]
 // Do not show a console on Windows
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod about;
-mod actions;
-mod app;
-mod build_info;
-mod components;
-mod crash_report;
-mod debug;
-mod detail;
-mod feedback_window;
-mod filesystem;
-mod i18n;
-mod keymap;
-mod logs_window;
-mod mail;
-mod material;
-mod menu;
-mod model;
-mod open_files;
-mod preview;
-mod save;
-mod settings;
-mod settings_window;
-mod sheet;
-mod sidebar;
-mod skin;
-mod store;
-mod stress;
-mod theme;
-mod toolbar;
-mod trash_window;
-mod updater;
-mod window_registry;
-
 use log::{debug, error, info};
 
-use crate::menu::MenuState;
-use crate::settings::Settings;
-use crate::theme::{Appearance, Theme};
+use dtb_ke_ui::menu::MenuState;
+use dtb_ke_ui::settings::Settings;
+use dtb_ke_ui::theme::{Appearance, Theme};
+use dtb_ke_ui::{
+    about, actions, app, build_info, components, crash_report, debug, feedback_window, filesystem, i18n,
+    keymap, logs_window, open_files, preview, save, settings, settings_window, sheet, skin, stress,
+};
 
 fn main() {
     // A re-launched instance in crash-reporter mode — spawned by the crash
@@ -148,7 +116,7 @@ fn main() {
         // Resolves Settings.locale (or the OS's own preference list, or the
         // hardcoded German default) into the active string catalog. Must run
         // before anything below that renders translated text.
-        crate::i18n::Locale::install(cx);
+        i18n::Locale::install(cx);
 
         // Persisted light/dark preference + the OS's current appearance. The
         // window then keeps the OS side in step via `observe_window_appearance`

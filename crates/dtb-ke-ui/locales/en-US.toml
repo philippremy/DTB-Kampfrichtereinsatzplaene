@@ -95,6 +95,9 @@ services = "Services"
 "open-logs-button" = "Open Logs"
 
 [settings.debug]
+"countdown-title" = "Simulated crash in"
+"countdown-cancel" = "Cancel"
+"countdown-hint" = "Esc cancels — the whole UI is locked until then."
 "crash-section" = "Simulate Crash"
 "crash-thread-title" = "Thread"
 "crash-thread-description" = "Where the fault is triggered. The crash happens {seconds} seconds after you confirm."

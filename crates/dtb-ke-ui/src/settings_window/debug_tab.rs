@@ -15,7 +15,7 @@ use crate::components::field::Field;
 use crate::i18n::ActiveLocale;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
-use crate::debug::crash::{self, Kind, Thread};
+use crate::debug::crash::{Kind, Thread};
 use crate::debug::{DebugSettings, MailSim, SkinOverride, Tri};
 use crate::settings::Settings;
 use crate::theme::ActiveTheme;
@@ -226,7 +226,7 @@ impl SettingsWindow {
             if answer.await.unwrap_or(1) != 0 {
                 return;
             }
-            cx.update(|_, cx| crash::trigger(kind, thread, CRASH_DELAY, cx)).ok();
+            cx.update(|_, cx| crate::crash_countdown::start(kind, thread, CRASH_DELAY, cx)).ok();
         })
         .detach();
     }
