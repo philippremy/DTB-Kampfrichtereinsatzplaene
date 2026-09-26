@@ -305,7 +305,7 @@ unsafe extern "system" fn filter(ep: *mut ExceptionPointers) -> i32 {
     CloseHandle(pi.h_process);
 
     // params: dump_dir \0 slug \0 main_exe \0 done_event \0 pid \0 tid \0
-    //         exc_ptr \0 exc_code \0 panic_msg
+    //         exc_ptr \0 exc_code \0 panic_msg \0 build_info
     let w = PipeW(wr);
     w.cstr(&DUMP_DIR);
     w.sep();
@@ -324,6 +324,8 @@ unsafe extern "system" fn filter(ep: *mut ExceptionPointers) -> i32 {
     w.u64(exc_code as u64);
     w.sep();
     w.cstr_ptr(crate::panic::message_ptr());
+    w.sep();
+    w.cstr_ptr(crate::buildinfo::cstr_ptr());
     CloseHandle(wr);
 
     dtb_ke_log::fault!(" ---[ end trace {exc_code:#x} ]---");

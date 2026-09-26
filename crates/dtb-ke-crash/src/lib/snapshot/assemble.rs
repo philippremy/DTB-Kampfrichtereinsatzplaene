@@ -217,6 +217,18 @@ pub fn to_minidump(snap: &CrashSnapshotDTO) -> Vec<u8> {
         stream(&mut dir, MINIDUMP_STREAM_TYPE::ThreadNamesStream, MINIDUMP_LOCATION_DESCRIPTOR { data_size: out.pos() - start, rva: start });
     }
 
+    // ── build info (user stream) ──
+    if !snap.session.build_info.is_empty() {
+        let rva = out.bytes(snap.session.build_info.as_bytes());
+        dir.push(MINIDUMP_DIRECTORY {
+            stream_type: crate::buildinfo::STREAM_TYPE,
+            location: MINIDUMP_LOCATION_DESCRIPTOR { data_size: snap.session.build_info.len() as u32, rva },
+        });
+        while out.buf.len() % 4 != 0 {
+            out.buf.push(0);
+        }
+    }
+
     // ── directory + header ──
     let dir_rva = out.pos();
     for d in &dir {

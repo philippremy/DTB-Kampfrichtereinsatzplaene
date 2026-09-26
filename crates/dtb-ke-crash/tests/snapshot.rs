@@ -44,6 +44,7 @@ fn synthetic() -> CrashSnapshotDTO {
         machine: "iPad14,1".into(),
         ncpu: 8,
         exe_path: "/var/containers/Bundle/Application/X/App.app/App".into(),
+        build_info: "app_version=1.2.3\ncommit=abc123\ntarget=aarch64-apple-ios\n".into(),
         modules: vec![
             ModuleDTO { base: 0x1_8000_0000, size: 0x10_0000, uuid: [9; 16], is_main: false, path: "/usr/lib/system/libsystem_c.dylib".into() },
             ModuleDTO { base: TEXT, size: 0x8000, uuid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], is_main: true, path: "/var/containers/Bundle/Application/X/App.app/App".into() },
@@ -150,4 +151,70 @@ fn digest_names_frames_by_module_offset() {
     assert!(d.stack.contains("#0 App +0x1100"), "{}", d.stack);
     assert!(d.stack.contains("#1 App +0x2200"), "{}", d.stack);
     assert!(d.stack.contains("#2 App +0x3300"), "{}", d.stack);
+}
+
+const INFO: &str = "app_version=1.2.3\ncommit=abc123\ntarget=aarch64-apple-ios\n";
+
+fn user_stream(dmp: Vec<u8>) -> Option<String> {
+    let dump = Minidump::read(dmp).expect("valid minidump");
+    dump.get_raw_stream(dtb_ke_crash::buildinfo::STREAM_TYPE)
+        .ok()
+        .map(|b| String::from_utf8(b.to_vec()).unwrap())
+}
+
+#[test]
+fn assembled_dump_carries_the_build_info_stream() {
+    let text = user_stream(snapshot::to_minidump(&synthetic())).expect("stream present");
+    assert_eq!(text, INFO);
+    let parsed = dtb_ke_crash::buildinfo::parse(&text);
+    assert_eq!(parsed["commit"], "abc123");
+    assert_eq!(parsed["target"], "aarch64-apple-ios");
+}
+
+#[test]
+fn patching_appends_a_stream_and_keeps_the_rest_readable() {
+    use dtb_ke_crash::{buildinfo::STREAM_TYPE, patch};
+    let mut snap = synthetic();
+    snap.session.build_info.clear();
+    let mut dmp = snapshot::to_minidump(&snap);
+    assert!(user_stream(dmp.clone()).is_none());
+    let streams_before = Minidump::read(dmp.clone()).unwrap().all_streams().count();
+
+    patch::append_stream(&mut dmp, STREAM_TYPE, INFO.as_bytes()).unwrap();
+    assert_eq!(dmp.len() % 4, 0, "directory stays 4-byte aligned");
+    let dump = Minidump::read(dmp.clone()).unwrap();
+    assert_eq!(dump.all_streams().count(), streams_before + 1);
+    assert!(dump.get_stream::<MinidumpException>().is_ok(), "existing streams unharmed");
+    assert!(dump.get_stream::<MinidumpModuleList>().is_ok());
+    assert_eq!(user_stream(dmp.clone()).unwrap(), INFO);
+
+    // Patching again replaces rather than duplicating.
+    patch::append_stream(&mut dmp, STREAM_TYPE, b"commit=new\n").unwrap();
+    let dump = Minidump::read(dmp.clone()).unwrap();
+    assert_eq!(dump.all_streams().count(), streams_before + 1);
+    assert_eq!(user_stream(dmp).unwrap(), "commit=new\n");
+}
+
+#[test]
+fn patching_rejects_garbage_without_touching_it() {
+    use dtb_ke_crash::patch::{self, PatchError};
+    let mut junk = b"definitely not a minidump, but long enough to have a header".to_vec();
+    let before = junk.clone();
+    assert_eq!(patch::append_stream(&mut junk, 1, b"x"), Err(PatchError::NotAMinidump));
+    assert_eq!(junk, before);
+
+    let mut dmp = snapshot::to_minidump(&synthetic());
+    dmp[12..16].copy_from_slice(&0xffff_fff0u32.to_le_bytes()); // directory RVA past the end
+    let before = dmp.clone();
+    assert_eq!(patch::append_stream(&mut dmp, 1, b"x"), Err(PatchError::Corrupt));
+    assert_eq!(dmp, before);
+}
+
+#[test]
+fn build_info_render_round_trips_and_flattens_newlines() {
+    use dtb_ke_crash::buildinfo::{parse, render};
+    let text = render([("a", "1".to_string()), ("linker", "clang\n21.0=x".to_string())]);
+    let p = parse(&text);
+    assert_eq!(p["a"], "1");
+    assert_eq!(p["linker"], "clang 21.0=x");
 }

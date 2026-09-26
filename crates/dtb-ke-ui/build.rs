@@ -74,6 +74,12 @@ fn main() {
     // ── VCS ────────────────────────────────────────────────────────────────
     let vcs = Vcs::detect(&workspace_root);
     put_opt(&mut meta, "COMMIT", vcs.commit);
+    put_opt(&mut meta, "COMMIT_FULL", vcs.commit_full);
+    put_str(
+        &mut meta,
+        "WORKSPACE_ROOT",
+        &workspace_root.to_string_lossy(),
+    );
     put_opt(&mut meta, "BRANCH", vcs.branch);
     put_opt(&mut meta, "COMMIT_DATE", vcs.commit_date);
     put_opt(&mut meta, "WORKING_TREE", vcs.working_tree);
@@ -594,6 +600,7 @@ fn table_body<'a>(toml: &'a str, header: &str) -> Option<Vec<(&'a str, String)>>
 
 struct Vcs {
     commit: Option<String>,
+    commit_full: Option<String>,
     branch: Option<String>,
     commit_date: Option<String>,
     working_tree: Option<String>,
@@ -619,6 +626,7 @@ impl Vcs {
         if !inside {
             return Self {
                 commit: None,
+                commit_full: None,
                 branch: None,
                 commit_date: None,
                 working_tree: None,
@@ -627,6 +635,7 @@ impl Vcs {
 
         Self {
             commit: git(&["rev-parse", "--short=12", "HEAD"]),
+            commit_full: git(&["rev-parse", "HEAD"]),
             branch: git(&["rev-parse", "--abbrev-ref", "HEAD"]),
             commit_date: git(&["log", "-1", "--format=%cI"]),
             working_tree: git(&["status", "--porcelain"])

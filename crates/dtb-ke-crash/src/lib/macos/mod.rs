@@ -445,7 +445,7 @@ unsafe fn handle(msg: &[u8]) {
     }
 
     // ── parent: feed the pipe, then close it so the helper sees EOF ──
-    // Fields: dump_dir \0 slug \0 bootstrap_name \0 main_exe \0 panic_msg.
+    // Fields: dump_dir \0 slug \0 bootstrap_name \0 main_exe \0 panic_msg \0 build_info.
     (f.close)(pfd[0]);
     write_cstr(pfd[1], DUMP_DIR.as_ptr());
     write_cstr(pfd[1], APP_SLUG.as_ptr());
@@ -454,6 +454,7 @@ unsafe fn handle(msg: &[u8]) {
     // The panic message static is a NUL-filled buffer when not panicking, so this
     // is just an empty field for a hardware fault.
     write_cstr(pfd[1], crate::panic::message_ptr());
+    write_cstr(pfd[1], crate::buildinfo::cstr_ptr());
     (f.close)(pfd[1]);
 
     // ── parent: the mach handoff ──

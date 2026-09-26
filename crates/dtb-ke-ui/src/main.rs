@@ -100,6 +100,7 @@ fn main() {
             .get_log_dir()
             .join("crashes"),
         app_slug: "DTB-KE".to_string(),
+        build_info: build_info::stream_text(),
     }) {
         error!("Failed to install global crash handler: {err}");
     } else {

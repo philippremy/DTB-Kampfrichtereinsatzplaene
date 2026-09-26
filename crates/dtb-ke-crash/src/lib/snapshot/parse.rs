@@ -147,6 +147,7 @@ pub(super) fn parse_session(bytes: &[u8]) -> Result<SessionDTO, SnapshotError> {
                     "machine" => s.machine = value,
                     "ncpu" => s.ncpu = value.parse().unwrap_or(0),
                     "exe_path" => s.exe_path = value,
+                    "build_info" => s.build_info = value,
                     _ => {}
                 }
             }

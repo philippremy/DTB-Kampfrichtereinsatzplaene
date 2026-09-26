@@ -38,6 +38,7 @@ pub fn encode(session: &SessionDTO) -> Vec<u8> {
     kv(&mut out, "machine", &session.machine);
     kv(&mut out, "ncpu", &session.ncpu.to_string());
     kv(&mut out, "exe_path", &session.exe_path);
+    kv(&mut out, "build_info", &session.build_info);
 
     for m in &session.modules {
         let mut body = Vec::with_capacity(MODULE_FIXED + m.path.len());

@@ -40,6 +40,16 @@ pub mod report {
 #[cfg(feature = "snapshot")]
 pub mod snapshot;
 
+/// The build-info user stream: format, parser and the crash-time global.
+pub mod buildinfo;
+
+/// System-symbol hints: names for OS-library frames, computed on the crashed machine (a second user stream).
+pub mod syshints;
+
+/// Append a stream to a finished minidump (the helper adds [`buildinfo::STREAM_TYPE`] this way).
+#[cfg(feature = "snapshot")]
+pub mod patch;
+
 /// Signal-safe crash-record writer + launch-time session snapshot (Apple arm64: iOS handler, macOS tests).
 #[cfg(all(feature = "snapshot", any(target_os = "macos", target_os = "ios"), target_arch = "aarch64"))]
 #[doc(hidden)]
@@ -90,6 +100,8 @@ pub mod library {
         pub dump_dir: PathBuf,
         /// Short filename slug, e.g. `"DTB-KE"`.
         pub app_slug: String,
+        /// The build-info payload (`buildinfo::render`) written into every dump as a user stream.
+        pub build_info: &'static str,
     }
 
     #[derive(Debug)]
@@ -124,6 +136,7 @@ pub mod library {
             .map_err(|_| InstallError::AlreadyInstalled)?;
 
         super::panic::install_hook();
+        super::buildinfo::set(config.build_info);
 
         #[cfg(target_os = "macos")]
         {

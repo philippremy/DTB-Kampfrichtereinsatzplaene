@@ -40,10 +40,21 @@ mod common {
         dump_dir: &str,
         slug: &str,
         pid: i64,
-        dmp: Vec<u8>,
+        mut dmp: Vec<u8>,
         main_exe: &str,
         panic_msg: &str,
+        build_info: &str,
     ) {
+        // The build-info user stream, so a debugger can tell exactly which build crashed. A failure
+        // here must never cost us the dump itself.
+        if !build_info.is_empty() {
+            let _ = dtb_ke_crash::patch::append_stream(
+                &mut dmp,
+                dtb_ke_crash::buildinfo::STREAM_TYPE,
+                build_info.as_bytes(),
+            );
+        }
+
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -60,18 +71,18 @@ mod common {
         let exe = std::fs::canonicalize(main_exe)
             .map(|c| c.to_string_lossy().into_owned())
             .unwrap_or_else(|_| main_exe.to_string());
-        let framed = frame_digest(&dmp, panic_msg);
+        let framed = frame_digest(&dmp, panic_msg, &path);
         if reporter_says_sent(&exe, framed) && persisted {
             let _ = std::fs::remove_file(&path);
         }
     }
 
-    /// `reason \0 address \0 thread \0 panic_msg \0 stack \0 <minidump>` — the
+    /// `reason \0 address \0 thread \0 panic_msg \0 stack \0 frames \0 dump_path \0 os_build \0 <minidump>` — the
     /// reporter's digest. `thread` is `«name» (0x…)` when the dump names it, else
     /// `0x…`; `stack` is a symbol-free walk of the crashing thread + the module
     /// table (for offset-wise symbolication). The helper parses the `.dmp` so
     /// `dtb-ke-ui` needn't link `minidump`.
-    fn frame_digest(dmp: &[u8], panic_msg: &str) -> Vec<u8> {
+    fn frame_digest(dmp: &[u8], panic_msg: &str, dump_path: &str) -> Vec<u8> {
         let parsed = minidump::Minidump::read(dmp).ok();
         let (reason, address, thread) = parsed
             .as_ref()
@@ -99,6 +110,18 @@ mod common {
             .as_ref()
             .map(|dump| stack_summary(dump))
             .unwrap_or_default();
+        // Every thread's frames as (image UUID, offset) for the reporter to name system-library frames with, and
+        // the OS build those names belong to.
+        let frames = parsed
+            .as_ref()
+            .map(|dump| dtb_ke_crash::syshints::encode_frames(&all_frames(dump)))
+            .unwrap_or_default();
+        let os_build = parsed
+            .as_ref()
+            .and_then(|dump| dump.get_stream::<minidump::MinidumpSystemInfo>().ok())
+            .and_then(|sys| sys.csd_version().map(|b| b.trim().to_owned()))
+            .filter(|b| b.len() <= 12 && !b.contains(' '))
+            .unwrap_or_default();
 
         let mut v = Vec::with_capacity(dmp.len() + stack.len() + 256);
         for field in [
@@ -107,12 +130,71 @@ mod common {
             thread.as_str(),
             panic_msg,
             stack.as_str(),
+            frames.as_str(),
+            dump_path,
+            os_build.as_str(),
         ] {
             v.extend_from_slice(field.as_bytes());
             v.push(0);
         }
         v.extend_from_slice(dmp);
         v
+    }
+
+    /// A symbol-free walk of **every thread**: one `FrameRef` (image UUID + offset into it) per frame that lands in a
+    /// module. The offset is that of the *call instruction* for caller frames (`StackFrame::instruction`), which is
+    /// the address that names the function.
+    fn all_frames(dump: &minidump::Minidump<'_, &[u8]>) -> Vec<dtb_ke_crash::syshints::FrameRef> {
+        use dtb_ke_crash::syshints::FrameRef;
+        use minidump::{MinidumpModuleList, Module};
+        use minidump_unwind::{CallStack, MultiSymbolProvider, SystemInfo, walk_stack};
+
+        let (Ok(sys), Ok(threads)) =
+            (dump.get_stream::<minidump::MinidumpSystemInfo>(), dump.get_stream::<minidump::MinidumpThreadList>())
+        else {
+            return Vec::new();
+        };
+        let modules = dump.get_stream::<MinidumpModuleList>().unwrap_or_else(|_| MinidumpModuleList::new());
+        let misc = dump.get_stream::<minidump::MinidumpMiscInfo>().ok();
+        let memory = dump.get_memory().unwrap_or_default();
+        let unwind_sys = SystemInfo {
+            os: sys.os,
+            cpu: sys.cpu,
+            os_version: None,
+            os_build: None,
+            cpu_info: None,
+            cpu_microcode_version: None,
+            cpu_count: 1,
+        };
+        let provider = MultiSymbolProvider::new();
+
+        let mut out = Vec::new();
+        for thread in &threads.threads {
+            let Some(context) = thread.context(&sys, misc.as_ref()) else { continue };
+            let tid = thread.raw.thread_id;
+            let mut stack = CallStack::with_context(context.into_owned());
+            stack.thread_id = tid;
+            futures::executor::block_on(walk_stack(
+                0,
+                (),
+                &mut stack,
+                thread.stack_memory(&memory),
+                &modules,
+                &unwind_sys,
+                &provider,
+            ));
+            for frame in &stack.frames {
+                let Some(module) = &frame.module else { continue };
+                let Some(id) = module.debug_identifier() else { continue };
+                out.push(FrameRef {
+                    thread: u64::from(tid),
+                    uuid: *id.uuid().as_bytes(),
+                    offset: frame.instruction.wrapping_sub(module.raw.base_of_image),
+                    path: module.code_file().into_owned(),
+                });
+            }
+        }
+        out
     }
 
     /// A symbol-free walk of the crashing thread (`module +offset [trust]`
@@ -293,6 +375,7 @@ mod macos {
         let bootstrap_name = next();
         let main_exe = next();
         let panic_msg = next();
+        let build_info = next();
         if dump_dir.is_empty() || bootstrap_name.is_empty() {
             std::process::exit(2);
         }
@@ -301,7 +384,7 @@ mod macos {
             std::process::exit(3)
         };
 
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg);
+        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
     }
 
     unsafe fn capture(bootstrap_name: &str) -> Option<(Vec<u8>, i32)> {
@@ -486,7 +569,7 @@ mod windows {
                 .map(|f| String::from_utf8_lossy(f).into_owned())
                 .unwrap_or_default()
         };
-        // dump_dir, slug, main_exe, done_event, pid, tid, exc_ptr, exc_code, panic_msg
+        // dump_dir, slug, main_exe, done_event, pid, tid, exc_ptr, exc_code, panic_msg, build_info
         let dump_dir = next();
         let slug = next();
         let main_exe = next();
@@ -496,6 +579,7 @@ mod windows {
         let exc_ptr: usize = next().parse().unwrap_or(0);
         let exc_code: i32 = next().parse().unwrap_or(0);
         let panic_msg = next();
+        let build_info = next();
         if dump_dir.is_empty() || pid == 0 {
             std::process::exit(2);
         }
@@ -522,7 +606,7 @@ mod windows {
         };
         release();
 
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg);
+        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
     }
 
     fn capture(pid: u32, tid: u32, exc_ptr: usize, exc_code: i32, slug: &str) -> Option<Vec<u8>> {
@@ -557,12 +641,12 @@ mod linux {
     pub fn run() {
         // Parameters arrive on stdin, NUL-separated (see `dtb-ke-crash`'s Linux
         // handler): dump_dir, slug, main_exe, pid, tid, signo, si_code, si_addr,
-        // done_fd, panic_msg, then the raw `ucontext_t` bytes as the tail.
+        // done_fd, panic_msg, build_info, then the raw `ucontext_t` bytes as the tail.
         let mut blob = Vec::with_capacity(8192);
         if std::io::stdin().read_to_end(&mut blob).is_err() || blob.is_empty() {
             std::process::exit(2);
         }
-        let mut fields = blob.splitn(11, |&b| b == 0);
+        let mut fields = blob.splitn(12, |&b| b == 0);
         let mut txt = || {
             fields
                 .next()
@@ -579,6 +663,7 @@ mod linux {
         let si_addr: u64 = txt().parse().unwrap_or(0);
         let done_fd: i32 = txt().parse().unwrap_or(-1);
         let panic_msg = txt();
+        let build_info = txt();
         let uctx = fields.next().unwrap_or(&[]).to_vec();
 
         // Release the crashed process the moment we're done reading it — it is
@@ -601,7 +686,7 @@ mod linux {
         let Some(dmp) = dmp else {
             std::process::exit(3)
         };
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg);
+        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
     }
 
     fn capture(

@@ -10,6 +10,7 @@ members = [
     "crates/dtb-ke-log",
     "crates/dtb-ke-persist",
     "crates/dtb-ke-resource",
+    "crates/dtb-ke-syms",
     "crates/dtb-ke-types",
     "crates/dtb-ke-ui",
     "crates/dtb-ke-util",
@@ -27,6 +28,7 @@ dtb-ke-export = { path = "crates/dtb-ke-export" }
 dtb-ke-log = { path = "crates/dtb-ke-log" }
 dtb-ke-persist = { path = "crates/dtb-ke-persist" }
 dtb-ke-resource = { path = "crates/dtb-ke-resource" }
+dtb-ke-syms = { path = "crates/dtb-ke-syms" }
 dtb-ke-types = { path = "crates/dtb-ke-types" }
 dtb-ke-util = { path = "crates/dtb-ke-util" }
 

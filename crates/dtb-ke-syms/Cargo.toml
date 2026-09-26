@@ -1,0 +1,21 @@
+[package]
+name = "dtb-ke-syms"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "System-library symbolication on the machine that crashed: the dyld shared cache reader (macOS) and a dladdr fallback (iOS), as cancellable background jobs. Shared by the crash reporter and dtb-ke-debugger."
+
+[dependencies]
+# The hints stream format (feature-free std code).
+dtb-ke-crash = { workspace = true }
+
+log.workspace = true
+memmap2 = "0.9"
+# `macho` carries `DyldCache`. 0.40 or newer: 0.37 rejects the images of current (macOS 27) dyld caches with "Invalid
+# Mach-O number of sections"; 0.36 parses them, and 0.40 fixes it properly (section data now takes its file offset).
+object = { version = "0.40", default-features = false, features = ["read_core", "macho", "std"] }
+rustc-demangle = "0.1"
+cpp_demangle = "0.4"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+libc.workspace = true

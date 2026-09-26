@@ -112,3 +112,46 @@ pub fn rows(locale: &crate::i18n::Locale) -> Vec<(gpui_kit::SharedString, String
         ),
     ]
 }
+
+/// The build-info payload written into every crash dump as a user stream (`dtb_ke_crash::buildinfo`),
+/// so `dtb-ke-debugger` can tell exactly which build crashed and where its debug files live. Locale
+/// independent (raw keys, raw values); built once and kept for the process lifetime.
+pub fn stream_text() -> &'static str {
+    use dtb_ke_crash::buildinfo::render;
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| {
+        render([
+            ("format", "1".to_string()),
+            ("app_version", APP_VERSION.to_string()),
+            ("commit", COMMIT.to_string()),
+            ("commit_full", COMMIT_FULL.to_string()),
+            ("branch", BRANCH.to_string()),
+            ("commit_date", COMMIT_DATE.to_string()),
+            ("dirty", (WORKING_TREE == "verändert").to_string()),
+            ("identifier", IDENTIFIER.to_string()),
+            // Where the source lives — the debugger fetches single files from here on request.
+            ("repository", crate::actions::REPOSITORY_URL.to_string()),
+            ("profile", PROFILE.to_string()),
+            ("opt_level", OPT_LEVEL.to_string()),
+            ("debug_assertions", DEBUG_ASSERTIONS.to_string()),
+            ("debug_info", DEBUG_INFO.to_string()),
+            ("lto", LTO.to_string()),
+            ("codegen_units", CODEGEN_UNITS.to_string()),
+            ("panic", PANIC_STRATEGY.to_string()),
+            ("strip", STRIP.to_string()),
+            ("incremental", INCREMENTAL.to_string()),
+            ("rustc", RUST_VERSION.to_string()),
+            ("llvm", LLVM_VERSION.to_string()),
+            ("linker", LINKER.to_string()),
+            ("target", TARGET_TRIPLE.to_string()),
+            ("host", HOST_TRIPLE.to_string()),
+            ("workspace_root", WORKSPACE_ROOT.to_string()),
+            // The dump leaves the main module's file name empty on macOS; this is how the debugger finds it.
+            (
+                "exe_path",
+                std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            ),
+            ("dependency_count", DEPENDENCY_COUNT.to_string()),
+        ])
+    })
+}

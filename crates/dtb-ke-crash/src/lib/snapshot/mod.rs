@@ -114,6 +114,8 @@ pub struct SessionDTO {
     pub machine: String,
     pub ncpu: u32,
     pub exe_path: String,
+    /// The build-info payload (`buildinfo` format), empty if the app supplied none.
+    pub build_info: String,
     pub modules: Vec<ModuleDTO>,
 }
 

@@ -229,7 +229,7 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
         sys!(libc::SYS_close, DONE_FDS[1]);
 
         // params: dump_dir \0 slug \0 main_exe \0 pid \0 tid \0 signo \0
-        //         si_code \0 si_addr \0 done_fd \0 panic_msg \0 <ucontext bytes>
+        //         si_code \0 si_addr \0 done_fd \0 panic_msg \0 build_info \0 <ucontext bytes>
         let w = PARAM_FDS[1];
         write_cstr(w, DUMP_DIR.as_ptr());
         write_cstr(w, APP_SLUG.as_ptr());
@@ -241,6 +241,7 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
         write_uint(w, si_addr);
         write_uint(w, DONE_FDS[1] as u64); // fd number is valid in the child
         write_cstr(w, crate::panic::message_ptr());
+        write_cstr(w, crate::buildinfo::cstr_ptr());
         write_all(w, uctx.cast::<u8>(), UCONTEXT_BYTES);
         sys!(libc::SYS_close, w);
 
