@@ -250,7 +250,7 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
         <ProgId Id="{progid}" Description="{doc_name}"{doc_icon_attr}>
           <Extension Id="{ext}" ContentType="{mime}">
             <Verb Id="open" Command="Öffnen" TargetFile="AppExe" Argument="&quot;%1&quot;" />
-            <MIME Id="{mime}" ContentType="{mime}" Default="yes" />
+            <MIME ContentType="{mime}" Default="yes" />
           </Extension>
         </ProgId>
       </Component>
@@ -424,7 +424,7 @@ mod tests {
             r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan" Icon="DocumentIcon.ico">"#,
             r#"<Extension Id="dtbke" ContentType="application/x-dtbke">"#,
             r#"TargetFile="AppExe""#,
-            r#"<MIME Id="application/x-dtbke" ContentType="application/x-dtbke" Default="yes" />"#,
+            r#"<MIME ContentType="application/x-dtbke" Default="yes" />"#,
         ] {
             assert!(wxs.contains(needle), "wxs missing {needle:?}");
         }
