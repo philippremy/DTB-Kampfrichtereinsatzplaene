@@ -876,9 +876,9 @@ an iOS failure must not block the desktop release.
 - **SDK**: like the macOS leg, `dtb-ke-bundle` restamps the binary's `LC_BUILD_VERSION` SDK up to
   `meta::IOS_SDK_FLOOR` (26.0) with `vtool`, because Liquid Glass is gated on the *linked* SDK.
 - **Toolchain on the legacy Mac**: iOS needs a **full Xcode** (Command Line Tools have no iPhoneOS SDK) —
-  the newest one macOS 13 runs is Xcode 15.2. Known limits of that: `actool` there cannot compile the Icon
-  Composer `.icon` (the bundle then ships without the app icon and warns), and the Metal 4 shader path in
-  `gpui_apple` may not compile against the old Metal toolchain. `runner-setup-macos.sh` installs the
+  the newest one macOS 13 runs is Xcode 15.2. The app icon is *not* compiled on the runner: `Assets.car`, the fallback PNGs and the icon
+  keys are committed under `assets/icons/generated/ios/` (`cargo dtb-ke-bundle icons` on a Mac with Xcode 26).
+  Remaining risk: the Metal 4 shader path in `gpui_apple` may not compile against the old Metal toolchain. `runner-setup-macos.sh` installs the
   `aarch64-apple-ios` Rust target; installing Xcode is manual. Not yet run for real.
 
 ## Secrets

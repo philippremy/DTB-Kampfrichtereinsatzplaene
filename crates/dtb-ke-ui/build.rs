@@ -217,7 +217,7 @@ fn emit_update_key(out: &Path, workspace_root: &Path) {
 // ── Windows executable resource (.ico + VERSIONINFO) ──────────────────────
 //
 // A no-op unless `TARGET` is a Windows triple. Rasterises the shared master
-// `assets/icons/AppIcon.png` down to a multi-resolution `app.ico`, writes a
+// `assets/icons/generated/AppIcon.png` down to a multi-resolution `app.ico`, writes a
 // tiny `app.rc` next to it, and hands that to `embed-resource`, which selects
 // the resource compiler per target — `rc.exe` (MSVC), `llvm-rc` (building on
 // Windows for gnu/gnullvm), or `<arch>-w64-mingw32-windres` (cross-compiling to
@@ -229,12 +229,12 @@ fn embed_windows_resource(out: &Path, workspace_root: &Path) {
         return;
     }
 
-    let master = workspace_root.join("assets/icons/AppIcon.png");
+    let master = workspace_root.join("assets/icons/generated/AppIcon.png");
     println!("cargo:rerun-if-changed={}", master.display());
 
     let Ok(bytes) = fs::read(&master) else {
         println!(
-            "cargo:warning=dtb-ke-ui: assets/icons/AppIcon.png not found — the Windows .exe will have no icon"
+            "cargo:warning=dtb-ke-ui: assets/icons/generated/AppIcon.png not found — the Windows .exe will have no icon"
         );
         return;
     };

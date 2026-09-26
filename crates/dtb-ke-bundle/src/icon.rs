@@ -184,8 +184,63 @@ fn generate_app_icon() -> Result<bool, String> {
     build_ico(&flat, &ico_path())?;
     build_hicolor_named(&flat, "apps", meta::RDNS_ID)?;
     generate_ios_about_icons(&master, &scratch)?;
+    generate_ios_app_icon(&master, &scratch)?;
 
     Ok(true)
+}
+
+/// `assets/icons/generated/ios/` — the iOS app icon, compiled by `actool` from the Icon Composer
+/// master: `Assets.car` (Liquid Glass with light / dark / tinted variants on iOS 26), the flattened
+/// fallback PNGs older systems use, and `icon-info.plist`, the icon keys `actool` reports
+/// (`CFBundleIcons~ipad`, `CFBundleIconName`) that `ios.rs` merges into the bundle's `Info.plist`.
+/// Committed like every other generated icon, so CI hosts without Xcode 26 (the legacy Mac runner)
+/// just copy them in.
+pub fn ios_dir() -> PathBuf {
+    generated_dir().join("ios")
+}
+pub fn ios_icon_plist() -> PathBuf {
+    ios_dir().join("icon-info.plist")
+}
+pub fn ios_available() -> bool {
+    ios_dir().join("Assets.car").exists() && ios_icon_plist().exists()
+}
+
+/// Compile the iOS icon into [`ios_dir`]. Built for `iphoneos`; the simulator loads the same catalog.
+fn generate_ios_app_icon(master: &Path, scratch: &Path) -> Result<(), String> {
+    let work = scratch.join("ios-actool");
+    util::fresh_dir(&work).map_err(io("iOS icon scratch dir"))?;
+    let partial = work.join("partial.plist");
+    let output = Command::new("xcrun")
+        .args(["actool", "--compile"])
+        .arg(&work)
+        .args(["--platform", "iphoneos", "--minimum-deployment-target", meta::IOS_MIN_VERSION])
+        .args(["--target-device", "ipad", "--app-icon", APP_ICON_NAME])
+        .args(["--include-all-app-icons", "--errors", "--warnings", "--notices"])
+        .arg("--output-partial-info-plist")
+        .arg(&partial)
+        .arg(master)
+        .output()
+        .map_err(|e| format!("failed to spawn actool: {e}"))?;
+    // actool can exit 0 having written nothing, so check for the outputs themselves.
+    if !output.status.success() || !work.join("Assets.car").exists() || !partial.exists() {
+        return Err(format!(
+            "actool did not compile the iOS icon (exit {}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    let dest = ios_dir();
+    util::fresh_dir(&dest).map_err(io("iOS icon output dir"))?;
+    for entry in std::fs::read_dir(&work).map_err(io("iOS icon scratch dir"))? {
+        let path = entry.map_err(io("iOS icon scratch dir"))?.path();
+        let name = path.file_name().unwrap().to_owned();
+        if name == "partial.plist" {
+            std::fs::copy(&path, ios_icon_plist()).map_err(io("icon-info.plist"))?;
+        } else if path.is_file() {
+            std::fs::copy(&path, dest.join(name)).map_err(io("iOS icon file"))?;
+        }
+    }
+    Ok(())
 }
 
 /// The About window's iOS icons: the Default and Dark renditions of the Icon Composer master,

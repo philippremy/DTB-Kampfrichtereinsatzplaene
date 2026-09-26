@@ -6,7 +6,7 @@
 //! DTB Kampfrichtereinsatzpläne.app/
 //!   Info.plist
 //!   DTB-Kampfrichtereinsatzplaene      — the executable
-//!   Assets.car                         — app icon (compiled by `actool`)
+//!   Assets.car                         — app icon (pre-compiled by `actool`, committed)
 //!   embedded.mobileprovision           — device builds only
 //! ```
 //!
@@ -70,12 +70,16 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
 
     std::fs::write(app.join("Info.plist"), info_plist(platform, sdk_name, document_icons)).map_err(io)?;
 
-    if icon::master_dir().exists() {
-        if let Err(e) = compile_icon(&app, platform) {
+    if icon::ios_available() {
+        if let Err(e) = install_icon(&app) {
             eprintln!("dtb-ke-bundle: warning — bundling without an app icon: {e}");
         }
     } else {
-        eprintln!("dtb-ke-bundle: warning — no icon master at {}", icon::master_dir().display());
+        eprintln!(
+            "dtb-ke-bundle: warning — no pre-compiled iOS icon in {} (run `cargo dtb-ke-bundle icons` \
+             on a Mac with Xcode 26 and commit the result)",
+            icon::ios_dir().display()
+        );
     }
 
     let profile = flag_env(&cx.provisioning_profile, "DTB_KE_PROVISIONING_PROFILE");
@@ -255,49 +259,26 @@ fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
     )
 }
 
-/// Compile the Icon Composer master (`AppIcon.icon`) with `actool` straight into the app: the
-/// `Assets.car` carrying the real icon — Liquid Glass with its light / dark / tinted variants on
-/// iOS 26 — plus the flattened fallback PNGs older systems use, and merge the icon keys it reports
-/// (`CFBundleIcons~ipad`, `CFBundleIconName`) into `Info.plist`.
-///
-/// The `.icon` package, not the flat `AppIcon.png`: that one is the *macOS* icon (inset with a
-/// margin and transparent squircle corners), and iOS masks its icons itself, so it showed a white
-/// outline around the pre-rounded art.
-fn compile_icon(app: &Path, platform: &str) -> Result<(), String> {
-    let master = icon::master_dir();
-    let work = app.parent().unwrap().join("ios-icon-work");
-    fresh_dir(&work).map_err(io)?;
-    let partial = work.join("partial.plist");
-    let output = Command::new("xcrun")
-        .args(["actool", "--compile"])
-        .arg(app)
-        .args(["--platform", platform, "--minimum-deployment-target", meta::IOS_MIN_VERSION])
-        .args(["--target-device", "ipad", "--app-icon", icon::APP_ICON_NAME])
-        .args(["--include-all-app-icons", "--errors", "--warnings", "--notices"])
-        .arg("--output-partial-info-plist")
-        .arg(&partial)
-        .arg(&master)
-        .output()
-        .map_err(|e| format!("failed to spawn actool: {e}"))?;
-    // actool can exit 0 having written nothing, so check for the outputs themselves.
-    if !output.status.success() || !app.join("Assets.car").exists() || !partial.exists() {
-        return Err(format!(
-            "actool did not compile {} (exit {}): {}",
-            master.display(),
-            output.status,
-            String::from_utf8_lossy(&output.stdout)
-        ));
+/// Install the pre-compiled iOS app icon (`assets/icons/generated/ios/`, see `icon::ios_dir`): copy
+/// `Assets.car` and the fallback PNGs into the app and merge the icon keys `actool` reported
+/// (`CFBundleIcons~ipad`, `CFBundleIconName`) into `Info.plist`. Compiled ahead of time by
+/// `cargo dtb-ke-bundle icons` because it needs Xcode 26's `actool`, which CI hosts may lack.
+fn install_icon(app: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(icon::ios_dir()).map_err(io)? {
+        let path = entry.map_err(io)?.path();
+        if path.is_file() && path != icon::ios_icon_plist() {
+            copy(&path, &app.join(path.file_name().unwrap())).map_err(io)?;
+        }
     }
     let status = Command::new("/usr/libexec/PlistBuddy")
         .arg("-c")
-        .arg(format!("Merge \"{}\"", partial.display()))
+        .arg(format!("Merge \"{}\"", icon::ios_icon_plist().display()))
         .arg(app.join("Info.plist"))
         .status()
         .map_err(|e| format!("failed to spawn PlistBuddy: {e}"))?;
     if !status.success() {
-        return Err("merging the actool icon keys into Info.plist failed".into());
+        return Err("merging the icon keys into Info.plist failed".into());
     }
-    std::fs::remove_dir_all(&work).ok();
     Ok(())
 }
 
