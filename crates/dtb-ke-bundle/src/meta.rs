@@ -119,7 +119,8 @@ pub static DEBUGGER: Product = Product {
     display_name: "DTB Kampfrichtereinsatzpläne Debugger",
     macos_executable_name: "DTB-Kampfrichtereinsatzplaene-Debugger",
     identifier: "de.philippremy.DTB-Kampfrichtereinsatzplaene.Debugger",
-    rdns_id: "de.philippremy.DTB-Kampfrichtereinsatzplaene.Debugger",
+    // Hyphen only in the last component: appstreamcli (fatal in appimagetool) rejects one in a middle component.
+    rdns_id: "de.philippremy.DTB-Kampfrichtereinsatzplaene-Debugger",
     slug: "dtb-ke-kampfrichtereinsatzplaene-debugger",
     summary: "Absturzberichte (.dtbkedmp) der DTB Kampfrichtereinsatzpläne untersuchen und symbolisieren",
     description: "\

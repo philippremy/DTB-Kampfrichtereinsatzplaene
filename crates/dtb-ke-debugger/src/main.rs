@@ -1,6 +1,9 @@
 //! `dtb-ke-debugger` — the developer's crash-report viewer (`.dtbkedmp`). Packaged locally
 //! (`cargo dtb-ke-bundle bundle --product debugger`), not built by CI, no updater.
 
+// minidump-processor's nested async futures overflow the default (128) auto-trait (`Send`) check.
+#![recursion_limit = "256"]
+
 mod app_menu;
 mod open_files;
 mod tokio_bridge;
