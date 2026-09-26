@@ -1,0 +1,31 @@
+[package]
+name = "dtb-ke-symbol-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "The symbol server behind the crash-report debugger: stores debug files by Breakpad debug id (GET/PUT /v1/debug/{id}). Runs on a small home server behind a TLS-terminating reverse proxy; gpui-free."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dtb-ke-symbol-server"
+path = "src/main.rs"
+
+[dependencies]
+dtb-ke-symid.workspace = true
+
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+env_logger = { version = "0.11", default-features = false }
+futures-util = { version = "0.3", default-features = false }
+log.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net", "signal", "io-util", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

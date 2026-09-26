@@ -1,0 +1,12 @@
+[package]
+name = "dtb-ke-symid"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "What a debug file is, in terms a crash dump matches: its Breakpad debug id (Mach-O / ELF / PE / PDB). Shared by the debugger and the symbol server; gpui-free."
+
+[dependencies]
+memmap2 = "0.9"
+# `debug_id_for_object` (the Breakpad-compatible id rules); its `object`, `debugid` and `pdb` re-exports keep every
+# crate on the same versions wholesym uses.
+samply-symbols = "0.24"

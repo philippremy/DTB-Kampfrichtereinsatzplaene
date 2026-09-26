@@ -16,6 +16,7 @@ path = "src/main.rs"
 # The build-info user stream's format + parser (`buildinfo` is feature-free std code).
 dtb-ke-crash = { workspace = true }
 dtb-ke-syms.workspace = true
+dtb-ke-symid.workspace = true
 dirs.workspace = true
 # The viewer: our theme / skin / components, settings and i18n, shared with the app.
 dtb-ke-log.workspace = true
@@ -49,6 +50,10 @@ tree-sitter-rust = "0.24.2"
 gix = { version = "=0.87.0", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "sha1"] }
 
 [dev-dependencies]
+# The real symbol server, run in-process (tests/real_server.rs) — not just a stub of its protocol.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+dtb-ke-symbol-server = { path = "../dtb-ke-symbol-server" }
+tempfile = "3"
 # A tiny synthetic dump (the snapshot assembler) as a fixture.
 dtb-ke-crash = { workspace = true, features = ["snapshot"] }
 libc.workspace = true
