@@ -219,8 +219,9 @@ impl<'a> Object<'a> {
             // Check for DWARF-standard (gABI) compression, i.e., as generated
             // by ld's `--compress-debug-sections=zlib-gabi` and
             // `--compress-debug-sections=zstd` flags.
-            let flags: u64 = section.sh_flags(self.endian).into();
-            if (flags & u64::from(SHF_COMPRESSED)) == 0 {
+            // Local patch: object 0.40 made the flags a `SectionFlags` newtype.
+            let flags = section.sh_flags(self.endian).0;
+            if (flags & SHF_COMPRESSED.0) == 0 {
                 // Not compressed.
                 return Some(data.0);
             }
@@ -268,7 +269,7 @@ impl<'a> Object<'a> {
         if data.read_bytes(8).ok()?.0 != b"ZLIB\0\0\0\0" {
             return None;
         }
-        let size = usize::try_from(data.read::<object::U32Bytes<_>>().ok()?.get(BigEndian)).ok()?;
+        let size = usize::try_from(data.read::<object::U32<_>>().ok()?.get(BigEndian)).ok()?;
         let buf = stash.allocate(size);
         decompress_zlib(data.0, buf)?;
         Some(buf)
