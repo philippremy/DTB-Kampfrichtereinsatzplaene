@@ -43,6 +43,16 @@ Each entry here is:
   in the crate is untouched. Upstream: `github.com/tursodatabase/turso`,
   `sdk-kit/build.rs`.
 
+- **`backtrace` 0.3.76** (`vendor/backtrace`, a plain copy of the published crate — not a submodule — patched in place; wired in
+  through `[patch.crates-io] backtrace`) — the vendored gpui scheduler depends on it, and it pins `object ^0.37`, which
+  **cannot read current dyld caches** ("Invalid Mach-O number of sections"). `object` 0.40 can, so this copy uses 0.40: two edits,
+  both marked "Local patch": `Cargo.toml` (`object = "0.40.0"`, plus an empty `[workspace]` like every vendored root) and
+  `src/symbolize/gimli/macho.rs` (0.40's `section.data(endian, data, offset)` now takes the section's file offset — for the
+  ordinary Mach-O files backtrace reads, that is the section header's own `offset`). Smoke-tested (`cargo test --test smoke`
+  inside the directory). Remove it when `backtrace` releases against `object` ≥ 0.40 (0.3.76 is the latest as of 2026-09).
+  `samply-symbols` 0.24.1 (debugger-only, via `wholesym`) still pulls `object` 0.36.7: porting it to 0.40 was tried and hit
+  51 mechanical API errors (constants became newtypes) — not done; `dtb-ke-syms` uses 0.40 directly.
+
 ## Manifests in the forks (no symlinks, no shim crates)
 
 Each patched crate lives at its real path inside its fork's submodule — `vendor/zed/crates/gpui*`

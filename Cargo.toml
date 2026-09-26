@@ -194,6 +194,10 @@ dtb-ke-util = { opt-level = 3 }       # the SIMD pixel-swap for the live preview
 [patch.crates-io]
 turso_sdk_kit = { path = "vendor/turso/sdk-kit" }
 
+# Vendored backtrace 0.3.76 (see vendor/README.md): the published crate + a one-line patch, moved from `object` 0.37 to
+# 0.40. Pulled in by the vendored gpui scheduler.
+backtrace = { path = "vendor/backtrace" }
+
 # Vendored taffy (see vendor/README.md): submodule of DioxusLabs/taffy pinned at
 # v0.13.0 (what gpui pins with `=0.13.0`); the fork's branch carries the published Cargo.toml.
 taffy = { path = "vendor/taffy" }
