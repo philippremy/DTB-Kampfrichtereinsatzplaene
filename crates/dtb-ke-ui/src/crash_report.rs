@@ -272,7 +272,9 @@ pub fn run() -> i32 {
 
         let opts = window_options(cx);
         let opened = cx.open_window(opts, move |window, cx| {
-            cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, autosend, window, cx))
+            cx.new(|cx| {
+                ReportWindow::new(summary, subject, body, dmp, log, autosend, exit_verdict(), window, cx)
+            })
         });
         if opened.is_err() {
             std::process::exit(report::ERROR);
@@ -288,6 +290,12 @@ pub fn run() -> i32 {
 /// The reporter never registers a logger of its own, so nothing newer exists.
 /// Capped at 4 MB (the tail, on a line boundary); empty if none is found.
 fn newest_log() -> Vec<u8> {
+    newest_log_before(None)
+}
+
+/// The newest `*.log`, optionally only among files last written at or before `cutoff` — the iOS
+/// reporter runs in the *next* launch, whose own (newer) log must not be mistaken for the crashed one.
+fn newest_log_before(cutoff: Option<std::time::SystemTime>) -> Vec<u8> {
     const CAP: usize = 1 << 22;
     let Ok(dir) = std::fs::read_dir(crate::filesystem::FilesystemHelper::instance().get_log_dir())
     else {
@@ -297,6 +305,7 @@ fn newest_log() -> Vec<u8> {
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "log"))
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .filter(|(mtime, _)| cutoff.is_none_or(|c| *mtime <= c))
         .max_by_key(|(mtime, _)| *mtime)
         .map(|(_, path)| path);
     let Some(path) = newest else {
@@ -521,7 +530,16 @@ impl SendState {
     }
 }
 
+/// How a verdict (`report::*`) leaves the reporter: the desktop reporter is its own process and exits
+/// with it (the helper acts on the code); on iOS it is a sheet in the running app and just closes.
+type Verdict = std::rc::Rc<dyn Fn(i32, &mut App)>;
+
+fn exit_verdict() -> Verdict {
+    std::rc::Rc::new(|code, _| std::process::exit(code))
+}
+
 struct ReportWindow {
+    verdict: Verdict,
     summary: Summary,
     subject: String,
     body: String,
@@ -550,6 +568,7 @@ impl ReportWindow {
         dmp: Vec<u8>,
         log: Vec<u8>,
         autosend: bool,
+        verdict: Verdict,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -573,6 +592,7 @@ impl ReportWindow {
         }
 
         Self {
+            verdict,
             summary,
             subject,
             body,
@@ -615,6 +635,7 @@ impl ReportWindow {
             body: self.body.clone(),
             attachments,
         };
+        let verdict = self.verdict.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -630,7 +651,7 @@ impl ReportWindow {
                     cx.background_executor()
                         .timer(std::time::Duration::from_secs(3))
                         .await;
-                    std::process::exit(report::SENT);
+                    cx.update(|cx| verdict(report::SENT, cx));
                 }
                 Err(err) => {
                     this.update(cx, |this, cx| {
@@ -727,6 +748,7 @@ impl Render for ReportWindow {
 
 impl ReportWindow {
     fn footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let verdict = self.verdict.clone();
         let c = cx.theme().color;
         let weak = cx.entity().downgrade();
 
@@ -748,7 +770,7 @@ impl ReportWindow {
                 .child(
                     div().flex().justify_end().child(
                         Button::new("cr-close", "Schließen")
-                            .on_click(|_, _, _| std::process::exit(report::DECLINED)),
+                            .on_click(move |_, _, cx| verdict(report::DECLINED, cx)),
                     ),
                 );
         }
@@ -809,11 +831,11 @@ impl ReportWindow {
 
         let left_btn = if failed {
             Button::new("cr-keep", "Nur lokal behalten")
-                .on_click(|_, _, _| std::process::exit(report::QUEUED))
+                .on_click(move |_, _, cx| verdict(report::QUEUED, cx))
         } else {
             Button::new("cr-decline", "Nicht senden")
                 .disabled(busy)
-                .on_click(|_, _, _| std::process::exit(report::DECLINED))
+                .on_click(move |_, _, cx| verdict(report::DECLINED, cx))
         };
 
         div()
@@ -988,4 +1010,143 @@ mod tests {
         assert!(m.ends_with('…'));
         assert!(m.chars().count() <= 241);
     }
+}
+
+// ── iOS: a crash from the previous launch, offered as a sheet ─────────────
+//
+// There is no helper process on iOS. The crashed run left a `.crash` snapshot (plus a `.session`
+// sidecar) under `logs/crashes/`; the *next* launch converts each into a `.dmp` — the same artifact
+// the desktop helper writes — and offers to send the newest one in the reporter view, hosted as a
+// sheet.
+
+/// A converted crash, ready to show.
+struct Ready {
+    digest: Digest,
+    dmp_path: std::path::PathBuf,
+    crashed_at: std::time::SystemTime,
+}
+
+fn crash_dir() -> std::path::PathBuf {
+    crate::filesystem::FilesystemHelper::instance().get_log_dir().join("crashes")
+}
+
+/// Turn every pending snapshot into a `.dmp` (sources are removed only once the dump is on disk) and
+/// drop the sidecars of runs that ended normally. Blocking file I/O — run it off the main thread.
+fn convert_pending(dir: &std::path::Path, own_session: Option<std::path::PathBuf>) -> Vec<Ready> {
+    use dtb_ke_crash::snapshot;
+    let mut ready = Vec::new();
+    for pending in snapshot::pending::find(dir) {
+        let crash = match std::fs::read(&pending.crash) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                log::warn!("cannot read crash snapshot {}: {err}", pending.crash.display());
+                continue;
+            }
+        };
+        let session = std::fs::read(&pending.session).ok();
+        let snap = match snapshot::parse(&crash, session.as_deref()) {
+            Ok(snap) => snap,
+            Err(err) => {
+                log::warn!("discarding unreadable crash snapshot {}: {err}", pending.crash.display());
+                snapshot::pending::remove(&pending);
+                continue;
+            }
+        };
+        let dmp_path = pending.crash.with_extension("dmp");
+        if let Err(err) = std::fs::write(&dmp_path, snapshot::to_minidump(&snap)) {
+            log::error!("cannot write {}: {err}", dmp_path.display());
+            continue;
+        }
+        log::info!(
+            "converted crash snapshot {} → {} ({})",
+            pending.crash.display(),
+            dmp_path.display(),
+            if snap.complete { "complete" } else { "truncated" }
+        );
+        snapshot::pending::remove(&pending);
+        ready.push(Ready {
+            digest: digest_of(&snap),
+            dmp_path,
+            crashed_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(snap.crash_time_unix),
+        });
+    }
+    snapshot::pending::remove_stale_sessions(dir, own_session.as_deref());
+    ready
+}
+
+/// The reporter's [`Digest`] for a snapshot — the same fields the desktop helper pipes in, with the
+/// stack as `module +offset` frames plus the app's own images (UUIDs, for offline symbolication).
+fn digest_of(snap: &dtb_ke_crash::snapshot::CrashSnapshotDTO) -> Digest {
+    let d = dtb_ke_crash::snapshot::summary::digest(snap);
+    let thread_name = snap
+        .threads
+        .iter()
+        .find(|t| t.id == d.crashing_thread)
+        .map(|t| t.name.as_str())
+        .filter(|n| !n.is_empty());
+    let mut stack = d.stack;
+    stack.push_str("\nModules:\n");
+    for m in snap.session.modules.iter().filter(|m| m.path.contains(".app/")) {
+        let uuid: String = m.uuid.iter().map(|b| format!("{b:02X}")).collect();
+        stack.push_str(&format!("{:#018x}-{:#018x} {uuid} {}\n", m.base, m.base + m.size, m.path));
+    }
+    Digest {
+        reason: d.reason,
+        address: if d.address == 0 { String::new() } else { format!("{:#018x}", d.address) },
+        crashing_tid: match thread_name {
+            Some(name) => format!("{name} ({:#x})", d.crashing_thread),
+            None => format!("{:#x}", d.crashing_thread),
+        },
+        panic_msg: d.panic_message,
+        stack,
+        minidump: Vec::new(),
+    }
+}
+
+/// Convert any crash left by a previous launch and offer to send the newest. Call once, a moment after
+/// startup, when the main window (which hosts the sheet) exists.
+pub fn offer_pending(cx: &mut App) {
+    let dir = crash_dir();
+    #[cfg(target_os = "ios")]
+    let own = dtb_ke_crash::ios::own_session_path(&dir, "DTB-KE");
+    #[cfg(not(target_os = "ios"))]
+    let own = None;
+
+    cx.spawn(async move |cx| {
+        let ready = cx
+            .background_executor()
+            .spawn(async move { convert_pending(&dir, own) })
+            .await;
+        let Some(newest) = ready.into_iter().last() else { return };
+        cx.update(|cx| present_ready(newest, cx));
+    })
+    .detach();
+}
+
+fn present_ready(ready: Ready, cx: &mut App) {
+    let Ready { mut digest, dmp_path, crashed_at } = ready;
+    digest.minidump = std::fs::read(&dmp_path).unwrap_or_default();
+    let summary = Summary::build(&digest);
+    let (subject, body) = compose(&digest);
+    let dmp = digest.minidump;
+    // The next launch's own log is newer than the crash; take the newest one written up to then.
+    let log = newest_log_before(Some(crashed_at + std::time::Duration::from_secs(2)));
+
+    // Delivered → the `.dmp` has served its purpose. Any other answer keeps it, as on the desktop.
+    let verdict: Verdict = std::rc::Rc::new(move |code, cx| {
+        if code == report::SENT {
+            if let Err(err) = std::fs::remove_file(&dmp_path) {
+                log::warn!("cannot remove {}: {err}", dmp_path.display());
+            }
+        }
+        crate::sheet::dismiss(cx);
+    });
+    let mut options = window_options(cx);
+    // The desktop window title is too long for a sheet header.
+    if let Some(titlebar) = options.titlebar.as_mut() {
+        titlebar.title = Some("Absturzbericht".into());
+    }
+    crate::sheet::present(cx, "crash-report", &options, move |window, cx| {
+        cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, false, verdict, window, cx))
+    });
 }

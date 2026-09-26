@@ -205,6 +205,14 @@ impl AppShell {
             UpdaterEvent::Changed => cx.notify(),
             UpdaterEvent::RelaunchRequested => this.finish_update(cx),
         });
+        // iOS: a crash from the previous launch is offered as a sheet once the window is up.
+        if crate::sheet::enabled() {
+            cx.spawn(async move |_, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(1500)).await;
+                cx.update(|cx| crate::crash_report::offer_pending(cx));
+            })
+            .detach();
+        }
         // First check after a short settle delay, then poll on the recheck
         // interval (each `check` is itself throttled + gated on the setting).
         let updater_loop = {

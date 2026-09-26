@@ -76,12 +76,20 @@ fn main() {
 
     save::remove_stale_staging();
 
-    // Crash capture, before anything else can fault. On a hardware fault or a
-    // panic an out-of-process helper writes a minidump (`.dmp`) under `logs/
-    // crashes/` for offline symbolisation (the shipped binary is stripped — see
-    // `dtb-ke-crash`). iOS cannot spawn a helper process; the system writes the crash report
-    // there, so we only make sure a panic's message and backtrace reach the session log.
-    #[cfg(not(target_os = "ios"))]
+    // Crash capture, before anything else can fault. On a hardware fault or a panic an out-of-process
+    // helper writes a minidump (`.dmp`) under `logs/crashes/` for offline symbolisation (the shipped
+    // binary is stripped — see `dtb-ke-crash`). iOS cannot spawn a helper: the handler runs in-process
+    // and only writes a compact snapshot, which the *next* launch turns into the same `.dmp` and offers
+    // to send (`crash_report::offer_pending`). A panic's message and backtrace also reach the session
+    // log (hook installed first, so the crash handler's hook chains to it).
+    #[cfg(target_os = "ios")]
+    {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            error!("panic: {info}\n{}", std::backtrace::Backtrace::force_capture());
+            previous(info);
+        }));
+    }
     if let Err(err) = dtb_ke_crash::library::install(dtb_ke_crash::library::Config {
         dump_dir: filesystem::FilesystemHelper::instance()
             .get_log_dir()
@@ -91,15 +99,6 @@ fn main() {
         error!("Failed to install global crash handler: {err}");
     } else {
         info!("Installed global crash handler")
-    }
-    #[cfg(target_os = "ios")]
-    {
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            error!("panic: {info}\n{}", std::backtrace::Backtrace::force_capture());
-            previous(info);
-        }));
-        debug!("crash capture: system crash reports only; panics are logged");
     }
 
     info!(

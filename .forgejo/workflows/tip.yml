@@ -498,6 +498,19 @@ jobs:
             --release-id ${{ needs.prepare.outputs.release_id }} \
             "$base.ipa" "$base.app.tar.gz" "$base-mac-wrapper.tar.gz"
 
+      - name: Package + upload debug info
+        # The iOS crash reporter records only image UUIDs + offsets; this dSYM (--plain: never in the
+        # update manifest) is what symbolicates them offline.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-aarch64-apple-ios.debuginfo.tar.gz"
+          cargo dtb-ke-bundle debug-info --target aarch64-apple-ios "$dbgname"
+          cargo dtb-ke-bundle codeberg upload --plain \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            "$dbgname"
+
   publish:
     needs:
       - prepare

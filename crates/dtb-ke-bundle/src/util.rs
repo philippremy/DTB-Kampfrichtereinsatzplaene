@@ -169,7 +169,7 @@ pub fn built_binary_path(release: bool, target: Option<&str>, name: &str) -> Pat
 ///   for the full investigation of both the packed dead end and the PDB fix.
 pub fn debug_info_path(release: bool, target: Option<&str>, name: &str) -> Option<PathBuf> {
     let is_macos = match target {
-        Some(triple) => triple.contains("apple-darwin"),
+        Some(triple) => triple.contains("apple-darwin") || triple.contains("apple-ios"),
         None => cfg!(target_os = "macos"),
     };
     let is_linux = match target {

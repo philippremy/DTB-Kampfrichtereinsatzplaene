@@ -68,6 +68,9 @@ pub(crate) fn oops_art() {
 #[cfg(all(feature = "as-library", target_os = "macos"))]
 mod macos;
 
+#[cfg(all(feature = "as-library", target_os = "ios"))]
+pub mod ios;
+
 #[cfg(all(feature = "as-library", target_os = "windows"))]
 mod windows;
 
@@ -126,6 +129,10 @@ pub mod library {
         {
             super::macos::install(&config.dump_dir, &config.app_slug)
         }
+        #[cfg(target_os = "ios")]
+        {
+            super::ios::install(&config.dump_dir, &config.app_slug)
+        }
         #[cfg(target_os = "windows")]
         {
             super::windows::install(&config.dump_dir, &config.app_slug)
@@ -134,7 +141,7 @@ pub mod library {
         {
             super::linux::install(&config.dump_dir, &config.app_slug)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux")))]
         {
             Ok(())
         }

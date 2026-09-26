@@ -42,7 +42,7 @@ pub(crate) fn panicking() -> bool {
 /// Pointer to the NUL-terminated panic message (the static is zero-init, so the
 /// bytes after the recorded content are `\0`). Only meaningful when
 /// [`panicking`] is true. Written down the pipe to the crash helper.
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux"))]
 pub(crate) fn message_ptr() -> *const u8 {
     (&raw const MESSAGE) as *const u8
 }

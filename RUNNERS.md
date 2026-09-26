@@ -865,6 +865,8 @@ fragment entirely (`Client::upload_plain`, vs. the fragment-generating
 
 ## iOS job (`ios` in `tip.yml` / `release.yml`)
 
+Also uploads the app's dSYM (`…-aarch64-apple-ios.debuginfo.tar.gz`, `--plain`): iOS crash reports carry only image UUIDs + offsets, and the dSYM is what symbolicates them (see CLAUDE.md, Crash capture → iOS).
+
 Runs on `macos-host` and calls `cargo dtb-ke-bundle bundle --release --target aarch64-apple-ios --mac-wrapper`,
 producing `DTB Kampfrichtereinsatzpläne.app`, `.ipa` (zip of `Payload/<app>`), and
 `mac-wrapper/<app>.app` (the "Designed for iPad" wrapper macOS launches iOS apps from, not a real
