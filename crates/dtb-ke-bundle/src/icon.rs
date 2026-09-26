@@ -42,12 +42,18 @@ use crate::util::{self, workspace_root};
 
 /// The Icon Composer master package.
 pub fn master_dir() -> PathBuf {
-    workspace_root().join("assets/icons/AppIcon.icon")
+    workspace_root().join(meta::p().icon_master)
+}
+
+/// The selected product's icon source folder (`assets/icons/` for the app, `assets/icons/debugger/` for the
+/// debugger); its committed outputs live in `generated/` below it.
+pub fn source_dir() -> PathBuf {
+    workspace_root().join(meta::p().icon_dir)
 }
 
 /// Where every derived, git-tracked icon output lives.
 pub fn generated_dir() -> PathBuf {
-    workspace_root().join("assets/icons/generated")
+    source_dir().join("generated")
 }
 
 /// A scratch directory for `actool`/`iconutil`'s own intermediate output —
@@ -100,7 +106,7 @@ pub fn png_512_path() -> PathBuf {
 /// (transparent letterboxing) rather than stretching it, see
 /// [`rasterise_contained`].
 pub fn doc_master_path() -> PathBuf {
-    workspace_root().join("assets/icons/FileIcon.png")
+    workspace_root().join(meta::p().doc_icon_master)
 }
 pub fn doc_icns_path() -> PathBuf {
     generated_dir().join("DocumentIcon.icns")
@@ -109,10 +115,12 @@ pub fn doc_ico_path() -> PathBuf {
     generated_dir().join("DocumentIcon.ico")
 }
 /// The freedesktop mimetype icon name for `.dtbke` —
-/// `meta::DOC_MIME_TYPE` with `/` → `-`, the lookup convention icon themes
+/// `meta::p().doc_mime_type` with `/` → `-`, the lookup convention icon themes
 /// use for a MIME type with no explicit `<icon>` override in the
 /// shared-mime-info package (see `linux.rs`).
-pub const DOC_MIME_ICON_NAME: &str = "application-x-dtbke";
+pub fn doc_mime_icon_name() -> String {
+    meta::p().doc_mime_type.replace('/', "-")
+}
 
 /// Whether the committed document-type icons are present.
 pub fn doc_available() -> bool {
@@ -170,7 +178,11 @@ fn generate_app_icon() -> Result<bool, String> {
     let scratch = scratch_dir();
     util::fresh_dir(&scratch).map_err(io("icon scratch dir"))?;
 
-    run_actool(&master, &scratch)?;
+    // actool names the compiled icon after the `.icon` package, and the bundle expects `AppIcon` (see
+    // `APP_ICON_NAME`) — stage a copy under that name so a differently named master (`DebuggerIcon.icon`) works.
+    let staged = scratch.join("in").join("AppIcon.icon");
+    copy_tree(&master, &staged)?;
+    run_actool(&staged, &scratch)?;
 
     let out_dir = generated_dir();
     util::fresh_dir(&out_dir).map_err(io("icon output dir"))?;
@@ -180,11 +192,16 @@ fn generate_app_icon() -> Result<bool, String> {
     let flat = extract_flat_png(&scratch)?;
     util::remove(&scratch).ok();
 
-    write_png(&flat.resize_exact(512, 512, FilterType::Lanczos3).to_rgba8(), &png_512_path())?;
+    write_png(
+        &flat.resize_exact(512, 512, FilterType::Lanczos3).to_rgba8(),
+        &png_512_path(),
+    )?;
     build_ico(&flat, &ico_path())?;
-    build_hicolor_named(&flat, "apps", meta::RDNS_ID)?;
-    generate_ios_about_icons(&master, &scratch)?;
-    generate_ios_app_icon(&master, &scratch)?;
+    build_hicolor_named(&flat, "apps", meta::p().rdns_id)?;
+    if meta::p().ios {
+        generate_ios_about_icons(&master, &scratch)?;
+        generate_ios_app_icon(&master, &scratch)?;
+    }
 
     Ok(true)
 }
@@ -213,9 +230,19 @@ fn generate_ios_app_icon(master: &Path, scratch: &Path) -> Result<(), String> {
     let output = Command::new("xcrun")
         .args(["actool", "--compile"])
         .arg(&work)
-        .args(["--platform", "iphoneos", "--minimum-deployment-target", meta::IOS_MIN_VERSION])
+        .args([
+            "--platform",
+            "iphoneos",
+            "--minimum-deployment-target",
+            meta::IOS_MIN_VERSION,
+        ])
         .args(["--target-device", "ipad", "--app-icon", APP_ICON_NAME])
-        .args(["--include-all-app-icons", "--errors", "--warnings", "--notices"])
+        .args([
+            "--include-all-app-icons",
+            "--errors",
+            "--warnings",
+            "--notices",
+        ])
         .arg("--output-partial-info-plist")
         .arg(&partial)
         .arg(master)
@@ -248,7 +275,11 @@ fn generate_ios_app_icon(master: &Path, scratch: &Path) -> Result<(), String> {
 /// (unlike `AppIcon.png`, which is the macOS icon with its margin and shadow). At [`IOS_ABOUT_ICON_PX`]
 /// they are more than enough for the 128 pt icon and cheap to embed.
 pub fn ios_about_icon_path(dark: bool) -> PathBuf {
-    generated_dir().join(if dark { "AppIcon-ios-dark.png" } else { "AppIcon-ios.png" })
+    generated_dir().join(if dark {
+        "AppIcon-ios-dark.png"
+    } else {
+        "AppIcon-ios.png"
+    })
 }
 
 const IOS_ABOUT_ICON_PX: u32 = 320;
@@ -285,7 +316,8 @@ fn generate_ios_about_icons(master: &Path, scratch: &Path) -> Result<(), String>
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        let image = image::open(&full).map_err(|e| format!("reading the {rendition} render: {e}"))?;
+        let image =
+            image::open(&full).map_err(|e| format!("reading the {rendition} render: {e}"))?;
         let small = image
             .resize_exact(IOS_ABOUT_ICON_PX, IOS_ABOUT_ICON_PX, FilterType::Lanczos3)
             .to_rgba8();
@@ -316,7 +348,7 @@ fn generate_doc_icon() -> Result<bool, String> {
     std::fs::create_dir_all(generated_dir()).map_err(io("icon output dir"))?;
     build_icns_from_flat(&master, &doc_icns_path())?;
     build_ico(&master, &doc_ico_path())?;
-    build_hicolor_named(&master, "mimetypes", DOC_MIME_ICON_NAME)?;
+    build_hicolor_named(&master, "mimetypes", &doc_mime_icon_name())?;
 
     Ok(true)
 }
@@ -445,7 +477,9 @@ fn rasterise(master: &DynamicImage, size: u32) -> RgbaImage {
     let scale = (f64::from(size) / f64::from(w)).min(f64::from(size) / f64::from(h));
     let new_w = ((f64::from(w) * scale).round() as u32).clamp(1, size);
     let new_h = ((f64::from(h) * scale).round() as u32).clamp(1, size);
-    let resized = master.resize_exact(new_w, new_h, FilterType::Lanczos3).to_rgba8();
+    let resized = master
+        .resize_exact(new_w, new_h, FilterType::Lanczos3)
+        .to_rgba8();
     if new_w == size && new_h == size {
         return resized;
     }
@@ -516,7 +550,7 @@ fn build_ico(master: &DynamicImage, out: &Path) -> Result<(), String> {
 
 /// Write `master` into every [`HICOLOR_SIZES`] rendition under
 /// `hicolor_dir()/<size>x<size>/<category>/<name>.png` — `category` is
-/// `"apps"` (app icon, name = `meta::RDNS_ID`) or `"mimetypes"` (the
+/// `"apps"` (app icon, name = `meta::p().rdns_id`) or `"mimetypes"` (the
 /// `.dtbke` file-type icon, name = [`DOC_MIME_ICON_NAME`]). Doesn't touch
 /// any other category already on disk — callers that want a clean rebuild
 /// wipe `hicolor_dir()` themselves first (see `generate_app_icon`, which
@@ -536,4 +570,18 @@ fn build_hicolor_named(master: &DynamicImage, category: &str, name: &str) -> Res
 
 fn io(what: &'static str) -> impl Fn(std::io::Error) -> String {
     move |e| format!("{what}: {e}")
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(io("icon staging dir"))?;
+    for entry in std::fs::read_dir(from).map_err(io("icon master dir"))? {
+        let entry = entry.map_err(io("icon master dir"))?;
+        let dest = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), &dest).map_err(io("icon master file"))?;
+        }
+    }
+    Ok(())
 }

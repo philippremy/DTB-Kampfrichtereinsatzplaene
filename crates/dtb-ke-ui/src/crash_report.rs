@@ -7,7 +7,7 @@
 //! We recognise that we are the reporter by our *parent process*: the helper
 //! (`getppid()` → a binary named [`dtb_ke_crash::HELPER_FILE_NAME`]). No CLI
 //! flag, no environment variable. "Bericht senden" mails the digest + stack (and
-//! optionally the `.dmp`) via [`crate::mail`]; the `.dmp` is attached only if the
+//! optionally the `.dtbkedmp`) via [`crate::mail`]; the `.dtbkedmp` is attached only if the
 //! user ticks the box.
 //!
 //! [`main`](crate) branches here **before** logging, settings, and — crucially —
@@ -542,7 +542,7 @@ impl Summary {
 }
 
 /// The e-mail subject + plain-text body for a report. The body carries only the
-/// digest + the symbol-free stack (no process memory) — the raw `.dmp` is a
+/// digest + the symbol-free stack (no process memory) — the raw `.dtbkedmp` is a
 /// separate, opt-in attachment.
 fn compose(d: &Digest) -> (String, String) {
     let is_panic = !d.panic_msg.trim().is_empty();
@@ -744,8 +744,8 @@ impl ReportWindow {
         let mut attachments = Vec::new();
         if self.attach_dump {
             attachments.push((
-                "crash.dmp".to_owned(),
-                "application/x-dmp",
+                format!("crash.{}", dtb_ke_crash::DUMP_EXTENSION),
+                "application/octet-stream",
                 dmp,
             ));
         }
@@ -1249,7 +1249,7 @@ mod tests {
 // ── iOS: a crash from the previous launch, offered as a sheet ─────────────
 //
 // There is no helper process on iOS. The crashed run left a `.crash` snapshot (plus a `.session`
-// sidecar) under `logs/crashes/`; the *next* launch converts each into a `.dmp` — the same artifact
+// sidecar) under `logs/crashes/`; the *next* launch converts each into a `.dtbkedmp` — the same artifact
 // the desktop helper writes — and offers to send the newest one in the reporter view, hosted as a
 // sheet.
 
@@ -1264,7 +1264,7 @@ fn crash_dir() -> std::path::PathBuf {
     crate::filesystem::FilesystemHelper::instance().get_log_dir().join("crashes")
 }
 
-/// Turn every pending snapshot into a `.dmp` (sources are removed only once the dump is on disk) and
+/// Turn every pending snapshot into a `.dtbkedmp` (sources are removed only once the dump is on disk) and
 /// drop the sidecars of runs that ended normally. Blocking file I/O — run it off the main thread.
 fn convert_pending(dir: &std::path::Path, own_session: Option<std::path::PathBuf>) -> Vec<Ready> {
     use dtb_ke_crash::snapshot;
@@ -1286,7 +1286,7 @@ fn convert_pending(dir: &std::path::Path, own_session: Option<std::path::PathBuf
                 continue;
             }
         };
-        let dmp_path = pending.crash.with_extension("dmp");
+        let dmp_path = pending.crash.with_extension(dtb_ke_crash::DUMP_EXTENSION);
         if let Err(err) = std::fs::write(&dmp_path, snapshot::to_minidump(&snap)) {
             log::error!("cannot write {}: {err}", dmp_path.display());
             continue;
@@ -1387,7 +1387,7 @@ fn present_ready(ready: Ready, cx: &mut App) {
     digest.dump_path = dmp_path.to_string_lossy().into_owned();
     // The next launch's own log is newer than the crash; take the newest one written up to then.
     let log = newest_log_before(Some(crashed_at + std::time::Duration::from_secs(2)));
-    // Delivered → the `.dmp` has served its purpose. Any other answer keeps it, as on the desktop.
+    // Delivered → the `.dtbkedmp` has served its purpose. Any other answer keeps it, as on the desktop.
     open_reporter(
         digest,
         log,

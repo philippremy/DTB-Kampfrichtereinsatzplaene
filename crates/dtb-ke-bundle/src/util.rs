@@ -191,11 +191,19 @@ pub fn debug_info_path(release: bool, target: Option<&str>, name: &str) -> Optio
 }
 
 /// Where finished bundles land: `target/bundle/<profile>/`.
+///
+/// The app keeps the flat path (CI depends on it); any other product gets its own subfolder, so bundling one
+/// never wipes the other's output (`bundle` starts from a fresh directory).
 pub fn bundle_dir(release: bool) -> PathBuf {
-    workspace_root()
+    let dir = workspace_root()
         .join("target")
         .join("bundle")
-        .join(if release { "release" } else { "debug" })
+        .join(if release { "release" } else { "debug" });
+    if std::ptr::eq(crate::meta::p(), &crate::meta::APP) {
+        dir
+    } else {
+        dir.join(crate::meta::p().slug)
+    }
 }
 
 /// Remove `path` if it exists (file or directory), ignoring "not found".

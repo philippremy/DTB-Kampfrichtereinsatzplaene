@@ -3,10 +3,10 @@
 //! Spawned by `dtb-ke-crash` on a fault. It receives the crashed process's
 //! rights / exception context (Mach ports on macOS, a pid + `EXCEPTION_POINTERS`
 //! address on Windows), hands them to `minidump-writer` — which reads the crashed
-//! process's memory and produces a standard **minidump** (`.dmp`) — then relaunches
+//! process's memory and produces a standard **minidump** (`.dtbkedmp`) — then relaunches
 //! the app as a crash reporter (recognised via the parent process), streams it a
 //! digest + the dump, waits for a `report::*` verdict, and keeps or deletes the
-//! `.dmp`. The crashed process never runs a line of our code in a fragile state.
+//! `.dtbkedmp`. The crashed process never runs a line of our code in a fragile state.
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn main() {
@@ -35,7 +35,7 @@ mod common {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// Persist the dump, then relaunch `main_exe` as the crash reporter, stream it
-    /// the digest + dump, and delete the `.dmp` iff the reporter exited `SENT`.
+    /// the digest + dump, and delete the `.dtbkedmp` iff the reporter exited `SENT`.
     pub fn finish(
         dump_dir: &str,
         slug: &str,
@@ -59,7 +59,7 @@ mod common {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let path = format!("{dump_dir}/{slug}-{secs}-{pid}.dmp");
+        let path = format!("{dump_dir}/{slug}-{secs}-{pid}.{}", dtb_ke_crash::DUMP_EXTENSION);
 
         // Persist first — we are the reliable actor; the reporter may never come
         // up (headless, gpui failure).
@@ -80,7 +80,7 @@ mod common {
     /// `reason \0 address \0 thread \0 panic_msg \0 stack \0 frames \0 dump_path \0 os_build \0 <minidump>` — the
     /// reporter's digest. `thread` is `«name» (0x…)` when the dump names it, else
     /// `0x…`; `stack` is a symbol-free walk of the crashing thread + the module
-    /// table (for offset-wise symbolication). The helper parses the `.dmp` so
+    /// table (for offset-wise symbolication). The helper parses the `.dtbkedmp` so
     /// `dtb-ke-ui` needn't link `minidump`.
     fn frame_digest(dmp: &[u8], panic_msg: &str, dump_path: &str) -> Vec<u8> {
         let parsed = minidump::Minidump::read(dmp).ok();
@@ -611,7 +611,7 @@ mod windows {
 
     fn capture(pid: u32, tid: u32, exc_ptr: usize, exc_code: i32, slug: &str) -> Option<Vec<u8>> {
         // `dump_crash_context` writes to a `File`; dump to a temp, read it back.
-        let tmp = std::env::temp_dir().join(format!("{slug}-{pid}.dmp.part"));
+        let tmp = std::env::temp_dir().join(format!("{slug}-{pid}.{}.part", dtb_ke_crash::DUMP_EXTENSION));
         let mut file = std::fs::File::create(&tmp).ok()?;
         let cc = CrashContext {
             exception_pointers: exc_ptr as *const _,

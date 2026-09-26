@@ -30,7 +30,35 @@ use crate::components::{Button, ButtonTone};
 use crate::i18n::{ActiveLocale, Locale};
 use crate::theme::ActiveTheme;
 
-const APP_NAME: &str = "DTB Kampfrichtereinsatzpläne";
+/// Who the About windows describe. The main app installs its own ([`install_icon`]); another binary that links
+/// this crate (the crash debugger) installs its own with [`install_identity`] before opening a window.
+pub struct Identity {
+    /// The product name, shown in the window title and as the headline.
+    pub name: &'static str,
+    /// Font size (px) of the headline; a long name needs a smaller one to stay on one line.
+    pub name_size: f32,
+    /// The reverse-DNS identifier, shown in Build-Infos.
+    pub identifier: &'static str,
+    /// The flat icon (PNG) where there is no native icon lookup — Windows and Linux. `None` draws a blank plate.
+    /// Ignored on macOS (the live bundle icon is used) and iOS.
+    pub icon_png: Option<&'static [u8]>,
+}
+
+impl gpui_kit::Global for Identity {}
+
+impl Identity {
+    fn app() -> Self {
+        Self {
+            name: "DTB Kampfrichtereinsatzpläne",
+            name_size: 26.,
+            identifier: build_info::IDENTIFIER,
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            icon_png: Some(APP_ICON_PNG),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            icon_png: None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Kind {
@@ -41,14 +69,14 @@ enum Kind {
 }
 
 impl Kind {
-    fn title(self, locale: &Locale) -> SharedString {
+    fn title(self, locale: &Locale, name: &str) -> SharedString {
         let key = match self {
             Kind::About => "about.title",
             Kind::Acknowledgements => "about.acknowledgements-title",
             Kind::BuildInfo => "about.build-info-title",
             Kind::License => "about.license-title",
         };
-        locale.t(key)
+        locale.t_fmt(key, &[("name", name)]).into()
     }
 
     fn size(self) -> Size<gpui_kit::Pixels> {
@@ -131,7 +159,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(kind.title(cx.global::<Locale>())),
+            title: Some(kind.title(cx.global::<Locale>(), cx.global::<Identity>().name)),
             appears_transparent: crate::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -159,7 +187,7 @@ impl Drop for AboutWindow {
 }
 
 impl Render for AboutWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().color;
         let version_suffix = match (build_info::COMMIT, build_info::PROFILE) {
             ("", _) => String::new(),
@@ -175,6 +203,8 @@ impl Render for AboutWindow {
 
         div()
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .overflow_hidden()
             .bg(c.background)
             .text_color(c.foreground)
@@ -201,9 +231,9 @@ impl Render for AboutWindow {
                     .child(
                         div()
                             .w_full()
-                            .text_size(px(26.))
+                            .text_size(px(cx.global::<Identity>().name_size))
                             .font_weight(gpui_kit::FontWeight::BOLD)
-                            .child(APP_NAME),
+                            .child(cx.global::<Identity>().name),
                     )
                     .child(
                         div()
@@ -285,7 +315,7 @@ const APP_ICON_IOS_DARK_PNG: &[u8] = include_bytes!(concat!(
 /// this path; Windows/Linux, with no native fetch to mirror, still decode
 /// the embedded flat PNG the ordinary way.
 struct AppIcon {
-    light: gpui_kit::ImageSource,
+    light: Option<gpui_kit::ImageSource>,
     /// A rendition for the dark appearance, where the platform has one to embed (iOS).
     dark: Option<gpui_kit::ImageSource>,
 }
@@ -296,7 +326,13 @@ impl gpui_kit::Global for AppIcon {}
 /// fetches the icon and — macOS-only, no-op elsewhere — starts watching for
 /// live appearance changes.
 pub fn install_icon(cx: &mut App) {
-    cx.set_global(fetch_icon());
+    install_identity(cx, Identity::app());
+}
+
+/// [`install_icon`] for another product: `identity` names it and supplies its icon.
+pub fn install_identity(cx: &mut App, identity: Identity) {
+    cx.set_global(identity);
+    cx.set_global(fetch_icon(cx));
     crate::skin::app_icon::watch(cx);
 }
 
@@ -306,7 +342,7 @@ pub fn install_icon(cx: &mut App) {
 /// notification handler; a no-op call off macOS never happens since the
 /// watch itself is a no-op there.
 pub(crate) fn refresh_icon(cx: &mut App) {
-    cx.set_global(fetch_icon());
+    cx.set_global(fetch_icon(cx));
     cx.refresh_windows();
 }
 
@@ -315,9 +351,9 @@ pub(crate) fn refresh_icon(cx: &mut App) {
 /// than ever being blank — see `skin::app_icon`'s module doc). Windows/
 /// Linux: the embedded flat PNG, decoded normally.
 #[cfg(target_os = "macos")]
-fn fetch_icon() -> AppIcon {
+fn fetch_icon(_cx: &App) -> AppIcon {
     AppIcon {
-        light: fetch_native_icon(),
+        light: Some(fetch_native_icon()),
         dark: None,
     }
 }
@@ -342,19 +378,22 @@ fn fetch_native_icon() -> gpui_kit::ImageSource {
     }
 }
 #[cfg(target_os = "ios")]
-fn fetch_icon() -> AppIcon {
+fn fetch_icon(_cx: &App) -> AppIcon {
     let png = |bytes: &[u8]| -> gpui_kit::ImageSource {
         Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())).into()
     };
     AppIcon {
-        light: png(APP_ICON_IOS_PNG),
+        light: Some(png(APP_ICON_IOS_PNG)),
         dark: Some(png(APP_ICON_IOS_DARK_PNG)),
     }
 }
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn fetch_icon() -> AppIcon {
+fn fetch_icon(cx: &App) -> AppIcon {
     AppIcon {
-        light: Arc::new(Image::from_bytes(ImageFormat::Png, APP_ICON_PNG.to_vec())).into(),
+        light: cx
+            .global::<Identity>()
+            .icon_png
+            .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())).into()),
         dark: None,
     }
 }
@@ -365,7 +404,7 @@ fn app_icon(cx: &App, size: f32) -> impl IntoElement {
     let icons = cx.global::<AppIcon>();
     let dark = cx.theme().appearance == crate::theme::Appearance::Dark;
     let icon = match (&icons.dark, dark) {
-        (Some(dark_icon), true) => dark_icon.clone(),
+        (Some(dark_icon), true) => Some(dark_icon.clone()),
         _ => icons.light.clone(),
     };
     div()
@@ -373,7 +412,7 @@ fn app_icon(cx: &App, size: f32) -> impl IntoElement {
         .size(px(size))
         .rounded(px(size * 0.2237))
         .overflow_hidden()
-        .child(img(icon).size_full())
+        .when_some(icon, |el, icon| el.child(img(icon).size_full()))
 }
 
 // ── the three companion windows ──────────────────────────────────────────
@@ -456,6 +495,8 @@ impl Render for InfoWindow {
 
         div()
             .size_full()
+            .relative()
+            .children(crate::crash_countdown::overlay(window, cx, crate::crash_countdown::Mode::Scrim))
             .bg(c.background)
             .text_color(c.foreground)
             .flex()
@@ -475,7 +516,7 @@ impl Render for InfoWindow {
                     .bg(c.chrome)
                     .text_size(px(12.))
                     .text_color(c.muted_foreground)
-                    .child(self.kind.title(cx.global::<Locale>())),
+                    .child(self.kind.title(cx.global::<Locale>(), cx.global::<Identity>().name)),
             ))
             .child(div().flex_1().min_h(px(0.)).child(body))
     }
@@ -543,7 +584,7 @@ impl InfoWindow {
             .flex()
             .flex_col()
             .children(
-                build_info::rows(cx.global::<Locale>())
+                build_info::rows(cx.global::<Locale>(), cx.global::<Identity>().identifier)
                     .into_iter()
                     .map(|(label, value)| {
                         div()

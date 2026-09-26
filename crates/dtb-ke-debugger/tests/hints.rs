@@ -41,7 +41,7 @@ fn dump_with(hints: Option<&Hints>) -> std::path::PathBuf {
         dtb_ke_crash::patch::append_stream(&mut bytes, STREAM_TYPE, h.encode().as_bytes()).unwrap();
     }
     let path = std::env::temp_dir().join(format!(
-        "dtbke-hints-{}-{}.dmp",
+        "dtbke-hints-{}-{}.dtbkedmp",
         std::process::id(),
         h_id(hints)
     ));

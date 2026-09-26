@@ -1,0 +1,84 @@
+{
+  "features" : [
+    "refractivity",
+    "specular-location"
+  ],
+  "fill" : {
+    "automatic-gradient" : "extended-gray:1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "blur-material" : null,
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "display-p3:0.24442,0.56870,1.05747,1.00000"
+          },
+          "image-name" : "Rust Debug.svg",
+          "name" : "#?",
+          "position" : {
+            "scale" : 0.3,
+            "translation-in-points" : [
+              0,
+              212
+            ]
+          }
+        }
+      ],
+      "name" : "#?",
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.33
+      },
+      "specular" : "inside",
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.33
+      }
+    },
+    {
+      "blur-material" : null,
+      "hidden" : false,
+      "layers" : [
+        {
+          "image-name" : "DTB Background Curly Braces 2.png",
+          "name" : "DTB Background Curly Braces 2",
+          "position" : {
+            "scale" : 0.52,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "combined",
+      "name" : "DTB Card",
+      "refractivity" : {
+        "depth" : 0.5,
+        "enabled" : true,
+        "strength" : 0
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.66
+      },
+      "specular" : "inside",
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.33
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

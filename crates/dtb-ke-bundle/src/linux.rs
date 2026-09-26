@@ -96,7 +96,7 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     fresh_dir(prefix).map_err(io)?;
 
     // Executable → /usr/bin/<slug>
-    let bin = prefix.join("usr/bin").join(meta::SLUG);
+    let bin = prefix.join("usr/bin").join(meta::p().slug);
     copy(&cx.binary, &bin).map_err(io)?;
     set_mode(&bin, 0o755)?;
 
@@ -104,7 +104,7 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     write(
         &prefix
             .join("usr/share/applications")
-            .join(format!("{}.desktop", meta::RDNS_ID)),
+            .join(format!("{}.desktop", meta::p().rdns_id)),
         desktop_entry(),
     )?;
 
@@ -120,7 +120,7 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     write(
         &prefix
             .join("usr/share/metainfo")
-            .join(format!("{}.metainfo.xml", meta::RDNS_ID)),
+            .join(format!("{}.metainfo.xml", meta::p().rdns_id)),
         metainfo(),
     )?;
 
@@ -133,16 +133,16 @@ fn stage_prefix(cx: &Context, prefix: &Path) -> Result<(), String> {
     write(
         &prefix
             .join("usr/share/mime/packages")
-            .join(format!("{}.xml", meta::RDNS_ID)),
+            .join(format!("{}.xml", meta::p().rdns_id)),
         mime_package(),
     )?;
 
     // Licence → /usr/share/doc/<slug>/copyright
     copy(
-        &workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt"),
+        &workspace_root().join(meta::p().license_file),
         &prefix
             .join("usr/share/doc")
-            .join(meta::SLUG)
+            .join(meta::p().slug)
             .join("copyright"),
     )
     .ok();
@@ -164,18 +164,18 @@ fn desktop_entry() -> String {
          MimeType={mime};\n\
          StartupWMClass={wmclass}\n\
          StartupNotify=true\n",
-        name = meta::DISPLAY_NAME,
-        summary = meta::SUMMARY,
-        slug = meta::SLUG,
-        id = meta::RDNS_ID,
-        categories = meta::FREEDESKTOP_CATEGORIES,
-        mime = meta::DOC_MIME_TYPE,
-        // Kept as the raw kebab-case name, not meta::DISPLAY_NAME — a WM_CLASS
+        name = meta::p().display_name,
+        summary = meta::p().summary,
+        slug = meta::p().slug,
+        id = meta::p().rdns_id,
+        categories = meta::p().freedesktop_categories,
+        mime = meta::p().doc_mime_type,
+        // Kept as the raw kebab-case name, not meta::p().display_name — a WM_CLASS
         // with a space in it is unconventional and this preserves the exact
         // prior behavior (this field's *correct* value — whatever gpui
         // actually sets as the X11 WM_CLASS hint at runtime — hasn't been
         // independently verified; flagging rather than guessing further).
-        wmclass = meta::RAW_BIN_NAME,
+        wmclass = meta::p().raw_bin_name,
     )
 }
 
@@ -194,9 +194,9 @@ fn mime_package() -> String {
   </mime-type>
 </mime-info>
 "#,
-        mime = meta::DOC_MIME_TYPE,
-        name = xml(meta::DOC_TYPE_NAME),
-        ext = meta::DOC_EXTENSION,
+        mime = meta::p().doc_mime_type,
+        name = xml(meta::p().doc_type_name),
+        ext = meta::p().doc_extension,
     )
 }
 
@@ -226,14 +226,14 @@ fn metainfo() -> String {
   </releases>
 </component>
 "#,
-        id = meta::RDNS_ID,
+        id = meta::p().rdns_id,
         license = meta::LICENSE,
-        name = xml(meta::DISPLAY_NAME),
-        summary = xml(meta::SUMMARY),
-        description = xml(meta::DESCRIPTION),
+        name = xml(meta::p().display_name),
+        summary = xml(meta::p().summary),
+        description = xml(meta::p().description),
         homepage = xml(meta::HOMEPAGE),
         publisher = xml(meta::PUBLISHER),
-        mime = meta::DOC_MIME_TYPE,
+        mime = meta::p().doc_mime_type,
         version = meta::numeric_version(),
         // `appstreamcli validate` (run by appimagetool, fatal on error)
         // rejects a `<release>` with no `date`/`timestamp`.
@@ -245,7 +245,12 @@ fn metainfo() -> String {
 
 fn tarball(cx: &Context, prefix: &Path) -> Result<(), String> {
     let arch = arch_labels(cx)?;
-    let stem = format!("{}-{}-{}", meta::SLUG, meta::numeric_version(), arch.rpm);
+    let stem = format!(
+        "{}-{}-{}",
+        meta::p().slug,
+        meta::numeric_version(),
+        arch.rpm
+    );
     let root = cx.out_dir.join(&stem);
     fresh_dir(&root).map_err(io)?;
     copy_tree(&prefix.join("usr"), &root.join("usr"))?;
@@ -289,9 +294,9 @@ fn install_script(install: bool) -> String {
              rm -rf \"$PREFIX/share/doc/{slug}\"\n\
              update-mime-database \"$PREFIX/share/mime\" 2>/dev/null || true\n\
              echo done\n",
-            slug = meta::SLUG,
-            id = meta::RDNS_ID,
-            doc_icon = icon::DOC_MIME_ICON_NAME,
+            slug = meta::p().slug,
+            id = meta::p().rdns_id,
+            doc_icon = icon::doc_mime_icon_name(),
         )
     }
 }
@@ -326,7 +331,7 @@ fn deb(cx: &Context, prefix: &Path) -> Result<(), String> {
 
     let out = cx.out_dir.join(format!(
         "{}_{}_{}.deb",
-        meta::SLUG,
+        meta::p().slug,
         meta::numeric_version(),
         arch.deb
     ));
@@ -349,15 +354,15 @@ fn deb_control(installed_kb: u64, arch: &str) -> String {
          Homepage: {homepage}\n\
          Description: {summary}\n\
          {desc_body}\n",
-        pkg = meta::SLUG,
+        pkg = meta::p().slug,
         version = meta::numeric_version(),
         arch = arch,
         publisher = meta::PUBLISHER,
         size = installed_kb,
         depends = DEB_DEPENDS,
         homepage = meta::HOMEPAGE,
-        summary = meta::SUMMARY,
-        desc_body = fold_description(meta::DESCRIPTION),
+        summary = meta::p().summary,
+        desc_body = fold_description(meta::p().description),
     )
 }
 
@@ -427,7 +432,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     }
 
     // Sources: a tarball of the usr tree that %install unpacks into the buildroot.
-    let src_stem = format!("{}-{}", meta::SLUG, meta::numeric_version());
+    let src_stem = format!("{}-{}", meta::p().slug, meta::numeric_version());
     let src_tgz = top.join("SOURCES").join(format!("{src_stem}.tar.gz"));
     // Repack `usr` under a versioned top dir so %setup is happy.
     let repack = cx.out_dir.join("rpm-src").join(&src_stem);
@@ -436,7 +441,7 @@ fn rpm(cx: &Context, prefix: &Path) -> Result<(), String> {
     archive::targz(&cx.out_dir.join("rpm-src"), &[src_stem.as_str()], &src_tgz)?;
     crate::util::remove(&cx.out_dir.join("rpm-src")).ok();
 
-    let spec = top.join("SPECS").join(format!("{}.spec", meta::SLUG));
+    let spec = top.join("SPECS").join(format!("{}.spec", meta::p().slug));
     write(&spec, rpm_spec(&src_stem))?;
 
     // Arch/CachyOS (the CI host) has no populated system rpm database, so
@@ -546,14 +551,14 @@ fn rpm_spec(src_stem: &str) -> String {
          update-mime-database /usr/share/mime &>/dev/null || :\n\
          \n\
          %changelog\n",
-        pkg = meta::SLUG,
+        pkg = meta::p().slug,
         version = meta::numeric_version(),
-        summary = meta::SUMMARY,
+        summary = meta::p().summary,
         license = meta::LICENSE,
         homepage = meta::HOMEPAGE,
         src_stem = src_stem,
-        description = meta::DESCRIPTION,
-        id = meta::RDNS_ID,
+        description = meta::p().description,
+        id = meta::p().rdns_id,
     )
 }
 
@@ -561,7 +566,7 @@ fn rpm_spec(src_stem: &str) -> String {
 
 fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     let arch = arch_labels(cx)?;
-    let appdir = cx.out_dir.join(format!("{}.AppDir", meta::SLUG));
+    let appdir = cx.out_dir.join(format!("{}.AppDir", meta::p().slug));
     fresh_dir(&appdir).map_err(io)?;
     copy_tree(&prefix.join("usr"), &appdir.join("usr"))?;
 
@@ -571,9 +576,9 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     // appimagetool#77. Rename it inside the AppDir so the check passes; the
     // `.deb`/`.rpm`/tarball keep `.metainfo.xml` (what distro tooling wants).
     let meta_dir = appdir.join("usr/share/metainfo");
-    let modern = meta_dir.join(format!("{}.metainfo.xml", meta::RDNS_ID));
+    let modern = meta_dir.join(format!("{}.metainfo.xml", meta::p().rdns_id));
     if modern.exists() {
-        let legacy = meta_dir.join(format!("{}.appdata.xml", meta::RDNS_ID));
+        let legacy = meta_dir.join(format!("{}.appdata.xml", meta::p().rdns_id));
         std::fs::rename(&modern, &legacy).map_err(io)?;
     }
 
@@ -585,7 +590,7 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
             "#!/bin/sh\n\
              HERE=$(dirname \"$(readlink -f \"$0\")\")\n\
              exec \"$HERE/usr/bin/{slug}\" \"$@\"\n",
-            slug = meta::SLUG
+            slug = meta::p().slug
         ),
     )?;
     set_mode(&apprun, 0o755)?;
@@ -594,15 +599,15 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
     copy(
         &appdir
             .join("usr/share/applications")
-            .join(format!("{}.desktop", meta::RDNS_ID)),
-        &appdir.join(format!("{}.desktop", meta::RDNS_ID)),
+            .join(format!("{}.desktop", meta::p().rdns_id)),
+        &appdir.join(format!("{}.desktop", meta::p().rdns_id)),
     )
     .map_err(io)?;
 
     if cx.have_icon {
         let png = icon::png_512_path();
         if png.exists() {
-            copy(&png, &appdir.join(format!("{}.png", meta::RDNS_ID))).map_err(io)?;
+            copy(&png, &appdir.join(format!("{}.png", meta::p().rdns_id))).map_err(io)?;
             copy(&png, &appdir.join(".DirIcon")).map_err(io)?;
         }
     }
@@ -618,7 +623,7 @@ fn appimage(cx: &Context, prefix: &Path) -> Result<(), String> {
 
     let out = cx.out_dir.join(format!(
         "{}-{}-{}.AppImage",
-        meta::DISPLAY_NAME.replace(' ', "_"),
+        meta::p().display_name.replace(' ', "_"),
         meta::numeric_version(),
         arch.rpm
     ));
@@ -746,7 +751,11 @@ mod tests {
         let xml = super::mime_package();
         assert!(xml.contains(r#"type="application/x-dtbke""#));
         assert!(xml.contains(r#"<glob pattern="*.dtbke"/>"#));
-        assert_eq!(xml.matches('<').count(), xml.matches('>').count(), "unbalanced tags");
+        assert_eq!(
+            xml.matches('<').count(),
+            xml.matches('>').count(),
+            "unbalanced tags"
+        );
     }
 
     #[test]

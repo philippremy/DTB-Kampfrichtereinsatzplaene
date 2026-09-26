@@ -8,11 +8,15 @@
 //! writing the dump — happens in the helper** (`dtb-ke-crashhandler`), a clean
 //! process, via the `minidump-writer` crate.
 //!
-//! The dump is a standard **minidump** (`.dmp`): `lldb -c` / WinDbg / Visual
+//! The dump is a standard **minidump** (`.dtbkedmp`): `lldb -c` / WinDbg / Visual
 //! Studio open it directly, `minidump-stackwalk` and our own `dtb-ke-symbolize`
 //! resolve it offline against the matching `.dSYM` / `.pdb` / DWARF.
 //!
 //! macOS, Windows and Linux are wired up; other targets get the panic hook only.
+
+/// The file extension (no dot) of a crash report — a standard minidump under a name of our own, so the
+/// debugger (`dtb-ke-debugger`) can register as its handler. Every writer and reader uses this one constant.
+pub const DUMP_EXTENSION: &str = "dtbkedmp";
 
 /// The filename the embedded helper is extracted to under the OS temp dir.
 /// Shared so the crash reporter can recognise its parent process by name.
@@ -95,7 +99,7 @@ pub mod library {
 
     #[derive(Debug, Clone)]
     pub struct Config {
-        /// Directory `.dmp` files are written to (created if missing). The helper
+        /// Directory `.dtbkedmp` files are written to (created if missing). The helper
         /// generates the filename.
         pub dump_dir: PathBuf,
         /// Short filename slug, e.g. `"DTB-KE"`.

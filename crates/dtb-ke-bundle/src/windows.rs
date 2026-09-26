@@ -43,19 +43,21 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     let arch = win_arch(cx)?;
 
     // ── portable folder ────────────────────────────────────────────────────
-    let portable = cx
-        .out_dir
-        .join(format!("{}-{}-{arch}", meta::SLUG, meta::numeric_version()));
+    let portable = cx.out_dir.join(format!(
+        "{}-{}-{arch}",
+        meta::p().slug,
+        meta::numeric_version()
+    ));
     fresh_dir(&portable).map_err(io)?;
-    // The shipped/branded name (meta::DISPLAY_NAME), not the raw cargo build
+    // The shipped/branded name (meta::p().display_name), not the raw cargo build
     // artifact's kebab-case name.
     copy(
         &cx.binary,
-        &portable.join(format!("{}.exe", meta::DISPLAY_NAME)),
+        &portable.join(format!("{}.exe", meta::p().display_name)),
     )
     .map_err(io)?;
     copy(
-        &workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt"),
+        &workspace_root().join(meta::p().license_file),
         &portable.join("LICENSE.txt"),
     )
     .ok();
@@ -64,12 +66,12 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     // ── WiX authoring ─────────────────────────────────────────────────────
     let staging = cx.out_dir.join("wix");
     fresh_dir(&staging).map_err(io)?;
-    let exe_name = format!("{}.exe", meta::DISPLAY_NAME);
+    let exe_name = format!("{}.exe", meta::p().display_name);
     copy(&cx.binary, &staging.join(&exe_name)).map_err(io)?;
 
     // Licence: a plain copy shipped into the install dir (AGPL §), plus an
     // RTF the installer's licence-agreement page renders.
-    let license_src = workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt");
+    let license_src = workspace_root().join(meta::p().license_file);
     copy(&license_src, &staging.join("LICENSE.txt")).ok();
     let license_rtf = std::fs::read_to_string(&license_src)
         .map(|t| rtf_document(&t))
@@ -121,7 +123,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
 
     let msi = cx.out_dir.join(format!(
         "{}-{}-{arch}.msi",
-        meta::SLUG,
+        meta::p().slug,
         meta::numeric_version()
     ));
     let mut args = vec![
@@ -206,10 +208,6 @@ fn rtf_document(text: &str) -> String {
     )
 }
 
-/// The `.dtbke` ProgId — a plain short id (not a reverse-DNS one; the
-/// Windows registry doesn't care, and it's easier to read in `regedit`).
-const DOC_PROGID: &str = "DTBKE.Document";
-
 fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
     let mut icon_block = String::new();
     if has_icon {
@@ -219,7 +217,8 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
         );
     }
     if has_doc_icon {
-        icon_block.push_str("\n    <Icon Id=\"DocumentIcon.ico\" SourceFile=\"DocumentIcon.ico\" />");
+        icon_block
+            .push_str("\n    <Icon Id=\"DocumentIcon.ico\" SourceFile=\"DocumentIcon.ico\" />");
     }
     let shortcut_icon = if has_icon {
         " Icon=\"AppIcon.ico\""
@@ -257,12 +256,12 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
       </Component>
 "#,
         publisher = xml_escape(meta::PUBLISHER),
-        name = xml_escape(meta::DISPLAY_NAME),
-        progid = DOC_PROGID,
-        doc_name = xml_escape(meta::DOC_TYPE_NAME),
+        name = xml_escape(meta::p().display_name),
+        progid = meta::p().doc_progid,
+        doc_name = xml_escape(meta::p().doc_type_name),
         doc_icon_attr = doc_icon_attr,
-        ext = meta::DOC_EXTENSION,
-        mime = meta::DOC_MIME_TYPE,
+        ext = meta::p().doc_extension,
+        mime = meta::p().doc_mime_type,
     );
 
     format!(
@@ -343,11 +342,11 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
   </Package>
 </Wix>
 "#,
-        name = xml_escape(meta::DISPLAY_NAME),
+        name = xml_escape(meta::p().display_name),
         publisher = xml_escape(meta::PUBLISHER),
         version = meta::numeric_version(),
-        upgrade_code = meta::WIX_UPGRADE_CODE,
-        summary = xml_escape(meta::SUMMARY),
+        upgrade_code = meta::p().wix_upgrade_code,
+        summary = xml_escape(meta::p().summary),
         homepage = xml_escape(meta::HOMEPAGE),
         icon_block = icon_block,
         exe_name = exe_name,
@@ -376,6 +375,8 @@ mod tests {
             formats: None,
             sign: None,
             target: target.map(String::from),
+            provisioning_profile: None,
+            mac_wrapper: false,
             have_icon: false,
         }
     }
@@ -427,11 +428,19 @@ mod tests {
         ] {
             assert!(wxs.contains(needle), "wxs missing {needle:?}");
         }
-        assert_eq!(wxs.matches('<').count(), wxs.matches('>').count(), "unbalanced angle brackets");
+        assert_eq!(
+            wxs.matches('<').count(),
+            wxs.matches('>').count(),
+            "unbalanced angle brackets"
+        );
 
         let no_icon = super::wxs_source("App.exe", false, false);
         assert!(!no_icon.contains("DocumentIcon.ico"));
-        assert!(no_icon.contains(r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan">"#));
+        assert!(
+            no_icon.contains(
+                r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan">"#
+            )
+        );
     }
 
     #[test]

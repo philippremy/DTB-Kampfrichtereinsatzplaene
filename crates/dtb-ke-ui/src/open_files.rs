@@ -79,7 +79,7 @@ pub fn ready(cx: &mut App) {
 /// `"file:///Users/x/A%20File.dtbke"` → `/Users/x/A File.dtbke`. Only real
 /// macOS `file://` URLs are expected here (see the module doc), but this
 /// stays defensive rather than panicking on anything malformed.
-fn file_url_to_path(url: &str) -> Option<PathBuf> {
+pub fn file_url_to_path(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("file://")?;
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
     Some(PathBuf::from(percent_decode(rest)))

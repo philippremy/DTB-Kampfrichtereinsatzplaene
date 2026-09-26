@@ -34,7 +34,10 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     if !cfg!(target_os = "macos") {
         return Err("iOS bundles can only be built on macOS (Xcode tools are required)".into());
     }
-    let target = cx.target.as_deref().ok_or("iOS bundling needs --target <ios triple>")?;
+    let target = cx
+        .target
+        .as_deref()
+        .ok_or("iOS bundling needs --target <ios triple>")?;
     let simulator = is_simulator(target);
     if cx.mac_wrapper && simulator {
         return Err("--mac-wrapper needs a device build (--target aarch64-apple-ios)".into());
@@ -45,10 +48,10 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         ("iphoneos", "iphoneos")
     };
 
-    let app = cx.out_dir.join(format!("{}.app", meta::DISPLAY_NAME));
+    let app = cx.out_dir.join(format!("{}.app", meta::p().display_name));
     fresh_dir(&app).map_err(io)?;
 
-    let exe = app.join(meta::MACOS_EXECUTABLE_NAME);
+    let exe = app.join(meta::p().macos_executable_name);
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
     // The legacy CI Mac links against an old SDK; iOS 26 features (Liquid Glass) are gated on the
@@ -68,7 +71,11 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
         }
     };
 
-    std::fs::write(app.join("Info.plist"), info_plist(platform, sdk_name, document_icons)).map_err(io)?;
+    std::fs::write(
+        app.join("Info.plist"),
+        info_plist(platform, sdk_name, document_icons),
+    )
+    .map_err(io)?;
 
     if icon::ios_available() {
         if let Err(e) = install_icon(&app) {
@@ -98,7 +105,11 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
              signing ad-hoc, which iOS will refuse to install"
         );
     }
-    codesign(&app, identity.as_deref().unwrap_or("-"), entitlements.as_deref())?;
+    codesign(
+        &app,
+        identity.as_deref().unwrap_or("-"),
+        entitlements.as_deref(),
+    )?;
 
     report(&app);
     if !simulator {
@@ -119,7 +130,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
             "dtb-ke-bundle: install with `xcrun simctl install booted \"{}\"` and launch with \
              `xcrun simctl launch booted {}`",
             app.display(),
-            meta::RDNS_ID
+            meta::p().rdns_id
         );
     }
     Ok(())
@@ -133,7 +144,7 @@ fn flag_env(flag: &Option<String>, var: &str) -> Option<String> {
 }
 
 fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
-    // The bundle id must be ASCII on iOS (`meta::IDENTIFIER` carries an "ä"), hence RDNS_ID.
+    // The bundle id must be ASCII on iOS (`meta::p().identifier` carries an "ä"), hence RDNS_ID.
     // iPad only (UIDeviceFamily 2); multitasking is allowed (no UIRequiresFullScreen).
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -242,18 +253,18 @@ fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
 </dict>
 </plist>
 "#,
-        exe = meta::MACOS_EXECUTABLE_NAME,
-        id = meta::RDNS_ID,
-        name = meta::DISPLAY_NAME,
+        exe = meta::p().macos_executable_name,
+        id = meta::p().rdns_id,
+        name = meta::p().display_name,
         display_name = meta::IOS_DISPLAY_NAME,
         version = meta::numeric_version(),
         sdk = sdk_name,
         platform = platform,
         min = meta::IOS_MIN_VERSION,
-        category = meta::MACOS_CATEGORY,
-        doc_name = meta::DOC_TYPE_NAME,
-        uti = meta::DOC_UTI,
-        doc_ext = meta::DOC_EXTENSION,
+        category = meta::p().macos_category,
+        doc_name = meta::p().doc_type_name,
+        uti = meta::p().doc_uti,
+        doc_ext = meta::p().doc_extension,
         document_icon_files = icon_files_entry("CFBundleTypeIconFiles", document_icons),
         ut_icon_files = icon_files_entry("UTTypeIconFiles", document_icons),
     )
@@ -413,7 +424,7 @@ fn write_ipa(app: &Path, out_dir: &Path) -> Result<std::path::PathBuf, String> {
     std::fs::create_dir_all(&payload).map_err(io)?;
     let name = app.file_name().ok_or("bad app path")?;
     run_tool("ditto", &[app.as_os_str(), payload.join(name).as_os_str()])?;
-    let ipa = out_dir.join(format!("{}.ipa", meta::DISPLAY_NAME));
+    let ipa = out_dir.join(format!("{}.ipa", meta::p().display_name));
     std::fs::remove_file(&ipa).ok();
     let status = Command::new("zip")
         .current_dir(&stage)

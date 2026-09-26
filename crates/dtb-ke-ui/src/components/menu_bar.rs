@@ -33,6 +33,9 @@ pub struct MenuBar {
     /// Strip mode: index of the open top-level menu. Hamburger mode: `Some(0)`
     /// means the popover is showing.
     open: Option<usize>,
+    /// Shortcut hints for actions the app's keymap (`keymap::defaults`) doesn't know — another binary linking
+    /// this crate (the debugger) binds its own keys. `(action name, keystroke)`.
+    hints: Vec<(&'static str, String)>,
 }
 
 impl MenuBar {
@@ -40,7 +43,13 @@ impl MenuBar {
         Self {
             menus: Vec::new(),
             open: None,
+            hints: Vec::new(),
         }
+    }
+
+    /// Shortcut hints for actions outside `keymap::defaults` (see the field).
+    pub fn set_hints(&mut self, hints: Vec<(&'static str, String)>) {
+        self.hints = hints;
     }
 
     /// Replace the menu model (called from `AppShell` whenever the menu state
@@ -93,6 +102,9 @@ impl MenuBar {
             } => {
                 let disabled = *disabled;
                 let hint = keymap::effective_keystroke(action.name(), overrides)
+                    .or_else(|| {
+                        self.hints.iter().find(|(name, _)| *name == action.name()).map(|(_, k)| k.clone())
+                    })
                     .map(|k| kbd::plain(&k, cx))
                     .filter(|h| !h.is_empty());
                 let action = action.boxed_clone();

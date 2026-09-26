@@ -23,14 +23,14 @@ use crate::util::{copy, fresh_dir, report, try_run, workspace_root};
 use crate::{icon, meta};
 
 pub fn bundle(cx: &Context) -> Result<(), String> {
-    let app = cx.out_dir.join(format!("{}.app", meta::DISPLAY_NAME));
+    let app = cx.out_dir.join(format!("{}.app", meta::p().display_name));
     let contents = app.join("Contents");
     fresh_dir(&contents).map_err(|e| format!("prepare {}: {e}", contents.display()))?;
     std::fs::create_dir_all(contents.join("MacOS")).map_err(io)?;
     std::fs::create_dir_all(contents.join("Resources")).map_err(io)?;
 
-    // Executable — `meta::MACOS_EXECUTABLE_NAME` (ASCII), NOT the branded
-    // `meta::DISPLAY_NAME`. codesign on macOS 26 cannot ad-hoc-sign an app
+    // Executable — `meta::p().macos_executable_name` (ASCII), NOT the branded
+    // `meta::p().display_name`. codesign on macOS 26 cannot ad-hoc-sign an app
     // bundle whose main executable's *filename* contains a non-ASCII
     // character (the "ä" in "Kampfrichtereinsatzpläne"): `codesign --sign`
     // fails outright with "code object is not signed at all / In
@@ -41,7 +41,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     // branded name, and so do `CFBundleName` / `CFBundleDisplayName` (what
     // Finder, the menu bar and Force-Quit show) — only the on-disk
     // executable, visible mainly in Activity Monitor / `ps`, changes.
-    let exe = contents.join("MacOS").join(meta::MACOS_EXECUTABLE_NAME);
+    let exe = contents.join("MacOS").join(meta::p().macos_executable_name);
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
 
@@ -49,40 +49,56 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     // macOS 26 interface (larger window controls, Liquid Glass) regardless of
     // which macOS SDK the linker on the build host had. No-op when it's
     // already ≥ the floor. See `meta::MACOS_SDK_FLOOR` / RUNNERS.md.
-    ensure_min_sdk(&exe, "macos", meta::MACOS_MIN_VERSION, meta::MACOS_SDK_FLOOR)?;
+    ensure_min_sdk(
+        &exe,
+        "macos",
+        meta::MACOS_MIN_VERSION,
+        meta::MACOS_SDK_FLOOR,
+    )?;
 
     // Icon. `AppIcon.icns` is the pre-Tahoe fallback (`CFBundleIconFile`);
     // `Assets.car` carries the actual Liquid Glass icon that Tahoe+ Finder
     // renders, looked up by name (`CFBundleIconName`) — both come from
     // `cargo dtb-ke-bundle icons` (macOS-only, committed to
     // `assets/icons/generated/`; see icon.rs's module doc).
-    let icon_name = if cx.have_icon && icon::icns_path().exists() && icon::assets_car_path().exists()
-    {
-        copy(&icon::icns_path(), &contents.join("Resources/AppIcon.icns")).map_err(io)?;
-        copy(&icon::assets_car_path(), &contents.join("Resources/Assets.car")).map_err(io)?;
-        Some(icon::APP_ICON_NAME)
-    } else {
-        None
-    };
+    let icon_name =
+        if cx.have_icon && icon::icns_path().exists() && icon::assets_car_path().exists() {
+            copy(&icon::icns_path(), &contents.join("Resources/AppIcon.icns")).map_err(io)?;
+            copy(
+                &icon::assets_car_path(),
+                &contents.join("Resources/Assets.car"),
+            )
+            .map_err(io)?;
+            Some(icon::APP_ICON_NAME)
+        } else {
+            None
+        };
 
     // `.dtbke` document-type icon (`UTTypeIconFile` below) — optional, same
     // shape as the app icon: bundle without one (a generic Finder file icon)
     // if it hasn't been committed yet.
     let doc_icon_name = if icon::doc_available() && icon::doc_icns_path().exists() {
-        copy(&icon::doc_icns_path(), &contents.join("Resources/DocumentIcon.icns")).map_err(io)?;
+        copy(
+            &icon::doc_icns_path(),
+            &contents.join("Resources/DocumentIcon.icns"),
+        )
+        .map_err(io)?;
         Some("DocumentIcon")
     } else {
         None
     };
 
     // Info.plist + PkgInfo.
-    std::fs::write(contents.join("Info.plist"), info_plist(icon_name, doc_icon_name))
-        .map_err(io)?;
+    std::fs::write(
+        contents.join("Info.plist"),
+        info_plist(icon_name, doc_icon_name),
+    )
+    .map_err(io)?;
     std::fs::write(contents.join("PkgInfo"), b"APPL????").map_err(io)?;
 
     // License, for good measure.
     copy(
-        &workspace_root().join("crates/dtb-ke-ui/assets/AGPL-3.0.txt"),
+        &workspace_root().join(meta::p().license_file),
         &contents.join("Resources/LICENSE.txt"),
     )
     .ok();
@@ -127,7 +143,8 @@ fn info_plist(icon_name: Option<&str>, doc_icon_name: Option<&str>) -> String {
         .unwrap_or_default();
     // `CFBundleAlternateNames` — short nicknames Spotlight/Siri also match,
     // since `DISPLAY_NAME` is long and carries a non-ASCII `ä`.
-    let alternate_names = meta::MACOS_ALTERNATE_NAMES
+    let alternate_names = meta::p()
+        .macos_alternate_names
         .iter()
         .map(|n| format!("\t\t<string>{}</string>\n", xml_escape(n)))
         .collect::<String>();
@@ -148,7 +165,7 @@ fn info_plist(icon_name: Option<&str>, doc_icon_name: Option<&str>) -> String {
 			<key>CFBundleTypeName</key>
 			<string>{doc_name}</string>
 			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
+			<string>{role}</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -178,9 +195,10 @@ fn info_plist(icon_name: Option<&str>, doc_icon_name: Option<&str>) -> String {
 {doc_icon_entry}		</dict>
 	</array>
 "#,
-        doc_name = xml_escape(meta::DOC_TYPE_NAME),
-        uti = meta::DOC_UTI,
-        ext = meta::DOC_EXTENSION,
+        role = meta::p().doc_role,
+        doc_name = xml_escape(meta::p().doc_type_name),
+        uti = meta::p().doc_uti,
+        ext = meta::p().doc_extension,
         doc_icon_entry = doc_icon_entry,
     );
 
@@ -223,16 +241,16 @@ fn info_plist(icon_name: Option<&str>, doc_icon_name: Option<&str>) -> String {
 </dict>
 </plist>
 "#,
-        name = meta::DISPLAY_NAME,
-        display = meta::DISPLAY_NAME,
-        id = meta::IDENTIFIER,
-        bin = meta::MACOS_EXECUTABLE_NAME,
+        name = meta::p().display_name,
+        display = meta::p().display_name,
+        id = meta::p().identifier,
+        bin = meta::p().macos_executable_name,
         icon = icon_entry,
         document_types = document_types,
         short_version = meta::numeric_version(),
         version = meta::numeric_version(),
         min_os = meta::MACOS_MIN_VERSION,
-        category = meta::MACOS_CATEGORY,
+        category = meta::p().macos_category,
         copyright = xml_escape(meta::COPYRIGHT),
     )
 }
@@ -286,8 +304,7 @@ pub(crate) fn ensure_min_sdk(
     if current >= floor {
         eprintln!(
             "dtb-ke-bundle: {platform} SDK stamp {}.{} already ≥ {floor_str} — left as is",
-            current.0,
-            current.1
+            current.0, current.1
         );
         return Ok(());
     }
@@ -310,8 +327,7 @@ pub(crate) fn ensure_min_sdk(
     )?;
     eprintln!(
         "dtb-ke-bundle: restamped {platform} SDK {}.{} → {floor_str} for the 26-era interface",
-        current.0,
-        current.1
+        current.0, current.1
     );
     Ok(())
 }
@@ -339,16 +355,18 @@ fn codesign(app: &Path, identity: &str) -> Result<(), String> {
 }
 
 fn make_dmg(cx: &Context, app: &Path) -> Result<(), String> {
-    let dmg = cx
-        .out_dir
-        .join(format!("{}-{}.dmg", meta::SLUG, meta::numeric_version()));
+    let dmg = cx.out_dir.join(format!(
+        "{}-{}.dmg",
+        meta::p().slug,
+        meta::numeric_version()
+    ));
     crate::util::remove(&dmg).ok();
     try_run(
         "hdiutil",
         &[
             "create",
             "-volname",
-            meta::DISPLAY_NAME,
+            meta::p().display_name,
             "-srcfolder",
             &app.to_string_lossy(),
             "-ov",
@@ -391,10 +409,14 @@ mod tests {
     #[test]
     fn plist_declares_the_dtbke_document_type() {
         let xml = info_plist(Some("AppIcon"), Some("DocumentIcon"));
-        assert_eq!(xml.matches('<').count(), xml.matches('>').count(), "unbalanced tags");
+        assert_eq!(
+            xml.matches('<').count(),
+            xml.matches('>').count(),
+            "unbalanced tags"
+        );
         assert!(xml.contains("<key>CFBundleDocumentTypes</key>"));
         assert!(xml.contains("<key>UTExportedTypeDeclarations</key>"));
-        assert!(xml.contains("de.philippremy.dtb-kampfrichtereinsatzplan"));
+        assert!(xml.contains(crate::meta::p().doc_uti));
         assert!(xml.contains("<string>dtbke</string>"));
         assert!(xml.contains("<key>UTTypeIconFile</key>"));
     }
@@ -402,7 +424,11 @@ mod tests {
     #[test]
     fn plist_omits_doc_icon_key_when_unavailable() {
         let xml = info_plist(None, None);
-        assert_eq!(xml.matches('<').count(), xml.matches('>').count(), "unbalanced tags");
+        assert_eq!(
+            xml.matches('<').count(),
+            xml.matches('>').count(),
+            "unbalanced tags"
+        );
         assert!(!xml.contains("UTTypeIconFile"));
     }
 }

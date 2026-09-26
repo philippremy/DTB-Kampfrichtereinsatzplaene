@@ -80,7 +80,7 @@ fn a_relative_main_module_path_is_replaced_by_the_build_infos_absolute_exe_path(
         },
         ..Default::default()
     };
-    let path = std::env::temp_dir().join(format!("dtbke-rel-{}.dmp", std::process::id()));
+    let path = std::env::temp_dir().join(format!("dtbke-rel-{}.dtbkedmp", std::process::id()));
     std::fs::write(&path, to_minidump(&snap)).unwrap();
     let opened = dtb_ke_debugger::process::OpenedDump::open(&path).unwrap();
     let _ = std::fs::remove_file(&path);

@@ -358,7 +358,7 @@ sending = "Sending …"
 "codeberg-button" = "Open on Codeberg"
 
 [about]
-title = "About DTB Kampfrichtereinsatzpläne"
+title = "About {name}"
 "acknowledgements-title" = "Acknowledgements"
 "build-info-title" = "Build Information"
 "license-title" = "License Agreement"

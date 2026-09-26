@@ -1,0 +1,232 @@
+name: Debugger
+
+# On demand: builds the crash debugger (`--product debugger`, see CLAUDE.md § Bundling → Products) for all five
+# desktop targets and publishes the bundles as ONE rolling "release" on the `debugger` tag — not a real release,
+# just a stable place to download the latest debugger. Runs when a push to `main` carries `!DEBUGGER_CI` in any of
+# its commit messages, or by hand (workflow_dispatch). Everything is uploaded `--plain`: no manifest, no updater —
+# the debugger has no self-update channel. See RUNNERS.md for what each `runs-on` label is; tip.yml is the
+# template this file follows (every runner-specific detail — target-dir caching, the PowerShell rules, the
+# aarch64 sysroot — is explained there and only referenced here).
+#
+# Quoted "on": bare `on:` parses as the boolean `true` under YAML 1.1 (see tip.yml).
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: debugger
+  cancel-in-progress: false
+
+env:
+  # Speed over size, like Tip: no LTO, incremental — the persistent runners keep `Cache/debugger/<triple>`.
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_INCREMENTAL: "1"
+  # The debugger links dtb-ke-ui, whose build.rs reads these at compile time (absent = mail disabled, never a
+  # build failure). The debugger itself never sends mail; this only keeps the shared build cache keys identical.
+  DTB_KE_SMTP_HOST: ${{ secrets.DTB_KE_SMTP_HOST }}
+  DTB_KE_SMTP_PORT: ${{ secrets.DTB_KE_SMTP_PORT }}
+  DTB_KE_SMTP_USER: ${{ secrets.DTB_KE_SMTP_USER }}
+  DTB_KE_SMTP_PASS: ${{ secrets.DTB_KE_SMTP_PASS }}
+  DTB_KE_SMTP_FROM: ${{ secrets.DTB_KE_SMTP_FROM }}
+  DTB_KE_SMTP_TO: ${{ secrets.DTB_KE_SMTP_TO }}
+
+jobs:
+  prepare:
+    # Every other job `needs: prepare`, so a skipped prepare skips the whole run.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '!DEBUGGER_CI') || contains(toJSON(github.event.commits), '!DEBUGGER_CI') }}
+    runs-on: [linux-host]
+    outputs:
+      release_id: ${{ steps.prepare.outputs.release_id }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Fetch submodules (shallow)
+        run: git submodule update --init --depth 1
+      - id: version
+        name: Compute the version (X.Y.Z.N)
+        # `X.Y.Z.N` — no `-dev`: the debugger is a rolling release. X.Y.Z is the next release's version
+        # (Cargo.toml sits at `X.Y.(Z+1)-dev.0` between releases, the `-dev.0` stripped here), and N = commits on
+        # main since the last `v*` tag — the same counter tip.yml uses, so it resets to 0 exactly when a release
+        # bumps X.Y.Z.
+        run: |
+          raw=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          base=${raw%-dev.*}
+          last=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -n "$last" ]; then
+            n=$(git rev-list --count --first-parent "${last}..HEAD")
+          else
+            n=$(git rev-list --count --first-parent HEAD)
+          fi
+          echo "version=${base}.${n}" >> "$FORGEJO_OUTPUT"
+      # The release API can create a tag but never retarget an existing one, so force-move `debugger` first.
+      - name: Force-move the debugger tag
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://philippremy:${CODEBERG_TOKEN}@codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene.git"
+          git tag -f debugger
+          git push -f origin debugger
+      - id: prepare
+        name: Create/replace the debugger release
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          printf 'Latest build of the crash debugger, from %s\n\n%s\n' \
+            "$(git log -1 --format='%h — %s')" \
+            "Developer tool for .dtbkedmp crash reports. Not part of the app updater. macOS: ad-hoc signed (expect a first-run Gatekeeper prompt). Rebuilt only when a commit message contains !DEBUGGER_CI." \
+            > /tmp/debugger-notes.md
+          cargo dtb-ke-bundle codeberg prepare \
+            --tag debugger \
+            --target "${{ github.sha }}" \
+            --title "DTB Kampfrichtereinsatzpläne Debugger (${{ steps.version.outputs.version }})" \
+            --notes-file /tmp/debugger-notes.md \
+            --prerelease
+
+  linux-x86_64:
+    needs: prepare
+    runs-on: [linux-host]
+    env:
+      CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/debugger/x86_64-unknown-linux-gnu
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Build
+        run: cargo dtb-ke-bundle bundle --product debugger --release --formats deb,rpm,appimage,tar
+      - name: Upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd target/bundle/release/dtb-ke-kampfrichtereinsatzplaene-debugger
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} \
+            *.deb *.rpm *.AppImage *.tar.gz
+
+  linux-arm64:
+    needs: prepare
+    runs-on: [linux-host]
+    env:
+      # Cross-build environment: see tip.yml's linux-arm64 job and RUNNERS.md § Linux arm64.
+      CARGO_TARGET_DIR: /var/cache/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/debugger/aarch64-unknown-linux-gnu
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+      PKG_CONFIG_ALLOW_CROSS: "1"
+      PKG_CONFIG_SYSROOT_DIR: /opt/sysroots/aarch64-linux-gnu
+      PKG_CONFIG_PATH: /opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu/pkgconfig:/opt/sysroots/aarch64-linux-gnu/usr/share/pkgconfig
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      RUSTFLAGS: "-C link-arg=-L/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-L/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/usr/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link,/opt/sysroots/aarch64-linux-gnu/lib/aarch64-linux-gnu"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Cross-build for aarch64
+        run: cargo dtb-ke-bundle bundle --product debugger --release --formats deb,rpm,appimage,tar --target aarch64-unknown-linux-gnu
+      - name: Upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd target/bundle/release/dtb-ke-kampfrichtereinsatzplaene-debugger
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} \
+            *.deb *.rpm *.AppImage *.tar.gz
+
+  windows-x86_64:
+    needs: prepare
+    runs-on: [windows-host]
+    env:
+      # Backslashes on purpose — see tip.yml's windows-x86_64 job.
+      CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\debugger\x86_64-pc-windows-gnullvm
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Build
+        run: |
+          cargo dtb-ke-bundle bundle --product debugger --release --formats msi --target x86_64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package + upload
+        # PowerShell only (no bash on this VM); the paths here are ASCII, the `ä` lives only inside the .exe's name.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "target\bundle\release\dtb-ke-kampfrichtereinsatzplaene-debugger"
+          $srcDir = (Get-ChildItem $out -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "portable folder not found under $out" }
+          # Compress-Archive sets the UTF-8 name flag for the non-ASCII .exe name (bsdtar did not — see tip.yml).
+          $name = "dtb-ke-kampfrichtereinsatzplaene-debugger-x86_64-pc-windows-gnullvm.zip"
+          Compress-Archive -Path $srcDir -DestinationPath $name -Force
+          $assets = @("$name") + @(Get-ChildItem "$out\*.msi" -File | ForEach-Object FullName)
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} @assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-arm64:
+    needs: prepare
+    runs-on: [windows-host]
+    env:
+      CARGO_TARGET_DIR: C:\Codeberg\DTB-Kampfrichtereinsatzplaene\Cache\debugger\aarch64-pc-windows-gnullvm
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Disable CET shadow-stack enforcement for wix.exe
+        run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
+      - name: Cross-build for aarch64
+        run: |
+          cargo dtb-ke-bundle bundle --product debugger --release --formats msi --target aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package + upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "target\bundle\release\dtb-ke-kampfrichtereinsatzplaene-debugger"
+          $srcDir = (Get-ChildItem $out -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
+          if (-not $srcDir) { throw "portable folder not found under $out" }
+          $name = "dtb-ke-kampfrichtereinsatzplaene-debugger-aarch64-pc-windows-gnullvm.zip"
+          Compress-Archive -Path $srcDir -DestinationPath $name -Force
+          $assets = @("$name") + @(Get-ChildItem "$out\*.msi" -File | ForEach-Object FullName)
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} @assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  macos-universal:
+    needs: prepare
+    runs-on: [macos-host]
+    env:
+      CARGO_TARGET_DIR: /Users/Shared/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/debugger/universal-apple-darwin
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Build universal binary
+        # dtb-ke-bundle ad-hoc-signs the .app itself; a `.dmg` comes with `--formats dmg`.
+        run: cargo dtb-ke-bundle bundle --product debugger --release --universal --formats dmg
+      - name: Package + upload
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd target/bundle/release/dtb-ke-kampfrichtereinsatzplaene-debugger
+          name="dtb-ke-kampfrichtereinsatzplaene-debugger-universal-apple-darwin.tar.gz"
+          tar -czf "$name" "DTB Kampfrichtereinsatzpläne Debugger.app"
+          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} \
+            "$name" *.dmg

@@ -1,6 +1,8 @@
 //! The debugger window: open a dump (dialog, drag-and-drop, CLI arg), resolve its debug files, show the
 //! result in four tabs — Verarbeitet (threads, backtrace, registers, source), Rohdaten (streams),
 //! Symbole (which debug file each module got, and where from), Build (the build-info stream).
+//!
+//! One window at a time (`WINDOW`); a dump arriving from the OS (Finder / file association) is loaded into it.
 
 mod info;
 mod processed;
@@ -20,6 +22,7 @@ use dtb_ke_debugger::{
     DebugFileSource, DirectorySource, DyldSharedCacheSource, ExecutableSource, Resolver,
 };
 use dtb_ke_ui::components::icon::Icon;
+use dtb_ke_ui::components::menu_bar::MenuBar;
 use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Segmented, Spinner};
 use dtb_ke_ui::theme::{ActiveTheme, Appearance, Theme, ThemeMode};
 use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
@@ -34,8 +37,27 @@ use crate::tokio_bridge::Tokio;
 
 gpui_kit::actions!(
     debugger,
-    [OpenDump, AddSymbols, Quit, ShowLogs, ToggleSidebar, ToggleSource, ToggleRegisters]
+    [
+        OpenDump,
+        AddSymbols,
+        Quit,
+        ShowLogs,
+        ToggleSidebar,
+        ToggleSource,
+        ToggleRegisters,
+        About,
+        HideApp,
+        HideOthers,
+        Minimize,
+        Zoom,
+        ToggleFullscreen,
+        CloseWindow,
+        OpenRepository,
+    ]
 );
+
+static WINDOW: dtb_ke_ui::window_registry::WindowRegistry<()> =
+    dtb_ke_ui::window_registry::WindowRegistry::new();
 
 const SIDEBAR_WIDTH: Pixels = px(300.);
 const SIDEBAR_MIN: Pixels = px(160.);
@@ -93,13 +115,31 @@ pub struct DebuggerWindow {
     sidebar_collapsed: bool,
     sidebar_width: Pixels,
     resizable_state: gpui_kit::Entity<ResizableState>,
+    /// The in-app menu strip, drawn only where gpui has no native menu bar (Windows, Linux).
+    menu_bar: gpui_kit::Entity<MenuBar>,
     processed: processed::State,
     raw: raw::State,
     symbols: symbols::State,
     info: info::State,
 }
 
+/// Open the window (or focus the existing one), optionally with a dump and extra debug-file locations.
 pub fn open(cx: &mut App, dump: Option<PathBuf>, symbol_paths: Vec<PathBuf>) {
+    if WINDOW.focus((), cx) {
+        if let Some(handle) = WINDOW.get(()).and_then(|h| h.downcast::<DebuggerWindow>()) {
+            handle
+                .update(cx, |this, _window, cx| {
+                    for p in symbol_paths {
+                        this.dir_source.add_root(p);
+                    }
+                    if let Some(dump) = dump {
+                        this.open_path(dump, cx);
+                    }
+                })
+                .ok();
+        }
+        return;
+    }
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -107,7 +147,7 @@ pub fn open(cx: &mut App, dump: Option<PathBuf>, symbol_paths: Vec<PathBuf>) {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("DTB KE Debugger".into()),
+            title: Some(dtb_ke_debugger::NAME.into()),
             appears_transparent: dtb_ke_ui::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -120,6 +160,7 @@ pub fn open(cx: &mut App, dump: Option<PathBuf>, symbol_paths: Vec<PathBuf>) {
         cx.new(|cx| DebuggerWindow::new(window, cx))
     }) {
         Ok(handle) => {
+            WINDOW.insert((), handle.into());
             handle
                 .update(cx, |this, _window, cx| {
                     for p in symbol_paths {
@@ -147,6 +188,12 @@ pub fn open(cx: &mut App, dump: Option<PathBuf>, symbol_paths: Vec<PathBuf>) {
                 .ok();
         }
         Err(err) => log::error!("failed to open the debugger window: {err}"),
+    }
+}
+
+impl Drop for DebuggerWindow {
+    fn drop(&mut self) {
+        WINDOW.remove(());
     }
 }
 
@@ -190,7 +237,14 @@ impl DebuggerWindow {
             local_roots: std::fs::canonicalize(&checkout).into_iter().collect(),
         };
 
+        let menu_bar = cx.new(|_| MenuBar::new());
+        menu_bar.update(cx, |bar, cx| {
+            bar.set_menus(crate::app_menu::build(), cx);
+            bar.set_hints(crate::app_menu::hints());
+        });
+
         Self {
+            menu_bar,
             focus: cx.focus_handle(),
             phase: Phase::Empty,
             tab: Tab::Processed,
@@ -221,6 +275,20 @@ impl DebuggerWindow {
 
     fn open_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         log::info!("opening {}", path.display());
+        if !dtb_ke_debugger::is_dump(&path) {
+            log::error!(
+                "{} is not a .{} file",
+                path.display(),
+                dtb_ke_crash::DUMP_EXTENSION
+            );
+            self.phase = Phase::Failed(format!(
+                "{}: not a crash report (expected a .{} file)",
+                path.display(),
+                dtb_ke_crash::DUMP_EXTENSION
+            ));
+            cx.notify();
+            return;
+        }
         match OpenedDump::open(&path) {
             Ok(opened) => {
                 let names = opened
@@ -390,7 +458,7 @@ impl DebuggerWindow {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open minidump".into()),
+            prompt: Some("Open crash report".into()),
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = rx.await {
@@ -434,8 +502,8 @@ impl DebuggerWindow {
 
     fn dropped(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
         let mut paths = paths.paths().to_vec();
-        // A dropped `.dmp` opens; anything else (dSYM bundle, PDB, directory) is a symbol source.
-        if let Some(i) = paths.iter().position(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dmp"))) {
+        // A dropped `.dtbkedmp` opens; anything else (dSYM bundle, PDB, directory) is a symbol source.
+        if let Some(i) = paths.iter().position(|p| dtb_ke_debugger::is_dump(p)) {
             let dump = paths.remove(i);
             for p in paths {
                 self.dir_source.add_root(p);
@@ -774,10 +842,10 @@ impl Render for DebuggerWindow {
         let font = cx.theme().skin.font_family();
         let lead = dtb_ke_ui::skin::titlebar::content_leading_inset(window);
 
-        // "DTB KE Debugger (<file>)" — in the OS title bar and in our own title strip.
+        // "<name> (<file>)" — in the OS title bar and in our own title strip.
         let title = match self.session.as_ref().and_then(|s| s.path.file_name()) {
-            Some(name) => format!("DTB KE Debugger ({})", name.to_string_lossy()),
-            None => "DTB KE Debugger".to_owned(),
+            Some(name) => format!("{} ({})", dtb_ke_debugger::NAME, name.to_string_lossy()),
+            None => dtb_ke_debugger::NAME.to_owned(),
         };
         if self.window_title != title {
             window.set_window_title(&title);
@@ -797,7 +865,10 @@ impl Render for DebuggerWindow {
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(cx.listener(|this, _: &ToggleSource, _, cx| this.toggle_code(cx)))
             .on_action(cx.listener(|this, _: &ToggleRegisters, _, cx| this.toggle_registers(cx)))
-            .on_action(|_: &ShowLogs, _, cx| dtb_ke_ui::logs_window::open(cx))
+            .on_action(cx.listener(|_, _: &CloseWindow, window, _| window.remove_window()))
+            .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
+            .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
+            .on_action(cx.listener(|_, _: &ToggleFullscreen, window, _| window.toggle_fullscreen()))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.dropped(paths, cx)))
             .size_full()
             .flex()
@@ -805,6 +876,18 @@ impl Render for DebuggerWindow {
             .bg(c.background)
             .text_color(c.foreground)
             .when_some(font, |el, family| el.font_family(family))
+            .when(dtb_ke_ui::skin::menu::in_app(cx), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .bg(c.chrome)
+                        .border_b_1()
+                        .border_color(c.border)
+                        .child(self.menu_bar.clone()),
+                )
+            })
             .child(
                 div()
                     .flex_none()

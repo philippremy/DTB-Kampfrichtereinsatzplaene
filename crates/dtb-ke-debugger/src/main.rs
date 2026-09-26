@@ -1,17 +1,27 @@
-//! `dtb-ke-debugger` — the developer-only minidump viewer. Not shipped, not built by CI.
+//! `dtb-ke-debugger` — the developer's crash-report viewer (`.dtbkedmp`). Packaged locally
+//! (`cargo dtb-ke-bundle bundle --product debugger`), not built by CI, no updater.
 
+mod app_menu;
+mod open_files;
 mod tokio_bridge;
 mod ui;
 
 use std::path::PathBuf;
 
+use dtb_ke_ui::about::{self, Identity};
 use dtb_ke_ui::filesystem::FilesystemHelper;
+use dtb_ke_ui::i18n;
 use dtb_ke_ui::settings::Settings;
 use dtb_ke_ui::theme::{Appearance, Theme};
-use dtb_ke_ui::i18n;
-use gpui_kit::{KeyBinding, Menu, MenuItem};
 
-use ui::{AddSymbols, OpenDump, Quit, ShowLogs, ToggleRegisters, ToggleSidebar, ToggleSource};
+/// The flat icon for the About window on Windows / Linux (macOS reads the live bundle icon). Embedded only once
+/// `cargo dtb-ke-bundle icons --product debugger` has generated it.
+#[cfg(has_app_icon)]
+const ICON_PNG: Option<&[u8]> = Some(include_bytes!(
+    "../../../assets/icons/debugger/generated/AppIcon.png"
+));
+#[cfg(not(has_app_icon))]
+const ICON_PNG: Option<&[u8]> = None;
 
 /// Where this process keeps its data root: a **temporary directory of its own**, so the debugger never writes logs,
 /// settings or backups into the regular app's folders. Everything the shared `FilesystemHelper` resolves (the log
@@ -61,15 +71,26 @@ fn main() {
         .expect("log file creation must succeed")
         .register();
 
-    // `dtb-ke-debugger [dump.dmp] [debug files or directories…]`; `DTB_KE_SYMBOLS` (path-list) adds more.
-    let mut args = std::env::args_os().skip(1).map(PathBuf::from);
-    let dump = args.next();
-    let mut symbol_paths: Vec<PathBuf> = args.collect();
+    // `dtb-ke-debugger [dump.dtbkedmp] [debug files or directories…]` — a file association launches it with just
+    // the dump. The dump is the first argument with the right extension; every other argument is a symbol
+    // source. `DTB_KE_SYMBOLS` (path-list) adds more.
+    let mut dump = None;
+    let mut symbol_paths = Vec::new();
+    for arg in std::env::args_os().skip(1).map(PathBuf::from) {
+        if dump.is_none() && dtb_ke_debugger::is_dump(&arg) {
+            dump = Some(arg);
+        } else {
+            symbol_paths.push(arg);
+        }
+    }
     if let Some(v) = std::env::var_os("DTB_KE_SYMBOLS") {
         symbol_paths.extend(std::env::split_paths(&v));
     }
 
     let app = gpui_kit::platform::application();
+    // A Dock click after the last window was closed (macOS keeps the app alive), and a file opened from Finder.
+    app.on_reopen(|cx| ui::open(cx, None, Vec::new()));
+    app.on_open_urls(open_files::handle_open_urls);
     app.run(move |cx| {
         // Delete the temporary data root (the logs in it included) when the app quits.
         if let Some(root) = data_root.clone() {
@@ -89,37 +110,26 @@ fn main() {
         cx.set_reduce_motion(settings.reduce_motion);
         dtb_ke_log::set_level(settings.log_level.to_filter());
         i18n::Locale::install(cx);
-        Theme::install(settings.theme_mode, Appearance::from(cx.window_appearance()), cx);
+        Theme::install(
+            settings.theme_mode,
+            Appearance::from(cx.window_appearance()),
+            cx,
+        );
+        about::install_identity(
+            cx,
+            Identity {
+                name: dtb_ke_debugger::NAME,
+                // The long name would wrap at the app's headline size.
+                name_size: 18.,
+                identifier: dtb_ke_debugger::IDENTIFIER,
+                icon_png: ICON_PNG,
+            },
+        );
 
-        let secondary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
-        cx.bind_keys([
-            KeyBinding::new(&format!("{secondary}-o"), OpenDump, None),
-            KeyBinding::new(&format!("{secondary}-shift-o"), AddSymbols, None),
-            KeyBinding::new(&format!("{secondary}-q"), Quit, None),
-            KeyBinding::new(&format!("{secondary}-l"), ShowLogs, None),
-            KeyBinding::new(&format!("{secondary}-alt-s"), ToggleSidebar, None),
-            KeyBinding::new(&format!("{secondary}-alt-c"), ToggleSource, None),
-            KeyBinding::new(&format!("{secondary}-alt-r"), ToggleRegisters, None),
-        ]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.set_menus(vec![
-            Menu::new("DTB KE Debugger").items([
-                MenuItem::action("Logs", ShowLogs),
-                MenuItem::separator(),
-                MenuItem::action("Quit", Quit),
-            ]),
-            Menu::new("File").items([
-                MenuItem::action("Open …", OpenDump),
-                MenuItem::action("Add debug files …", AddSymbols),
-            ]),
-            Menu::new("View").items([
-                MenuItem::action("Toggle sidebar", ToggleSidebar),
-                MenuItem::action("Toggle source pane", ToggleSource),
-                MenuItem::action("Toggle register pane", ToggleRegisters),
-            ]),
-        ]);
+        app_menu::install(cx);
 
         ui::open(cx, dump, symbol_paths);
+        open_files::ready(cx);
         cx.activate(true);
     });
 }

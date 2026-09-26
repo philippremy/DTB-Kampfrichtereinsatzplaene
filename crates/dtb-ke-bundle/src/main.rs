@@ -18,6 +18,9 @@
 //!     iOS/iPadOS (macOS host only): `bundle --debug --target aarch64-apple-ios-sim` builds a
 //!     simulator `.app`; `--target aarch64-apple-ios` a device one and additionally takes
 //!     `--sign <identity> --provisioning-profile <file>`.
+//!   Every build/bundle/icons/debug-info command takes `--product app|debugger` (default `app`): the debugger
+//!   (`dtb-ke-debugger`) gets its own `.app`/`.msi`/Linux packages, icons (`assets/icons/debugger/`) and the
+//!   `.dtbkedmp` file association, and has no crash helper and no iOS bundle.
 //!   cargo dtb-ke-bundle debug-info [--universal | --target <t>] <out.tar.gz>
 //!     package `[profile.release] split-debuginfo = "packed"`'s sidecar —
 //!     macOS's `.dSYM`, Linux's `.dwp` — kept entirely separate from `bundle`
@@ -47,13 +50,23 @@ fn main() {
     let cmd = argv.next().unwrap_or_default();
     let rest: Vec<String> = argv.collect();
     let has = |flag: &str| rest.iter().any(|a| a == flag);
+    match flag_value(&rest, "--product").as_deref() {
+        None | Some("app") => meta::select(&meta::APP),
+        Some("debugger") => meta::select(&meta::DEBUGGER),
+        Some(other) => {
+            eprintln!("dtb-ke-bundle: unknown --product {other:?} (expected `app` or `debugger`)");
+            exit(2);
+        }
+    }
 
     match cmd.as_str() {
         "helper" => helper::stage(has("--release"), None),
         "build" => {
             let release = has("--release");
-            helper::stage(release, None);
-            let mut args = vec!["build".to_string(), "-p".into(), "dtb-ke-ui".into()];
+            if meta::p().crash_helper {
+                helper::stage(release, None);
+            }
+            let mut args = vec!["build".to_string(), "-p".into(), meta::p().package.into()];
             if release {
                 args.push("--release".into());
             }
@@ -281,6 +294,7 @@ fn flag_value(rest: &[String], flag: &str) -> Option<String> {
 fn usage() {
     eprintln!(
         "usage:
+  (every command below also takes --product app|debugger; default app)
   cargo dtb-ke-bundle build  [--release]     stage the crash helper, then build the app
   cargo dtb-ke-bundle helper [--release]     just (re)stage the crash helper
   cargo dtb-ke-bundle icons                  regenerate .icns / .ico / PNG icons from the master

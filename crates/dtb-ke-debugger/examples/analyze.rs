@@ -1,4 +1,4 @@
-//! Headless run of the whole pipeline: `cargo run -p dtb-ke-debugger --example analyze -- <dump.dmp> [symbol-dir-or-file…]`
+//! Headless run of the whole pipeline: `cargo run -p dtb-ke-debugger --example analyze -- <dump.dtbkedmp> [symbol-dir-or-file…]`
 
 use dtb_ke_debugger::process::{OpenedDump, analyze};
 use dtb_ke_debugger::{DirectorySource, ExecutableSource, Outcome, Resolver};
@@ -8,7 +8,7 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let dump = args
         .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: analyze <dump.dmp> [symbols…]"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: analyze <dump.dtbkedmp> [symbols…]"))?;
     let opened = OpenedDump::open(std::path::Path::new(&dump))?;
 
     println!("system: {}", opened.system);

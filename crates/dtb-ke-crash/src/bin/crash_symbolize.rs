@@ -3,7 +3,7 @@
 //! debug ids for manual symbolication.
 //!
 //! ```text
-//! dtb-ke-symbolize <dump.dmp>
+//! dtb-ke-symbolize <dump.dtbkedmp>
 //! ```
 //!
 //! For symbol resolution (`func @ file:line`) use `minidump-stackwalk
@@ -22,12 +22,12 @@ use minidump_unwind::{
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: dtb-ke-symbolize <dump.dmp>");
+        eprintln!("usage: dtb-ke-symbolize <dump.dtbkedmp>");
         std::process::exit(2);
     };
     if path == "-h" || path == "--help" {
         eprintln!(
-            "usage: dtb-ke-symbolize <dump.dmp>\n\nFor symbolication: `minidump-stackwalk --symbols-path <dir> <dump.dmp>`, or open in lldb -c / WinDbg."
+            "usage: dtb-ke-symbolize <dump.dtbkedmp>\n\nFor symbolication: `minidump-stackwalk --symbols-path <dir> <dump.dtbkedmp>`, or open in lldb -c / WinDbg."
         );
         return;
     }

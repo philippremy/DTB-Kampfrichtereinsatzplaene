@@ -3,7 +3,7 @@ name = "dtb-ke-debugger"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Developer-only minidump debugger: resolves native debug files (dSYM / PDB / DWARF) for a crash dump's exact build and symbolicates it. Not shipped, not built by CI."
+description = "Developer-only minidump debugger: resolves native debug files (dSYM / PDB / DWARF) for a crash dump's exact build and symbolicates it. Packaged locally with `cargo dtb-ke-bundle bundle --product debugger` (not built by CI)."
 
 [lib]
 path = "src/lib.rs"

@@ -47,7 +47,7 @@ pub fn run(opts: Options) -> Result<(), String> {
     }
 
     let target = opts.target.as_deref();
-    let Some(path) = util::debug_info_path(opts.release, target, meta::RAW_BIN_NAME) else {
+    let Some(path) = util::debug_info_path(opts.release, target, meta::p().raw_bin_name) else {
         eprintln!(
             "dtb-ke-bundle: this platform's split-debuginfo produces no sidecar file (see \
              RUNNERS.md) — nothing to package"
@@ -76,7 +76,7 @@ pub fn run(opts: Options) -> Result<(), String> {
 fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
     let mut dsyms = Vec::with_capacity(UNIVERSAL_TARGETS.len());
     for triple in UNIVERSAL_TARGETS {
-        let path = util::debug_info_path(release, Some(triple), meta::RAW_BIN_NAME)
+        let path = util::debug_info_path(release, Some(triple), meta::p().raw_bin_name)
             .expect("apple-darwin triples always produce a .dSYM path");
         if !path.exists() {
             eprintln!(
@@ -95,11 +95,11 @@ fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
     let merged_dir = util::workspace_root()
         .join("target/universal")
         .join(if release { "release" } else { "debug" })
-        .join(format!("{}.dSYM", meta::RAW_DSYM_NAME));
+        .join(format!("{}.dSYM", meta::p().raw_dsym_name));
     util::fresh_dir(&merged_dir).map_err(|e| format!("prepare {}: {e}", merged_dir.display()))?;
     copy_tree(first, &merged_dir)?;
 
-    let dwarf_rel = Path::new("Contents/Resources/DWARF").join(meta::RAW_DSYM_NAME);
+    let dwarf_rel = Path::new("Contents/Resources/DWARF").join(meta::p().raw_dsym_name);
     let status = Command::new("lipo")
         .arg("-create")
         .arg("-output")

@@ -3,7 +3,7 @@
 //!
 //! Why: on iOS there is no helper process, so the faulting process itself must record what it can
 //! with *no allocation and no third-party code* (see `apple/`), and a later, healthy launch converts
-//! that into a `.dmp` — the same artifact the desktop helper produces, so reports look identical.
+//! that into a `.dtbkedmp` — the same artifact the desktop helper produces, so reports look identical.
 //! Everything here is plain Rust with no OS calls, so it is unit-tested on any host.
 //!
 //! Two little-endian, tag-length-value files per launch, both starting with an 8-byte magic + `u32`

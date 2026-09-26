@@ -50,9 +50,9 @@ fn main() {
     save::remove_stale_staging();
 
     // Crash capture, before anything else can fault. On a hardware fault or a panic an out-of-process
-    // helper writes a minidump (`.dmp`) under `logs/crashes/` for offline symbolisation (the shipped
+    // helper writes a minidump (`.dtbkedmp`) under `logs/crashes/` for offline symbolisation (the shipped
     // binary is stripped — see `dtb-ke-crash`). iOS cannot spawn a helper: the handler runs in-process
-    // and only writes a compact snapshot, which the *next* launch turns into the same `.dmp` and offers
+    // and only writes a compact snapshot, which the *next* launch turns into the same `.dtbkedmp` and offers
     // to send (`crash_report::offer_pending`). A panic's message and backtrace also reach the session
     // log (hook installed first, so the crash handler's hook chains to it).
     #[cfg(target_os = "ios")]

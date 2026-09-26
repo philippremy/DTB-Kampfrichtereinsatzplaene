@@ -66,11 +66,14 @@ pub fn run(opts: Options) -> Result<(), String> {
     } else {
         let target = opts.target.as_deref();
         let ios = ios::is_ios_target(target);
-        // The out-of-process crash helper is macOS/Windows/Linux only.
-        if !ios {
+        if ios && !meta::p().ios {
+            return Err(format!("{} has no iPadOS bundle", meta::p().display_name));
+        }
+        // The out-of-process crash helper is macOS/Windows/Linux only, and only the app embeds it.
+        if !ios && meta::p().crash_helper {
             helper::stage(opts.release, target);
         }
-        let mut cargo = vec!["build".to_string(), "-p".into(), "dtb-ke-ui".into()];
+        let mut cargo = vec!["build".to_string(), "-p".into(), meta::p().package.into()];
         if opts.release {
             cargo.push("--release".into());
         }
@@ -81,12 +84,16 @@ pub fn run(opts: Options) -> Result<(), String> {
         if ios {
             // rustc's own default is far older than the backend supports; the Metal shaders
             // are compiled against the same floor in `gpui_apple`'s build script.
-            util::run_with_env("cargo", &cargo, &[("IPHONEOS_DEPLOYMENT_TARGET", meta::IOS_MIN_VERSION)]);
+            util::run_with_env(
+                "cargo",
+                &cargo,
+                &[("IPHONEOS_DEPLOYMENT_TARGET", meta::IOS_MIN_VERSION)],
+            );
         } else {
             util::run("cargo", &cargo);
         }
 
-        let binary = built_binary_path(opts.release, target, meta::RAW_BIN_NAME);
+        let binary = built_binary_path(opts.release, target, meta::p().raw_bin_name);
         if !binary.exists() {
             return Err(format!("built binary not found at {}", binary.display()));
         }
@@ -142,12 +149,14 @@ fn build_universal(release: bool) -> Result<PathBuf, String> {
     let mut slices = Vec::with_capacity(UNIVERSAL_TARGETS.len());
     for triple in UNIVERSAL_TARGETS {
         eprintln!("dtb-ke-bundle: building the {triple} slice …");
-        helper::stage(release, Some(triple));
+        if meta::p().crash_helper {
+            helper::stage(release, Some(triple));
+        }
 
         let mut cargo = vec![
             "build".to_string(),
             "-p".into(),
-            "dtb-ke-ui".into(),
+            meta::p().package.into(),
             "--target".into(),
             triple.to_string(),
         ];
@@ -156,7 +165,7 @@ fn build_universal(release: bool) -> Result<PathBuf, String> {
         }
         util::run("cargo", &cargo);
 
-        let slice = built_binary_path(release, Some(triple), meta::RAW_BIN_NAME);
+        let slice = built_binary_path(release, Some(triple), meta::p().raw_bin_name);
         if !slice.exists() {
             return Err(format!(
                 "expected the {triple} slice at {}",
@@ -171,7 +180,7 @@ fn build_universal(release: bool) -> Result<PathBuf, String> {
         .join(if release { "release" } else { "debug" });
     std::fs::create_dir_all(&merged_dir)
         .map_err(|e| format!("prepare {}: {e}", merged_dir.display()))?;
-    let merged = merged_dir.join(meta::RAW_BIN_NAME);
+    let merged = merged_dir.join(meta::p().raw_bin_name);
 
     let mut lipo_args = vec![
         "-create".to_string(),

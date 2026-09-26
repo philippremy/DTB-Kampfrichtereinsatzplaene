@@ -68,7 +68,7 @@ fn os_version(s: &str) -> (u32, u32, u32) {
     (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
-/// Build the `.dmp`. Never fails: whatever the snapshot lacks (no sidecar, no stack, no exception) is
+/// Build the `.dtbkedmp`. Never fails: whatever the snapshot lacks (no sidecar, no stack, no exception) is
 /// simply omitted from the dump.
 pub fn to_minidump(snap: &CrashSnapshotDTO) -> Vec<u8> {
     let mut out = Out { buf: vec![0; 32] };
