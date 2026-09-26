@@ -1,1 +1,0 @@
-../../../zed/crates/gpui_macros/src/register_action.rs

@@ -1,1 +1,0 @@
-../gpui-kit/crates/kit/TESTING.md

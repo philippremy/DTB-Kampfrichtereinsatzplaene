@@ -667,7 +667,7 @@ That resolves to whichever architecture's copy of `windres` happens to be
 first on `PATH` — correct by coincidence for the native x86_64 build,
 wrong for the aarch64 cross-build sharing the same `PATH`. No env var
 escape hatch exists to redirect it (checked — `WINDRES`, anything
-target-arch-aware, nothing). Vendored as the `vendor/turso` git submodule (fork `philippremy/turso`, branch `dtb-ke-patches`, based on the exact `046e9cb` commit 0.7.2 was published from) via the `vendor/turso_sdk_kit-shim/` wrapper crate,
+target-arch-aware, nothing). Vendored as the `vendor/turso` git submodule (fork `philippremy/turso`, branch `dtb-ke-patches`, based on the exact `046e9cb` commit 0.7.2 was published from) via `vendor/turso/sdk-kit` directly (the fork's branch carries the published `Cargo.toml`),
 patched to build `<CARGO_CFG_TARGET_ARCH>-w64-mingw32-windres` (the
 llvm-mingw/mingw-w64 target-prefixed name — the same naming convention this
 project's own Windows build already depends on, see `dtb-ke-ui`'s

@@ -28,7 +28,7 @@ Each entry here is:
 
 ## Current entries
 
-- **`turso_sdk_kit` 0.7.2** (`vendor/turso` submodule + `vendor/turso_sdk_kit-shim`; the shim carries the published `Cargo.toml` and symlinks `src`/`build.rs` into `vendor/turso/sdk-kit`; the fix is one commit on the fork's `dtb-ke-patches` branch, on top of upstream commit `046e9cb`) — upstream's `build.rs` shells out to a bare
+- **`turso_sdk_kit` 0.7.2** (`vendor/turso` submodule, patched in place at `vendor/turso/sdk-kit` — its `Cargo.toml` is the published one; the fix is one commit on the fork's `dtb-ke-patches` branch, on top of upstream commit `046e9cb`) — upstream's `build.rs` shells out to a bare
   `windres` (no target-triple prefix) to compile its Windows version
   resource, which resolves to whichever architecture's copy happens to be
   first on `PATH` — correct by coincidence on a native build, wrong when
@@ -43,13 +43,31 @@ Each entry here is:
   in the crate is untouched. Upstream: `github.com/tursodatabase/turso`,
   `sdk-kit/build.rs`.
 
-## Vendored taffy (`vendor/taffy` + `vendor/taffy-shim`)
+## Manifests in the forks (no symlinks, no shim crates)
+
+Each patched crate lives at its real path inside its fork's submodule — `vendor/zed/crates/gpui*`
+(+ `refineable`, `refineable/derive_refineable`, `tooling/perf`, …), `vendor/gpui-kit/crates/{base,kit}`,
+`vendor/turso/sdk-kit`, `vendor/taffy` — and the fork's `dtb-ke-patches` branch **replaces that
+crate's `Cargo.toml`** with the crates.io-published one (`gpui-pre*` names/versions/deps, so semver
+resolution and gpui-kit are unaffected; Zed's own manifests use `workspace = true`, which cannot
+resolve outside Zed's workspace). Each such manifest also ends with an empty `[workspace]` (makes
+the crate its own root, independent of the surrounding Zed/turso/gpui-kit workspace) and the
+`[lints.rust.warnings]` table below, and the root `Cargo.toml`'s `[workspace] exclude = ["vendor"]`
+keeps cargo from auto-adopting these path dependencies as members of ours. `gpui_macros/src/` also
+carries the facade-patched `gpui_macros.rs` + `gpui_pre_facade_paths.rs` from the published
+`gpui-pre-macros` (gpui-kit's packaging injects them; without them every derive fails with "cannot
+find crate `gpui`").
+
+Earlier this was a `vendor/*-shim` tree of symlinks into the submodules; it was dropped because
+Windows checks git symlinks out as plain text files, which broke every clone-and-build there.
+To bump a fork to a new upstream: rebase the branch, and for each crate re-take the published
+manifest for that version (plus the `[workspace]` and `[lints]` tail).
+
+## Vendored taffy (`vendor/taffy`)
 
 `vendor/taffy` is a shallow git submodule of `DioxusLabs/taffy` pinned at the
-`v0.13.0` tag (gpui pins `taffy = "=0.13.0"`); `vendor/taffy-shim` is a wrapper
-crate carrying the published `Cargo.toml` with `src` symlinked into the
-submodule, wired in through `[patch.crates-io]` — the same scheme as
-`gpui-pre-shims`. Local changes (all inside the submodule, marked "Local
+`v0.13.0` tag (gpui pins `taffy = "=0.13.0"`), wired in through `[patch.crates-io]` directly;
+its root `Cargo.toml` is the published one (see "Manifests in the forks" below). Local changes (all inside the submodule, marked "Local
 change/addition (not upstream)"), needed by gpui's retained layout engine
 (`vendor/zed/crates/gpui/src/taffy.rs`):
 
@@ -61,15 +79,14 @@ change/addition (not upstream)"), needed by gpui's retained layout engine
 - `compute/mod.rs`: cache hit/miss counters (`take_cache_stats`).
 
 To update: check out the new tag in `vendor/taffy`, re-apply the three changes,
-refresh `vendor/taffy-shim/Cargo.toml` from the published crate.
+refresh `vendor/taffy/Cargo.toml` from the published crate.
 
-## Vendored gpui-base (`vendor/gpui-kit` + `vendor/gpui-base-shim`)
+## Vendored gpui-base (`vendor/gpui-kit`)
 
 `vendor/gpui-kit` is a shallow git submodule of the `philippremy/gpui-kit` fork (upstream
 `longbridge/gpui-kit`), checked out at `v0.6.6` — the commit `gpui-base` 0.6.6 was published
-from — with the local changes on the `dtb-ke-patches` branch. `vendor/gpui-base-shim` wraps
-`crates/base` with the published `Cargo.toml` and symlinks `src`/`tests`/`benches`, wired in via
-`[patch.crates-io]` like the other vendored crates. The rest of the gpui-kit facade still comes
+from — with the local changes on the `dtb-ke-patches` branch. `crates/base` carries the
+published `Cargo.toml` and is wired in via `[patch.crates-io]` like the other vendored crates. The rest of the gpui-kit facade still comes
 from crates.io and resolves this `gpui-base` through the patch.
 
 Local changes:
@@ -82,7 +99,7 @@ Local changes:
   no-op while unfocused, and the loop ends when focus is lost. Has unit tests.
 
 To update: check out the new tag in `vendor/gpui-kit`, re-apply the change, refresh
-`vendor/gpui-base-shim/Cargo.toml` from the published crate.
+`vendor/gpui-kit/crates/base/Cargo.toml` from the published crate.
 
 ## iOS support (`vendor/zed` PR #63068 + `vendor/gpui-kit` facade patch)
 
@@ -93,8 +110,8 @@ zed-industries/zed#63068"), with two local follow-ups: Metal 4 and `renderer_sel
 macOS-only (iOS uses the Metal 3 renderer), and the Metal 4 renderer skips sprites whose atlas
 texture was released (upstream `#64623` made the lookup an `Option`).
 
-- `vendor/gpui-pre-shims/gpui_ios` is a **hand-written** manifest (no published `gpui-pre-ios`
-  yet); `gpui_apple`/`gpui_platform` shims gained the iOS target deps. Once the PR lands and gpui-pre
+- `vendor/zed/crates/gpui_ios/Cargo.toml` is a **hand-written** manifest (no published `gpui-pre-ios`
+  yet); the `gpui_apple`/`gpui_platform` manifests gained the iOS target deps. Once the PR lands and gpui-pre
   publishes `gpui_ios`, replace it with the published manifest and drop the merge commit by
   rebasing the fork onto upstream.
 - **iPadOS menu bar** (our addition on top of the PR, in the `vendor/zed` fork; not upstream):
@@ -130,10 +147,10 @@ texture was released (upstream `#64623` made the lookup an `Option`).
   14 px strip on iOS (4 px elsewhere).
 - **Metal 4 on iOS** (ours): `gpui_apple`'s `metal4_renderer` / `renderer_select` now build for iOS too. `renderer_select::new_renderer_for_layer` (used by `gpui_ios`) picks `Metal4Renderer::from_layer` when iOS is 26+ *and* the device reports `MTLGPUFamily::Metal4` (`metal4_capability`), else the Metal 3 renderer, both on the view's own `CAMetalLayer`. Video surfaces (CoreVideo) stay macOS-only. The simulator's GPU reports no Metal 4 family, so the Metal 4 path is only exercised on hardware.
 - **Window transparency** (ours, `gpui_ios`): `set_background_appearance(anything but Opaque)` makes the Metal layer/view non-opaque (`MetalRenderer::update_transparency`), so an app can put `UIVisualEffectView`s beneath the gpui view (`dtb-ke-ui`'s Liquid Glass backdrop). **Native prompts**: `PlatformWindow::prompt` shows a `UIAlertController`. `gpui_ios::ios::set_status_bar_style` is what the app calls to keep the bar text readable.
-- `vendor/gpui-kit-shim` vendors the `gpui-kit` **facade** (`crates/kit` of the gpui-kit submodule).
+- `vendor/gpui-kit/crates/kit` is the `gpui-kit` **facade** (published manifest, patched in place).
   Upstream excludes iOS from `gpui_platform` / `gpui_kit::platform` / `application()` and expects a
   downstream `with_platform`; the patch drops that exclusion (Android stays excluded) so iOS is
-  handled like every other platform. Drop the shim if upstream does the same.
+  handled like every other platform. Drop the patch if upstream does the same.
 
 Check with `cargo check -p dtb-ke-ui --target aarch64-apple-ios-sim` (needs Xcode's iPhoneSimulator SDK;
 `gpui_apple`'s build script compiles the Metal shaders with `xcrun -sdk iphonesimulator`).
@@ -159,9 +176,8 @@ vibrancy); `DTB_KE_PERF_HUD=0` hides the debug FPS HUD.
 ## Warnings from vendored code
 
 Cargo hides warnings for registry and git dependencies but not for path dependencies, and every
-shim crate here is one. Each shim manifest therefore ends with a `[lints.rust.warnings]` table set
+vendored crate here is one. Each patched manifest therefore ends with a `[lints.rust.warnings]` table set
 to `allow`, so upstream Zed / taffy / turso / gpui-kit code doesn't add noise to our builds.
-`vendor/generate-shims.sh` adds the same table when it regenerates the gpui-pre shims; when
-refreshing a shim's `Cargo.toml` from the published crate by hand, re-append it. This only affects
+When refreshing a vendored crate's `Cargo.toml` from the published crate, re-append it. This only affects
 rustc warnings — errors, `cargo:warning` messages from build scripts, and cargo's own
 future-incompatibility notices (for example about the registry crate `block`) still show.

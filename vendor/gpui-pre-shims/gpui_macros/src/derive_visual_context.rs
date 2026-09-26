@@ -1,1 +1,0 @@
-../../../zed/crates/gpui_macros/src/derive_visual_context.rs

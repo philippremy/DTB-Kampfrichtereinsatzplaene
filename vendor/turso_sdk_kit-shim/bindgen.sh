@@ -1,1 +1,0 @@
-../turso/sdk-kit/bindgen.sh
