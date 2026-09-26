@@ -58,6 +58,11 @@ jobs:
           fetch-tags: true
 
       # Forgejo's real contexts are forgejo/forge, github (an alias of
+      - name: Fetch submodules (shallow)
+        # cargo resolves the whole workspace — including the vendored [patch] crates — even to run
+        # `dtb-ke-bundle`. fetch-depth 0 above would clone the submodules with full history, hence
+        # the explicit shallow update.
+        run: git submodule update --init --depth 1
       # forgejo, for GH-Actions-compatible expressions), secrets, vars, env,
       # matrix, steps, needs, inputs, runner — there is no "gitea" context
       # (confirmed against forgejo.org/docs/latest/user/actions/reference/
@@ -458,6 +463,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          submodules: true
       - name: Publish the release manifest
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
