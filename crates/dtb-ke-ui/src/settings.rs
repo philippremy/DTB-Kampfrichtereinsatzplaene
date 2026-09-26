@@ -60,6 +60,8 @@ pub struct Settings {
     pub skipped_update: Option<String>,
     /// Which release channel the updater polls. Default `Stable`.
     pub update_channel: UpdateChannel,
+    /// The hidden developer options (`debug` module).
+    pub debug: crate::debug::DebugSettings,
 }
 
 impl Default for Settings {
@@ -77,6 +79,7 @@ impl Default for Settings {
             auto_update: true,
             skipped_update: None,
             update_channel: UpdateChannel::default(),
+            debug: crate::debug::DebugSettings::default(),
         }
     }
 }
@@ -167,7 +170,9 @@ impl Settings {
 
     /// Install the persisted settings as the gpui global. Call once at startup.
     pub fn init(cx: &mut App) {
-        cx.set_global(Self::load());
+        let settings = Self::load();
+        crate::debug::live::sync(&settings.debug);
+        cx.set_global(settings);
     }
 
     /// The current settings global. Falls back to defaults if it has not been
@@ -185,6 +190,7 @@ impl Settings {
         edit(&mut settings);
         log::trace!("settings updated");
         settings.save();
+        crate::debug::live::sync(&settings.debug);
         cx.set_global(settings);
     }
 

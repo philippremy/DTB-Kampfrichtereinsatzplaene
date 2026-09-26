@@ -425,6 +425,22 @@ mod tests {
         assert!(strings.len() > 50, "expected a substantial catalog");
     }
 
+    /// Every shipped catalog must define exactly the same keys — a key missing from a translation would
+    /// silently fall back to the default language.
+    #[test]
+    fn all_catalogs_define_the_same_keys() {
+        let keys = |source: &CatalogSource| -> std::collections::BTreeSet<String> {
+            load_catalog(source.embedded).unwrap().1.into_keys().collect()
+        };
+        let base = keys(&CATALOGS[0]);
+        for source in &CATALOGS[1..] {
+            let other = keys(source);
+            let missing: Vec<_> = base.difference(&other).collect();
+            let extra: Vec<_> = other.difference(&base).collect();
+            assert!(missing.is_empty() && extra.is_empty(), "{}: missing {missing:?}, extra {extra:?}", source.tag);
+        }
+    }
+
     struct Fixture {
         strings: HashMap<String, String>,
     }

@@ -13,16 +13,20 @@
 //!   [`App::intercept_keystrokes`]; the capture is checked against the other
 //!   commands and a list of reserved OS shortcuts before it can be applied.
 
-use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, FocusHandle, Focusable, InteractiveElement,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Keystroke, MouseButton, ParentElement, Render, ScrollHandle, SharedString, Size,
     StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window, WindowBounds,
     WindowKind, WindowOptions, div, point, prelude::FluentBuilder, px,
 };
 use gpui_kit::base::Scrollbar;
+use gpui_kit::base::input::InputState;
 
+mod debug_tab;
+
+use crate::window_registry::WindowRegistry;
 use crate::components::icon::Icon;
 use crate::components::kbd::Kbd;
 use crate::components::popover::PopoverAnchor;
@@ -38,16 +42,26 @@ enum Tab {
     General,
     Keybindings,
     Advanced,
+    /// Hidden: unlocked by clicking "Erweitert" five times quickly (see [`crate::debug`]).
+    Debugging,
 }
 
 impl Tab {
-    const ALL: [Tab; 3] = [Tab::General, Tab::Keybindings, Tab::Advanced];
+    /// The tabs in the nav rail — the hidden one only once unlocked.
+    fn visible() -> Vec<Tab> {
+        let mut tabs = vec![Tab::General, Tab::Keybindings, Tab::Advanced];
+        if crate::debug::live::unlocked() {
+            tabs.push(Tab::Debugging);
+        }
+        tabs
+    }
 
     fn label(self, locale: &crate::i18n::Locale) -> SharedString {
         let key = match self {
             Tab::General => "settings.tab-general",
             Tab::Keybindings => "settings.tab-keybindings",
             Tab::Advanced => "settings.tab-advanced",
+            Tab::Debugging => "settings.tab-debugging",
         };
         locale.t(key)
     }
@@ -57,36 +71,28 @@ impl Tab {
             Tab::General => Icon::Settings,
             Tab::Keybindings => Icon::Menu,
             Tab::Advanced => Icon::Warning,
+            Tab::Debugging => Icon::AlertCircle,
         }
     }
 }
 
-thread_local! {
-    static OPEN: RefCell<Option<AnyWindowHandle>> = const { RefCell::new(None) };
-}
+static OPEN: WindowRegistry<()> = WindowRegistry::new();
 
 /// Open (or focus) the settings window.
 pub fn open(cx: &mut App) {
     if crate::sheet::enabled() {
         let options = window_options(cx);
-        crate::sheet::present(cx, "settings", &options, |_, cx| cx.new(SettingsWindow::new));
+        crate::sheet::present(cx, "settings", &options, |window, cx| cx.new(|cx| SettingsWindow::new(window, cx)));
         return;
     }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
-    let existing = OPEN.with(|h| *h.borrow());
-    if let Some(handle) = existing {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        OPEN.with(|h| *h.borrow_mut() = None);
+    if OPEN.focus((), cx) {
+        return;
     }
 
     let options = window_options(cx);
-    match cx.open_window(options, |_, cx| cx.new(SettingsWindow::new)) {
-        Ok(handle) => OPEN.with(|h| *h.borrow_mut() = Some(handle.into())),
+    match cx.open_window(options, |window, cx| cx.new(|cx| SettingsWindow::new(window, cx))) {
+        Ok(handle) => OPEN.insert((), handle.into()),
         Err(err) => log::error!("Einstellungsfenster konnte nicht geöffnet werden: {err}"),
     }
 }
@@ -139,18 +145,40 @@ pub struct SettingsWindow {
     /// dead-lock) so the popover can anchor to it. Same convention as
     /// `detail::meta_dialog::MetaDialog`'s organisation selector.
     language_bounds: PopoverAnchor,
+
+    /// Recent clicks on the "Erweitert" nav item — five within [`UNLOCK_WINDOW`] unlock the Debugging tab.
+    advanced_clicks: Vec<Instant>,
+    /// Debugging tab: simulate crashes on a worker thread instead of the main thread.
+    crash_on_worker: bool,
+    /// Debugging tab: the update-manifest override.
+    manifest_input: Entity<InputState>,
+    _manifest_sub: Subscription,
 }
+
+const UNLOCK_CLICKS: usize = 5;
+const UNLOCK_WINDOW: Duration = Duration::from_secs(2);
 
 impl Drop for SettingsWindow {
     fn drop(&mut self) {
-        OPEN.with(|h| *h.borrow_mut() = None);
+        OPEN.remove(());
     }
 }
 
 impl SettingsWindow {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let manifest_input = debug_tab::manifest_input(window, cx);
+        let manifest_sub = cx.subscribe_in(
+            &manifest_input,
+            window,
+            |_, input, event: &gpui_kit::base::input::InputEvent, _window, cx| {
+                if matches!(event, gpui_kit::base::input::InputEvent::Change) {
+                    let value = input.read(cx).value().to_string();
+                    Settings::update(cx, move |s| s.debug.update_manifest = value);
+                }
+            },
+        );
         Self {
-            tab: Tab::General,
+            tab: if crate::debug::live::open_on_debug_tab() { Tab::Debugging } else { Tab::General },
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             overrides: Settings::global(cx).keybindings,
@@ -159,6 +187,23 @@ impl SettingsWindow {
             intercept: None,
             language_open: false,
             language_bounds: PopoverAnchor::new(),
+            advanced_clicks: Vec::new(),
+            crash_on_worker: false,
+            manifest_input,
+            _manifest_sub: manifest_sub,
+        }
+    }
+
+    /// Count clicks on "Erweitert"; the fifth within [`UNLOCK_WINDOW`] unlocks the Debugging tab.
+    fn register_advanced_click(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        self.advanced_clicks.retain(|t| now.duration_since(*t) <= UNLOCK_WINDOW);
+        self.advanced_clicks.push(now);
+        if self.advanced_clicks.len() >= UNLOCK_CLICKS && !crate::debug::live::unlocked() {
+            log::info!("developer options unlocked for this session");
+            crate::debug::live::unlock();
+            self.advanced_clicks.clear();
+            self.select_tab(Tab::Debugging, cx);
         }
     }
 
@@ -300,7 +345,7 @@ impl SettingsWindow {
             .pt(px(12.))
             .px(px(10.))
             .gap(px(2.))
-            .children(Tab::ALL.into_iter().map(|tab| {
+            .children(Tab::visible().into_iter().map(|tab| {
                 let selected = self.tab == tab;
                 let label = tab.label(cx.global::<crate::i18n::Locale>());
                 div()
@@ -330,7 +375,12 @@ impl SettingsWindow {
                         c.muted_foreground
                     }))
                     .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if tab == Tab::Advanced {
+                            this.register_advanced_click(cx);
+                        }
+                        this.select_tab(tab, cx);
+                    }))
             }))
     }
 
@@ -340,6 +390,7 @@ impl SettingsWindow {
             Tab::General => self.general_tab(cx).into_any_element(),
             Tab::Keybindings => self.keybindings_tab(cx).into_any_element(),
             Tab::Advanced => self.advanced_tab(cx).into_any_element(),
+            Tab::Debugging => self.debug_tab(cx).into_any_element(),
         };
 
         div()

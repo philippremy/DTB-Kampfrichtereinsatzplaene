@@ -102,6 +102,15 @@ pub fn set_level(level: Option<LevelFilter>) {
     log::set_max_level(effective_level());
 }
 
+/// Runtime override for the "own crates only" record filter: `None` = follow the logger's own setting
+/// (release builds / `DTB_KE_RESTRICT_TARGETS`).
+static RESTRICT_OVERRIDE: dtb_ke_util::flag::AtomicOptBool = dtb_ke_util::flag::AtomicOptBool::new();
+
+/// Force the "own crates only" record filter on or off at runtime (`None` = back to the default).
+pub fn set_restrict_targets(restrict: Option<bool>) {
+    RESTRICT_OVERRIDE.set(restrict);
+}
+
 /// A logger that writes to a file and, in debug builds, mirrors to `stderr`.
 pub struct DTBKELogger {
     is_debug: bool,
@@ -174,7 +183,7 @@ impl Log for DTBKELogger {
         if metadata.level() > effective_level() {
             return false;
         }
-        if !self.restrict_targets {
+        if !RESTRICT_OVERRIDE.get().unwrap_or(self.restrict_targets) {
             return true;
         }
         is_own_target(metadata.target())

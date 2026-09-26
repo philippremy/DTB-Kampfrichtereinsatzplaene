@@ -87,7 +87,7 @@ pub fn can_self_install(_channel: UpdateChannel) -> bool {
 }
 
 fn manifest_url(channel: UpdateChannel) -> String {
-    if let Ok(url) = std::env::var("DTB_KE_UPDATE_MANIFEST") {
+    if let Some(url) = crate::debug::live::update_manifest() {
         return url;
     }
     match channel {

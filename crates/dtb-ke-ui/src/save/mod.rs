@@ -205,8 +205,8 @@ pub fn pdf_standard_conflict_message(
 
 /// Show the platform save dialog. Resolves to `None` if the user cancels.
 pub fn prompt(default_name: String, cx: &mut App) -> oneshot::Receiver<Option<SaveChoice>> {
-    if std::env::var_os("DTB_KE_SAVE_FALLBACK").is_some() {
-        log::debug!("save dialog: DTB_KE_SAVE_FALLBACK set — using the in-app panel");
+    if crate::debug::live::save_fallback() {
+        log::debug!("save dialog: fallback requested (DTB_KE_SAVE_FALLBACK / developer option) — using the in-app panel");
         return fallback::prompt(default_name, cx);
     }
     log::debug!("save dialog: opening the native save panel for \"{default_name}\"");

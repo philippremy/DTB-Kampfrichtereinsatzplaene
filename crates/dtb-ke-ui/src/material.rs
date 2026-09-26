@@ -50,15 +50,15 @@ enum Effective {
     MicaAlt,
 }
 
+/// `DTB_KE_NO_NATIVE`: no native backdrop of any kind (neither Liquid Glass nor the vibrancy fallback), for
+/// isolating rendering problems from AppKit.
+static NO_NATIVE: dtb_ke_util::flag::EnvFlag = dtb_ke_util::flag::EnvFlag::present("DTB_KE_NO_NATIVE");
+
 /// Resolve the skin's nominal material down to what's actually going to be
 /// drawn right now. See the module doc comment and [`window_background`]'s
 /// for the full fallback chain this implements.
 fn effective(theme: &Theme, cx: &App) -> Effective {
-    // `DTB_KE_NO_NATIVE=1`: no native backdrop of any kind (neither Liquid Glass nor the
-    // vibrancy fallback), for isolating rendering problems from AppKit.
-    static NO_NATIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let no_native = *NO_NATIVE.get_or_init(|| std::env::var_os("DTB_KE_NO_NATIVE").is_some());
-    if no_native || Settings::global(cx).reduce_transparency {
+    if NO_NATIVE.get() || Settings::global(cx).reduce_transparency {
         return Effective::Opaque;
     }
     match theme.skin.material {

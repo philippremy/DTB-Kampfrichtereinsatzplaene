@@ -37,7 +37,7 @@
 //! chrome. See [`GlassRegion::scroll_clip`] and [`super::backdrop`]'s
 //! handling of it.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::collections::BTreeMap;
 
 use gpui_kit::{App, Bounds, Hsla, IntoElement, Pixels, SharedString, Styled, Window, canvas, px};
@@ -240,9 +240,13 @@ impl GlassRole {
 
 type Frame = BTreeMap<SharedString, GlassRegion>;
 
-thread_local! {
-    /// Regions recorded so far in the frame being prepainted.
-    static FRAME: RefCell<Frame> = const { RefCell::new(BTreeMap::new()) };
+/// Regions recorded so far in the frame being prepainted. Process-global behind a `Mutex`, not
+/// thread-local: it must not depend on prepaint and the end-of-frame apply running on the same thread.
+static FRAME: Mutex<Frame> = Mutex::new(BTreeMap::new());
+
+fn frame() -> std::sync::MutexGuard<'static, Frame> {
+    // The map is only inserted into / taken whole, so a poisoned lock holds no half-done state.
+    FRAME.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Publishes `region` into this frame's registry. It goes through
@@ -251,9 +255,7 @@ thread_local! {
 /// [`end_frame`]'s set and the native glass would flicker or vanish.
 fn record(id: SharedString, region: GlassRegion, window: &mut Window, cx: &mut App) {
     window.replayable_effect(cx, move |_, _| {
-        FRAME.with(|f| {
-            f.borrow_mut().insert(id.clone(), region.clone());
-        });
+        frame().insert(id.clone(), region.clone());
     });
 }
 
@@ -397,8 +399,8 @@ pub fn end_frame() -> impl IntoElement {
     canvas(
         |_, _window, _cx| {
             if super::backdrop::glass_active() {
-                let frame = FRAME.with(|f| std::mem::take(&mut *f.borrow_mut()));
-                super::backdrop::apply_regions(&frame);
+                let regions = std::mem::take(&mut *frame());
+                super::backdrop::apply_regions(&regions);
             }
         },
         |_, _, _, _| {},

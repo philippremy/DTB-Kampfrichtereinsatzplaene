@@ -14,19 +14,26 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use gpui_kit::{App, AsyncApp};
 
 use crate::app;
 
+/// URLs `on_open_urls` received while no `AsyncApp` was reachable — before [`ready`] ran (a launch-time
+/// race on macOS: nothing guarantees the callback fires after our startup closure). Drained by `ready`.
+/// Global, so the platform code handing us a URL may do so from any thread.
+static PENDING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 thread_local! {
-    /// URLs `on_open_urls` received before [`ready`] ran (a launch-time race
-    /// on macOS — nothing guarantees the callback fires after our startup
-    /// closure). Drained by `ready`.
-    static PENDING: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
-    /// Set once by `ready`; lets a *later* `on_open_urls` call (app already
-    /// running) reach into `cx` from outside it.
+    /// Set once by `ready`, on the thread gpui runs `App` calls on; lets a *later* `on_open_urls` call
+    /// (app already running) reach into `cx` from outside it. `AsyncApp` is `!Send`, so it cannot live
+    /// in a global — it is thread-local by necessity.
     static ASYNC_APP: RefCell<Option<AsyncApp>> = const { RefCell::new(None) };
+}
+
+fn pending() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    PENDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn is_dtbke(path: &Path) -> bool {
@@ -51,7 +58,7 @@ pub fn handle_open_urls(urls: Vec<String>) {
     }
     match ASYNC_APP.with(|a| a.borrow().clone()) {
         Some(async_app) => async_app.update(|cx| app::open_paths(paths, cx)),
-        None => PENDING.with(|p| p.borrow_mut().extend(paths)),
+        None => pending().extend(paths),
     }
 }
 
@@ -62,10 +69,10 @@ pub fn handle_open_urls(urls: Vec<String>) {
 /// argument.
 pub fn ready(cx: &mut App) {
     ASYNC_APP.with(|a| *a.borrow_mut() = Some(cx.to_async()));
-    let mut pending = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
-    pending.extend(argv_paths());
-    if !pending.is_empty() {
-        app::open_paths(pending, cx);
+    let mut queued = std::mem::take(&mut *pending());
+    queued.extend(argv_paths());
+    if !queued.is_empty() {
+        app::open_paths(queued, cx);
     }
 }
 

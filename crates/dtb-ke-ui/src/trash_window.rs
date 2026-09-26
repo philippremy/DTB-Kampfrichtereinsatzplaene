@@ -6,10 +6,9 @@
 //! without restoring it first, so it would be a mis-click risk to reuse the
 //! sidebar's own "click a row to select and edit it" affordance for it.
 
-use std::cell::RefCell;
 
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, PromptLevel, Render, ScrollHandle,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, TitlebarOptions, Window,
     WindowBounds, WindowKind, WindowOptions, div, prelude::FluentBuilder, px,
@@ -17,15 +16,14 @@ use gpui_kit::{
 use gpui_kit::base::Scrollbar;
 use uuid::Uuid;
 
+use crate::window_registry::WindowRegistry;
 use crate::components::icon::Icon;
 use crate::components::{Button, ButtonTone};
 use crate::i18n::ActiveLocale;
 use crate::store::AppStore;
 use crate::theme::{ActiveTheme, PaletteColors};
 
-thread_local! {
-    static OPEN: RefCell<Option<AnyWindowHandle>> = const { RefCell::new(None) };
-}
+static OPEN: WindowRegistry<()> = WindowRegistry::new();
 
 /// Open (or focus) the trash window.
 pub fn open(store: Entity<AppStore>, cx: &mut App) {
@@ -37,20 +35,13 @@ pub fn open(store: Entity<AppStore>, cx: &mut App) {
         return;
     }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
-    let existing = OPEN.with(|h| *h.borrow());
-    if let Some(handle) = existing {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        OPEN.with(|h| *h.borrow_mut() = None);
+    if OPEN.focus((), cx) {
+        return;
     }
 
     let options = window_options(cx);
     match cx.open_window(options, |window, cx| cx.new(|cx| TrashWindow::new(store, window, cx))) {
-        Ok(handle) => OPEN.with(|h| *h.borrow_mut() = Some(handle.into())),
+        Ok(handle) => OPEN.insert((), handle.into()),
         Err(err) => log::error!("failed to open the trash window: {err}"),
     }
 }
@@ -83,7 +74,7 @@ pub struct TrashWindow {
 
 impl Drop for TrashWindow {
     fn drop(&mut self) {
-        OPEN.with(|h| *h.borrow_mut() = None);
+        OPEN.remove(());
     }
 }
 

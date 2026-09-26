@@ -1,9 +1,9 @@
 //! The application shell: window frame + title bar + [sidebar | detail] + status
 //! strip. Owns the root [`AppStore`] and the sidebar / toolbar entities.
 
-use std::cell::RefCell;
+use dtb_ke_util::flag::EnvFlag;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_export::Exporter;
@@ -18,6 +18,7 @@ use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::window_registry::WindowRegistry;
 use crate::actions::app::CheckForUpdates;
 use crate::actions::edit::{DeleteJudgingTable, DuplicateJudgingTable, Redo, Undo};
 use crate::actions::file::{
@@ -80,13 +81,8 @@ fn select_then_act(
 /// neither reuses their layout, paint and hit-testing instead of rebuilding them. On by default;
 /// `DTB_KE_VIEW_CACHE=0` (also `off` / `false`) turns it off. Read once — `render` runs every frame.
 fn view_cache_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        !matches!(
-            std::env::var("DTB_KE_VIEW_CACHE").as_deref(),
-            Ok("0" | "off" | "false")
-        )
-    })
+    static VIEW_CACHE: EnvFlag = EnvFlag::off_tokens("DTB_KE_VIEW_CACHE", true);
+    VIEW_CACHE.get()
 }
 
 /// Embeds a child view through the view cache (unless disabled); see [`view_cache_enabled`].
@@ -347,7 +343,7 @@ impl Drop for AppShell {
     fn drop(&mut self) {
         // The main window is gone — let `open_main_window` (and the macOS dock
         // `on_reopen`) build a fresh one instead of trying to focus this.
-        MAIN_WINDOW.with(|m| *m.borrow_mut() = None);
+        MAIN_WINDOW.remove(());
     }
 }
 
@@ -1276,10 +1272,8 @@ impl Render for AppShell {
 /// ⇒ off, set to anything else ⇒ on). Cached — `Render::render` runs every
 /// frame, and `std::env::var` isn't free to call that often.
 fn perf_hud_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("DTB_KE_PERF_HUD").map_or(cfg!(debug_assertions), |var| !var.is_empty() && var.as_str() != "0")
-    })
+    // Checked every frame: the developer option (settings → Debugging) can flip it live.
+    crate::debug::live::fps_hud()
 }
 
 /// Show a modal warning from an async context.
@@ -1357,31 +1351,22 @@ async fn deliver_export(
     }
 }
 
-thread_local! {
-    /// The single main window, while one is open. `open_main_window` activates
-    /// this instead of opening a second; `cx.on_reopen` (the macOS dock icon)
-    /// re-opens it after it's been closed.
-    static MAIN_WINDOW: RefCell<Option<AnyWindowHandle>> = const { RefCell::new(None) };
-}
+/// The single main window, while one is open. `open_main_window` activates this instead of opening a
+/// second; `cx.on_reopen` (the macOS dock icon) re-opens it after it's been closed.
+static MAIN_WINDOW: WindowRegistry<()> = WindowRegistry::new();
 
 /// Open the application's main window — or, if one is already open, just bring
 /// it to the front.
 pub fn open_main_window(cx: &mut App) {
-    if let Some(handle) = MAIN_WINDOW.with(|m| *m.borrow()) {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        MAIN_WINDOW.with(|m| *m.borrow_mut() = None);
+    if MAIN_WINDOW.focus((), cx) {
+        return;
     }
 
     info!("opening the main window");
     let options = skin_window::main_window_options(cx);
     match cx.open_window(options, |window, cx| cx.new(|cx| AppShell::new(window, cx))) {
         Ok(handle) => {
-            MAIN_WINDOW.with(|m| *m.borrow_mut() = Some(handle.into()));
+            MAIN_WINDOW.insert((), handle.into());
             handle
                 .update(cx, |_, window, cx| {
                     material::sync_native_backdrop(window, cx)
@@ -1394,7 +1379,7 @@ pub fn open_main_window(cx: &mut App) {
 
 /// Whether `handle` is the main window (the only one with a native backdrop).
 pub fn is_main_window(handle: AnyWindowHandle) -> bool {
-    MAIN_WINDOW.with(|m| *m.borrow() == Some(handle))
+    MAIN_WINDOW.get(()) == Some(handle)
 }
 
 /// Import every `.dtbke` path (case-insensitive extension; anything else is
@@ -1471,7 +1456,7 @@ pub(crate) fn debug_dispatch_file_action(name: &str, cx: &mut App) {
 }
 
 pub(crate) fn main_window_handle() -> Option<WindowHandle<AppShell>> {
-    MAIN_WINDOW.with(|m| *m.borrow()).and_then(|h| h.downcast::<AppShell>())
+    MAIN_WINDOW.get(()).and_then(|h| h.downcast::<AppShell>())
 }
 
 pub fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
@@ -1484,7 +1469,7 @@ pub fn open_paths(paths: Vec<PathBuf>, cx: &mut App) {
     }
 
     open_main_window(cx);
-    let Some(handle) = MAIN_WINDOW.with(|m| *m.borrow()).and_then(|h| h.downcast::<AppShell>())
+    let Some(handle) = MAIN_WINDOW.get(()).and_then(|h| h.downcast::<AppShell>())
     else {
         error!("open_paths: main window not available");
         return;

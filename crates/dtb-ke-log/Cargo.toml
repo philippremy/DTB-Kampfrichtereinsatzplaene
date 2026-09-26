@@ -4,5 +4,6 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+dtb-ke-util.workspace = true
 colored = { version = "3" }
 log.workspace = true

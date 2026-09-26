@@ -2081,6 +2081,7 @@ name = "dtb-ke-log"
 version = "2.1.1-dev.0"
 dependencies = [
  "colored",
+ "dtb-ke-util",
  "log",
 ]
 

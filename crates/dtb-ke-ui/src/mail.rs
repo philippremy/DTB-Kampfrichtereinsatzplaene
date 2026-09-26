@@ -31,6 +31,12 @@ const NONCE_MASK: [u8; 12] = [
 ];
 
 /// Whether report transmission is possible in this build.
+/// A send that does nothing but wait (the developer tab's sample report).
+pub fn send_simulated() -> Result<(), MailError> {
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    Ok(())
+}
+
 pub fn available() -> bool {
     !secret::CIPHERTEXT.is_empty()
 }
@@ -124,18 +130,18 @@ pub fn send(report: Report) -> Result<(), MailError> {
 
     // Test hook: assemble the message but don't actually connect — exercises the
     // reporter's spinner / "Gesendet!" flow without a live SMTP server.
-    match std::env::var("DTB_KE_MAIL_FAKE").as_deref() {
-        Ok("ok") => {
+    // `DTB_KE_MAIL_FAKE` or the developer option (settings → Debugging).
+    let fake = crate::debug::live::mail_sim();
+    match fake {
+        Some(true) => {
             std::thread::sleep(std::time::Duration::from_millis(700));
             return Ok(());
         }
-        Ok("err") => {
+        Some(false) => {
             std::thread::sleep(std::time::Duration::from_millis(700));
-            return Err(MailError::Send(
-                "simulierter Fehler (DTB_KE_MAIL_FAKE=err)".into(),
-            ));
+            return Err(MailError::Send("simulierter Fehler (Mail-Simulation)".into()));
         }
-        _ => {}
+        None => {}
     }
 
     let cfg = config().ok_or(MailError::NotConfigured)?;

@@ -10,7 +10,6 @@
 //! ranges, but only the visible rows are ever laid out, so a multi-MB log opens
 //! instantly and scrolls (both axes) smoothly.
 
-use std::cell::RefCell;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -18,7 +17,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, FocusHandle, Focusable,
+    App, AppContext, Bounds, ClipboardItem, Context, FocusHandle, Focusable,
     HighlightStyle, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, ParentElement,
     Render, ScrollHandle, ScrollStrategy, SharedString, Size, StatefulInteractiveElement, Styled,
     StyledText, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowKind,
@@ -26,6 +25,7 @@ use gpui_kit::{
 };
 use gpui_kit::base::Scrollbar;
 
+use crate::window_registry::WindowRegistry;
 use crate::components::icon::Icon;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
@@ -37,9 +37,7 @@ use crate::theme::{ActiveTheme, PaletteColors};
 /// gigabytes of RAM); the user is told to open it externally.
 const HARD_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
-thread_local! {
-    static OPEN: RefCell<Option<AnyWindowHandle>> = const { RefCell::new(None) };
-}
+static OPEN: WindowRegistry<()> = WindowRegistry::new();
 
 /// Open (or focus) the log-viewer window.
 pub fn open(cx: &mut App) {
@@ -49,20 +47,13 @@ pub fn open(cx: &mut App) {
         return;
     }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
-    let existing = OPEN.with(|h| *h.borrow());
-    if let Some(handle) = existing {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        OPEN.with(|h| *h.borrow_mut() = None);
+    if OPEN.focus((), cx) {
+        return;
     }
 
     let options = window_options(cx);
     match cx.open_window(options, |_, cx| cx.new(LogsWindow::new)) {
-        Ok(handle) => OPEN.with(|h| *h.borrow_mut() = Some(handle.into())),
+        Ok(handle) => OPEN.insert((), handle.into()),
         Err(err) => log::error!("failed to open the logs window: {err}"),
     }
 }
@@ -121,7 +112,7 @@ pub struct LogsWindow {
 
 impl Drop for LogsWindow {
     fn drop(&mut self) {
-        OPEN.with(|h| *h.borrow_mut() = None);
+        OPEN.remove(());
     }
 }
 

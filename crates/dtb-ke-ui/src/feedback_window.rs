@@ -12,18 +12,17 @@
 //! At most one window of each kind is open at a time; re-triggering the action
 //! just brings the existing one forward.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, Render, Size, StatefulInteractiveElement,
     Styled, TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div,
     prelude::FluentBuilder, px,
 };
 use gpui_kit::base::input::{InputState, Textarea, TextareaState};
 
+use crate::window_registry::WindowRegistry;
 use crate::actions::REPOSITORY_URL;
 use crate::build_info;
 use crate::components::checkbox::Checkbox;
@@ -95,9 +94,7 @@ impl Kind {
     }
 }
 
-thread_local! {
-    static OPEN: RefCell<HashMap<Kind, AnyWindowHandle>> = RefCell::new(HashMap::new());
-}
+static OPEN: WindowRegistry<Kind> = WindowRegistry::new();
 
 /// Open (or focus) the bug-report window. Entry point for `help::ReportBug`.
 pub fn open_bug(cx: &mut App) {
@@ -123,17 +120,8 @@ fn open_kind(cx: &mut App, kind: Kind) {
         return;
     }
     // Existence via `cx.windows()`, not `handle.update` — see `about::open_kind`.
-    let existing = OPEN.with(|m| m.borrow().get(&kind).copied());
-    if let Some(handle) = existing {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        OPEN.with(|m| {
-            m.borrow_mut().remove(&kind);
-        });
+    if OPEN.focus(kind, cx) {
+        return;
     }
 
     let opts = window_options(kind, cx);
@@ -141,9 +129,7 @@ fn open_kind(cx: &mut App, kind: Kind) {
         cx.new(|cx| FeedbackWindow::new(kind, window, cx))
     }) {
         Ok(handle) => {
-            OPEN.with(|m| {
-                m.borrow_mut().insert(kind, handle.into());
-            });
+            OPEN.insert(kind, handle.into());
             log::info!("opened the {} window", kind.subject_tag());
         }
         Err(err) => log::error!(
@@ -201,9 +187,7 @@ pub struct FeedbackWindow {
 
 impl Drop for FeedbackWindow {
     fn drop(&mut self) {
-        OPEN.with(|m| {
-            m.borrow_mut().remove(&self.kind);
-        });
+        OPEN.remove(self.kind);
     }
 }
 

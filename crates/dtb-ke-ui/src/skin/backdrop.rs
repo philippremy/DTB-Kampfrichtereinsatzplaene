@@ -102,6 +102,10 @@ pub(super) fn apply_regions(regions: &Regions) {
     let _ = regions;
 }
 
+/// `DTB_KE_NO_GLASS`: skip Liquid Glass — macOS falls back to the vibrancy tier, iOS to an opaque window.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+static NO_GLASS: dtb_ke_util::flag::EnvFlag = dtb_ke_util::flag::EnvFlag::present("DTB_KE_NO_GLASS");
+
 #[cfg(target_os = "macos")]
 mod mac {
     use std::cell::RefCell;
@@ -536,7 +540,7 @@ mod mac {
     /// falls back to here). `NSGlassEffectContainerView` has no typed
     /// binding in objc2-app-kit yet, so it goes through the runtime.
     fn glass_host(mtm: MainThreadMarker, content: &NSView) -> Option<GlassHost> {
-        if std::env::var_os("DTB_KE_NO_GLASS").is_some() {
+        if super::NO_GLASS.get() {
             debug!("native backdrop: DTB_KE_NO_GLASS set, forcing the vibrancy tier");
             return None;
         }
@@ -661,7 +665,7 @@ mod ios {
     }
 
     pub fn available() -> bool {
-        std::env::var_os("DTB_KE_NO_GLASS").is_none() && AnyClass::get(c"UIGlassEffect").is_some()
+        !super::NO_GLASS.get() && AnyClass::get(c"UIGlassEffect").is_some()
     }
 
     pub fn glass_active() -> bool {

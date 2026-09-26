@@ -14,7 +14,7 @@ use std::sync::Arc;
 use gpui_kit::ImageFormat;
 use gpui_kit::base::{Scrollbar, VirtualListScrollHandle, v_virtual_list};
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
+    AnyElement, App, AppContext, Bounds, Context, Entity, FontWeight, Image,
     InteractiveElement, IntoElement, ParentElement, Pixels, Render, ScrollHandle, SharedString,
     Size, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds, WindowKind,
     WindowOptions, div, img, prelude::FluentBuilder, px, size,
@@ -24,6 +24,7 @@ use gpui_kit::RenderImage;
 #[cfg(target_os = "macos")]
 use image::{Frame, RgbaImage};
 
+use crate::window_registry::WindowRegistry;
 use crate::build_info::{self, D};
 use crate::components::{Button, ButtonTone};
 use crate::i18n::{ActiveLocale, Locale};
@@ -60,9 +61,7 @@ impl Kind {
     }
 }
 
-thread_local! {
-    static OPEN: RefCell<HashMap<Kind, AnyWindowHandle>> = RefCell::new(HashMap::new());
-}
+static OPEN: WindowRegistry<Kind> = WindowRegistry::new();
 
 /// Open (or focus) the About window. Entry point for the `app::About` action.
 pub fn open(cx: &mut App) {
@@ -105,17 +104,8 @@ fn open_kind(cx: &mut App, kind: Kind) {
     // the menu action *while that window is the one dispatching it*, the
     // re-entrant `update` fails, and keying off that would drop the handle and
     // open a second window.
-    let existing = OPEN.with(|m| m.borrow().get(&kind).copied());
-    if let Some(handle) = existing {
-        if cx.windows().contains(&handle) {
-            handle
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            return;
-        }
-        OPEN.with(|m| {
-            m.borrow_mut().remove(&kind);
-        });
+    if OPEN.focus(kind, cx) {
+        return;
     }
 
     let opts = window_options(kind, cx);
@@ -128,11 +118,7 @@ fn open_kind(cx: &mut App, kind: Kind) {
             .map(Into::into),
     };
     match handle {
-        Ok(handle) => {
-            OPEN.with(|m| {
-                m.borrow_mut().insert(kind, handle);
-            });
-        }
+        Ok(handle) => OPEN.insert(kind, handle),
         Err(err) => log::error!("failed to open the {:?} window: {err}", kind),
     }
 }
@@ -157,9 +143,7 @@ fn window_options(kind: Kind, cx: &mut App) -> WindowOptions {
 }
 
 fn deregister(kind: Kind) {
-    OPEN.with(|m| {
-        m.borrow_mut().remove(&kind);
-    });
+    OPEN.remove(kind);
 }
 
 // ── the About window ─────────────────────────────────────────────────────

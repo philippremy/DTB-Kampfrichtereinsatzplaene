@@ -241,6 +241,7 @@ pub fn run() -> i32 {
 
     let summary = Summary::build(&digest);
     let (subject, body) = compose(&digest);
+    let subject = crate::debug::crash::mark_subject(subject);
     let dmp = digest.minidump;
     let log = newest_log();
 
@@ -273,7 +274,7 @@ pub fn run() -> i32 {
         let opts = window_options(cx);
         let opened = cx.open_window(opts, move |window, cx| {
             cx.new(|cx| {
-                ReportWindow::new(summary, subject, body, dmp, log, autosend, exit_verdict(), window, cx)
+                ReportWindow::new(summary, subject, body, dmp, log, autosend, exit_verdict(), false, window, cx)
             })
         });
         if opened.is_err() {
@@ -540,6 +541,8 @@ fn exit_verdict() -> Verdict {
 
 struct ReportWindow {
     verdict: Verdict,
+    /// The sample report: "sending" never touches SMTP.
+    simulate_send: bool,
     summary: Summary,
     subject: String,
     body: String,
@@ -569,6 +572,7 @@ impl ReportWindow {
         log: Vec<u8>,
         autosend: bool,
         verdict: Verdict,
+        simulate_send: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -593,6 +597,7 @@ impl ReportWindow {
 
         Self {
             verdict,
+            simulate_send,
             summary,
             subject,
             body,
@@ -636,10 +641,13 @@ impl ReportWindow {
             attachments,
         };
         let verdict = self.verdict.clone();
+        let simulate = self.simulate_send;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { mail::send(report) })
+                .spawn(async move {
+                    if simulate { mail::send_simulated() } else { mail::send(report) }
+                })
                 .await;
             match result {
                 Ok(()) => {
@@ -753,7 +761,7 @@ impl ReportWindow {
         let weak = cx.entity().downgrade();
 
         // Transport not compiled in → nothing to do but close.
-        if !mail::available() {
+        if !mail::available() && !self.simulate_send {
             return div()
                 .flex()
                 .flex_col()
@@ -1126,27 +1134,87 @@ pub fn offer_pending(cx: &mut App) {
 fn present_ready(ready: Ready, cx: &mut App) {
     let Ready { mut digest, dmp_path, crashed_at } = ready;
     digest.minidump = std::fs::read(&dmp_path).unwrap_or_default();
-    let summary = Summary::build(&digest);
-    let (subject, body) = compose(&digest);
-    let dmp = digest.minidump;
     // The next launch's own log is newer than the crash; take the newest one written up to then.
     let log = newest_log_before(Some(crashed_at + std::time::Duration::from_secs(2)));
-
     // Delivered → the `.dmp` has served its purpose. Any other answer keeps it, as on the desktop.
-    let verdict: Verdict = std::rc::Rc::new(move |code, cx| {
-        if code == report::SENT {
-            if let Err(err) = std::fs::remove_file(&dmp_path) {
-                log::warn!("cannot remove {}: {err}", dmp_path.display());
+    open_reporter(
+        digest,
+        log,
+        false,
+        Box::new(move |code| {
+            if code == report::SENT {
+                if let Err(err) = std::fs::remove_file(&dmp_path) {
+                    log::warn!("cannot remove {}: {err}", dmp_path.display());
+                }
             }
-        }
-        crate::sheet::dismiss(cx);
-    });
+        }),
+        cx,
+    );
+}
+
+/// Show the reporter for `digest` in the running app — a sheet where secondary windows are sheets, a
+/// window elsewhere. `on_close` sees the verdict (`report::*`) before the view goes away.
+fn open_reporter(
+    digest: Digest,
+    log: Vec<u8>,
+    simulate_send: bool,
+    on_close: Box<dyn Fn(i32)>,
+    cx: &mut App,
+) {
+    let summary = Summary::build(&digest);
+    let (subject, body) = compose(&digest);
+    let subject = if simulate_send {
+        format!("[Test] {subject}")
+    } else {
+        crate::debug::crash::mark_subject(subject)
+    };
+    let dmp = digest.minidump;
     let mut options = window_options(cx);
-    // The desktop window title is too long for a sheet header.
-    if let Some(titlebar) = options.titlebar.as_mut() {
-        titlebar.title = Some("Absturzbericht".into());
+
+    if crate::sheet::enabled() {
+        // The desktop window title is too long for a sheet header.
+        if let Some(titlebar) = options.titlebar.as_mut() {
+            titlebar.title = Some("Absturzbericht".into());
+        }
+        let verdict: Verdict = std::rc::Rc::new(move |code, cx| {
+            on_close(code);
+            crate::sheet::dismiss(cx);
+        });
+        crate::sheet::present(cx, "crash-report", &options, move |window, cx| {
+            cx.new(|cx| {
+                ReportWindow::new(summary, subject, body, dmp, log, false, verdict, simulate_send, window, cx)
+            })
+        });
+        return;
     }
-    crate::sheet::present(cx, "crash-report", &options, move |window, cx| {
-        cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, false, verdict, window, cx))
-    });
+
+    let handle_cell: std::rc::Rc<std::cell::Cell<Option<gpui_kit::AnyWindowHandle>>> = Default::default();
+    let verdict: Verdict = {
+        let handle_cell = handle_cell.clone();
+        std::rc::Rc::new(move |code, cx| {
+            on_close(code);
+            if let Some(handle) = handle_cell.get() {
+                handle.update(cx, |_, window, _| window.remove_window()).ok();
+            }
+        })
+    };
+    match cx.open_window(options, move |window, cx| {
+        cx.new(|cx| ReportWindow::new(summary, subject, body, dmp, log, false, verdict, simulate_send, window, cx))
+    }) {
+        Ok(handle) => handle_cell.set(Some(handle.into())),
+        Err(err) => log::error!("cannot open the crash report window: {err}"),
+    }
+}
+
+/// Developer option: show the reporter with sample data. "Sending" is simulated — nothing is mailed.
+pub fn show_sample(cx: &mut App) {
+    let digest = Digest {
+        reason: "EXC_BAD_ACCESS / KERN_INVALID_ADDRESS (Beispiel)".into(),
+        address: "0x0000000000000010".into(),
+        crashing_tid: "main (0x103)".into(),
+        panic_msg: "panicked at crates/dtb-ke-ui/src/beispiel.rs:42:9:\nBeispielhafter Fehler für die Vorschau".into(),
+        stack: "#0 DTB-Kampfrichtereinsatzplaene +0x1234\n#1 DTB-Kampfrichtereinsatzplaene +0x5678\n\nModules:\n(Beispiel)\n".into(),
+        minidump: vec![0; 2048],
+    };
+    open_reporter(digest, b"Beispiel-Protokoll\n".to_vec(), true, Box::new(|_| {}), cx);
 }
