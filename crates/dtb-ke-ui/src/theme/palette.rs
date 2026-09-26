@@ -54,6 +54,14 @@ struct RawColors {
     overlay: String,
     emblem_plate: String,
     emblem_ink: String,
+    syntax_keyword: String,
+    syntax_string: String,
+    syntax_comment: String,
+    syntax_function: String,
+    syntax_type: String,
+    syntax_number: String,
+    syntax_constant: String,
+    syntax_attribute: String,
 }
 
 impl RawColors {
@@ -79,6 +87,14 @@ impl RawColors {
             overlay: hex(&self.overlay)?,
             emblem_plate: hex(&self.emblem_plate)?,
             emblem_ink: hex(&self.emblem_ink)?,
+            syntax_keyword: hex(&self.syntax_keyword)?,
+            syntax_string: hex(&self.syntax_string)?,
+            syntax_comment: hex(&self.syntax_comment)?,
+            syntax_function: hex(&self.syntax_function)?,
+            syntax_type: hex(&self.syntax_type)?,
+            syntax_number: hex(&self.syntax_number)?,
+            syntax_constant: hex(&self.syntax_constant)?,
+            syntax_attribute: hex(&self.syntax_attribute)?,
         })
     }
 }
@@ -130,6 +146,22 @@ pub struct PaletteColors {
     pub emblem_plate: Hsla,
     /// Text / monogram on [`Self::emblem_plate`].
     pub emblem_ink: Hsla,
+    /// Syntax highlighting: Keywords (`fn`, `let`, `match` …).
+    pub syntax_keyword: Hsla,
+    /// Syntax highlighting: String and character literals.
+    pub syntax_string: Hsla,
+    /// Syntax highlighting: Comments.
+    pub syntax_comment: Hsla,
+    /// Syntax highlighting: Function and method names.
+    pub syntax_function: Hsla,
+    /// Syntax highlighting: Type names.
+    pub syntax_type: Hsla,
+    /// Syntax highlighting: Numeric literals.
+    pub syntax_number: Hsla,
+    /// Syntax highlighting: Constants, enum variants and other named values.
+    pub syntax_constant: Hsla,
+    /// Syntax highlighting: Attributes and macros.
+    pub syntax_attribute: Hsla,
 }
 
 impl PaletteColors {

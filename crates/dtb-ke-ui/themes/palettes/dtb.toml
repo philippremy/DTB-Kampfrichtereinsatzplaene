@@ -28,6 +28,16 @@ overlay            = "#1A1D2170" # ~44% ink — modal scrim
 emblem-plate       = "#FFFFFF"  # emblem plate — light in both themes
 emblem-ink         = "#1A1D21"  # text / monogram on the emblem plate
 
+# syntax highlighting (code view)
+syntax-keyword    = "#9B2393"
+syntax-string     = "#C41A16"
+syntax-comment    = "#6C7986"
+syntax-function   = "#326D74"
+syntax-type       = "#0B4F79"
+syntax-number     = "#1C00CF"
+syntax-constant   = "#6C36A9"
+syntax-attribute  = "#643820"
+
 [dark]
 background         = "#121417"
 surface            = "#191D22"
@@ -49,3 +59,13 @@ chrome             = "#1B1F24"
 overlay            = "#00000099" # ~60% black — modal scrim
 emblem-plate       = "#F1F2F4"  # emblem plate — kept light in dark mode too
 emblem-ink         = "#1A1D21"
+
+# syntax highlighting (code view)
+syntax-keyword    = "#FC5FA3"
+syntax-string     = "#FC6A5D"
+syntax-comment    = "#7F8C98"
+syntax-function   = "#67B7A4"
+syntax-type       = "#5DD8FF"
+syntax-number     = "#D0BF69"
+syntax-constant   = "#A167E6"
+syntax-attribute  = "#FD8F3F"

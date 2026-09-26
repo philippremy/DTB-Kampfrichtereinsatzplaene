@@ -1,0 +1,54 @@
+[package]
+name = "dtb-ke-debugger"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Developer-only minidump debugger: resolves native debug files (dSYM / PDB / DWARF) for a crash dump's exact build and symbolicates it. Not shipped, not built by CI."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dtb-ke-debugger"
+path = "src/main.rs"
+
+[dependencies]
+# The build-info user stream's format + parser (`buildinfo` is feature-free std code).
+dtb-ke-crash = { workspace = true }
+dtb-ke-syms.workspace = true
+dirs.workspace = true
+# The viewer: our theme / skin / components, settings and i18n, shared with the app.
+dtb-ke-log.workspace = true
+dtb-ke-ui = { path = "../dtb-ke-ui" }
+gpui-kit.workspace = true
+
+anyhow = "1"
+async-trait = "0.1"
+log.workspace = true
+memmap2 = "0.9"
+num-traits = "0.2"
+minidump = "0.27"
+minidump-common = "0.27"
+minidump-processor = "0.27"
+minidump-unwind = { version = "0.27", default-features = false }
+# `debug_id_for_object` (the Breakpad-compatible id rules for Mach-O / ELF / PE); its `object`, `debugid` and
+# `pdb` re-exports keep every crate here on the same versions wholesym uses.
+samply-symbols = "0.24"
+# Same TLS stack wholesym already uses.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "blocking"] }
+thiserror.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+walkdir = "2"
+# Fetching a registry crate's source (crates.io tarball) and reading the `Cargo.lock` that names a git dependency.
+flate2 = "1"
+tar = "0.4"
+toml.workspace = true
+wholesym = "0.8"
+tree-sitter-highlight = "0.27.0"
+tree-sitter-rust = "0.24.2"
+gix = { version = "=0.87.0", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "sha1"] }
+
+[dev-dependencies]
+# A tiny synthetic dump (the snapshot assembler) as a fixture.
+dtb-ke-crash = { workspace = true, features = ["snapshot"] }
+libc.workspace = true

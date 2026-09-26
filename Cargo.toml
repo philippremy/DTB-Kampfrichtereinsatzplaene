@@ -6,6 +6,7 @@ exclude = ["vendor"]
 members = [
     "crates/dtb-ke-bundle",
     "crates/dtb-ke-crash",
+    "crates/dtb-ke-debugger",
     "crates/dtb-ke-export",
     "crates/dtb-ke-log",
     "crates/dtb-ke-persist",

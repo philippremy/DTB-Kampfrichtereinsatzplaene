@@ -41,6 +41,7 @@ pub struct Chip {
     tone: ChipTone,
     leading: Option<Icon>,
     mono: bool,
+    height: gpui_kit::Pixels,
 }
 
 impl Chip {
@@ -50,6 +51,7 @@ impl Chip {
             tone: ChipTone::default(),
             leading: None,
             mono: false,
+            height: px(20.),
         }
     }
 
@@ -60,6 +62,12 @@ impl Chip {
 
     pub fn leading_icon(mut self, icon: Icon) -> Self {
         self.leading = Some(icon);
+        self
+    }
+
+    /// Match a neighbouring control's height (default 20 px), e.g. a small button's 24 px.
+    pub fn height(mut self, height: gpui_kit::Pixels) -> Self {
+        self.height = height;
         self
     }
 
@@ -81,7 +89,7 @@ impl RenderOnce for Chip {
             .flex_none()
             .items_center()
             .gap(px(4.))
-            .h(px(20.))
+            .h(self.height)
             .px(px(8.))
             .rounded_full()
             .border_1()

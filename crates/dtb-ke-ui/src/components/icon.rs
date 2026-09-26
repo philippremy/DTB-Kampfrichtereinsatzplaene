@@ -46,6 +46,8 @@ icons! {
     Warning     => "warning.svg",
     AlertCircle => "alert-circle.svg",
     PanelLeft   => "panel-left.svg",
+    Code        => "code.svg",
+    Cpu         => "cpu.svg",
     Settings    => "settings.svg",
     Copy        => "copy.svg",
     Trash       => "trash.svg",
