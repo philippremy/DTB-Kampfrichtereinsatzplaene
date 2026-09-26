@@ -216,17 +216,20 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
              \n    <Property Id=\"ARPPRODUCTICON\" Value=\"AppIcon.ico\" />",
         );
     }
-    if has_doc_icon {
-        icon_block
-            .push_str("\n    <Icon Id=\"DocumentIcon.ico\" SourceFile=\"DocumentIcon.ico\" />");
-    }
     let shortcut_icon = if has_icon {
         " Icon=\"AppIcon.ico\""
     } else {
         ""
     };
+    // `ProgId/@Icon` names a `File` (not an `<Icon>` element), so the icon is installed as a file.
     let doc_icon_attr = if has_doc_icon {
-        " Icon=\"DocumentIcon.ico\""
+        " Icon=\"DocumentIcon.ico\" IconIndex=\"0\""
+    } else {
+        ""
+    };
+    let doc_icon_component = if has_doc_icon {
+        "      <Component Id=\"DocumentIconFile\">\n        \
+         <File Id=\"DocumentIcon.ico\" Source=\"DocumentIcon.ico\" KeyPath=\"yes\" />\n      </Component>\n"
     } else {
         ""
     };
@@ -338,7 +341,7 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
                        Value="[INSTALLFOLDER]"
                        KeyPath="yes" />
       </Component>
-{file_association}    </ComponentGroup>
+{doc_icon_component}{file_association}    </ComponentGroup>
   </Package>
 </Wix>
 "#,
@@ -352,6 +355,7 @@ fn wxs_source(exe_name: &str, has_icon: bool, has_doc_icon: bool) -> String {
         exe_name = exe_name,
         shortcut_icon = shortcut_icon,
         file_association = file_association,
+        doc_icon_component = doc_icon_component,
     )
 }
 
@@ -420,8 +424,8 @@ mod tests {
     fn wxs_wires_the_dtbke_file_association() {
         let wxs = super::wxs_source("App.exe", false, true);
         for needle in [
-            r#"<Icon Id="DocumentIcon.ico" SourceFile="DocumentIcon.ico" />"#,
-            r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan" Icon="DocumentIcon.ico">"#,
+            r#"<File Id="DocumentIcon.ico" Source="DocumentIcon.ico" KeyPath="yes" />"#,
+            r#"<ProgId Id="DTBKE.Document" Description="DTB Kampfrichtereinsatzplan" Icon="DocumentIcon.ico" IconIndex="0">"#,
             r#"<Extension Id="dtbke" ContentType="application/x-dtbke">"#,
             r#"TargetFile="AppExe""#,
             r#"<MIME ContentType="application/x-dtbke" Default="yes" />"#,
