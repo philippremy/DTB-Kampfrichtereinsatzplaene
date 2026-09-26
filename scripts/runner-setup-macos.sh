@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sets up the macOS Forgejo Actions runner (the 2017 16" MacBook Pro).
 # Handles: Xcode Command Line Tools, Rust + both apple-darwin targets (for
-# `bundle --universal`), Go (to build forgejo-runner from source — no macOS
+# `bundle --universal`) + aarch64-apple-ios (the `ios` CI job; needs a full Xcode, installed by hand), Go (to build forgejo-runner from source — no macOS
 # binary is published upstream), zipsign, notarization credential guidance,
 # and the runner service (launchd).
 #
@@ -82,7 +82,7 @@ else
   echo "rustup already installed ($(rustup --version | head -1))"
 fi
 rustup toolchain install nightly >/dev/null
-rustup target add x86_64-apple-darwin aarch64-apple-darwin --toolchain nightly
+rustup target add x86_64-apple-darwin aarch64-apple-darwin aarch64-apple-ios --toolchain nightly
 
 # ── 4. Go (to build forgejo-runner from source — no macOS binary ships) ──
 step "Go (for building forgejo-runner)"

@@ -19,7 +19,7 @@ use std::process::Command;
 
 use crate::bundle::Context;
 use crate::util::{copy, fresh_dir, report};
-use crate::{icon, meta};
+use crate::{icon, macos, meta};
 
 /// Whether `target` names an iOS triple (`aarch64-apple-ios`, `aarch64-apple-ios-sim`, …).
 pub fn is_ios_target(target: Option<&str>) -> bool {
@@ -51,6 +51,14 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     let exe = app.join(meta::MACOS_EXECUTABLE_NAME);
     copy(&cx.binary, &exe).map_err(io)?;
     make_executable(&exe)?;
+    // The legacy CI Mac links against an old SDK; iOS 26 features (Liquid Glass) are gated on the
+    // *linked* SDK, so restamp it (before codesign, like the macOS path).
+    macos::ensure_min_sdk(
+        &exe,
+        if simulator { "iossim" } else { "ios" },
+        meta::IOS_MIN_VERSION,
+        meta::IOS_SDK_FLOOR,
+    )?;
 
     let document_icons = match write_document_icons(&app) {
         Ok(written) => written,
@@ -71,10 +79,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     }
 
     let profile = flag_env(&cx.provisioning_profile, "DTB_KE_PROVISIONING_PROFILE");
-    let identity = cx
-        .sign
-        .clone()
-        .or_else(|| std::env::var("DTB_KE_SIGN_ID").ok());
+    let identity = flag_env(&cx.sign, "DTB_KE_SIGN_ID");
     let entitlements = match (&profile, simulator) {
         (Some(profile), false) => {
             copy(Path::new(profile), &app.join("embedded.mobileprovision")).map_err(io)?;
@@ -91,14 +96,18 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     }
     codesign(&app, identity.as_deref().unwrap_or("-"), entitlements.as_deref())?;
 
-    let app = if cx.mac_wrapper { wrap_for_mac(&app)? } else { app };
-
     report(&app);
+    if !simulator {
+        let ipa = write_ipa(&app, &cx.out_dir)?;
+        report(&ipa);
+    }
     if cx.mac_wrapper {
+        let wrapped = wrap_for_mac(&app, &cx.out_dir.join("mac-wrapper"))?;
+        report(&wrapped);
         eprintln!(
-            "dtb-ke-bundle: Mac wrapper layout written — the profile must allow Apple Silicon Macs \
-             (\"Designed for iPad\"); run it with `open \"{}\"`",
-            app.display()
+            "dtb-ke-bundle: Mac wrapper (\"Designed for iPad\") written — it only launches on a Mac when \
+             the embedded profile allows Apple Silicon Macs; run it with `open \"{}\"`",
+            wrapped.display()
         );
     }
     if simulator {
@@ -112,8 +121,11 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     Ok(())
 }
 
+/// The flag, else the env var — either counts only when non-empty (CI passes unset secrets as "").
 fn flag_env(flag: &Option<String>, var: &str) -> Option<String> {
-    flag.clone().or_else(|| std::env::var(var).ok())
+    flag.clone()
+        .or_else(|| std::env::var(var).ok())
+        .filter(|v| !v.trim().is_empty())
 }
 
 fn info_plist(platform: &str, sdk_name: &str, document_icons: bool) -> String {
@@ -397,23 +409,55 @@ fn codesign(app: &Path, identity: &str, entitlements: Option<&Path>) -> Result<(
     }
 }
 
-/// Rearrange a finished (already signed) iOS `.app` into the layout macOS launches iOS apps from:
-/// `<Name>.app/{Wrapper/<Name>.app, WrappedBundle -> Wrapper/<Name>.app}`. Returns the outer bundle.
-fn wrap_for_mac(app: &Path) -> Result<std::path::PathBuf, String> {
+/// Copy a finished (already signed) iOS `.app` into the layout macOS launches iOS apps from:
+/// `<dest>/<Name>.app/{Wrapper/<Name>.app, WrappedBundle -> Wrapper/<Name>.app}`. Returns the outer
+/// bundle. `ditto` copies so the code signature survives; the input `.app` is left untouched.
+fn wrap_for_mac(app: &Path, dest: &Path) -> Result<std::path::PathBuf, String> {
     let name = app.file_name().ok_or("bad app path")?.to_owned();
-    let parent = app.parent().ok_or("bad app path")?;
-    let staged = parent.join(".wrap-inner");
-    fresh_dir(&staged).map_err(io)?;
-    let inner_tmp = staged.join(&name);
-    std::fs::rename(app, &inner_tmp).map_err(io)?;
-    let outer = parent.join(&name);
+    fresh_dir(dest).map_err(io)?;
+    let outer = dest.join(&name);
     let wrapper = outer.join("Wrapper");
     std::fs::create_dir_all(&wrapper).map_err(io)?;
-    std::fs::rename(&inner_tmp, wrapper.join(&name)).map_err(io)?;
-    std::fs::remove_dir_all(&staged).ok();
+    run_tool("ditto", &[app.as_os_str(), wrapper.join(&name).as_os_str()])?;
     let link = format!("Wrapper/{}", name.to_string_lossy());
     symlink(link, &outer.join("WrappedBundle"))?;
     Ok(outer)
+}
+
+/// `<DISPLAY_NAME>.ipa` next to the `.app`: a zip with the bundle under `Payload/`.
+fn write_ipa(app: &Path, out_dir: &Path) -> Result<std::path::PathBuf, String> {
+    let stage = out_dir.join("ipa-stage");
+    fresh_dir(&stage).map_err(io)?;
+    let payload = stage.join("Payload");
+    std::fs::create_dir_all(&payload).map_err(io)?;
+    let name = app.file_name().ok_or("bad app path")?;
+    run_tool("ditto", &[app.as_os_str(), payload.join(name).as_os_str()])?;
+    let ipa = out_dir.join(format!("{}.ipa", meta::DISPLAY_NAME));
+    std::fs::remove_file(&ipa).ok();
+    let status = Command::new("zip")
+        .current_dir(&stage)
+        .args(["-qry"])
+        .arg(&ipa)
+        .arg("Payload")
+        .status()
+        .map_err(|e| format!("failed to spawn zip: {e}"))?;
+    if !status.success() {
+        return Err(format!("zip exited with {status}"));
+    }
+    std::fs::remove_dir_all(&stage).ok();
+    Ok(ipa)
+}
+
+fn run_tool(tool: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+    let status = Command::new(tool)
+        .args(args)
+        .status()
+        .map_err(|e| format!("failed to spawn {tool}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{tool} exited with {status}"))
+    }
 }
 
 #[cfg(unix)]

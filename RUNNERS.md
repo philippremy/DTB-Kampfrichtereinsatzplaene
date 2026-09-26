@@ -863,6 +863,24 @@ like a downloadable app update to `self_update`. `--plain` skips the
 fragment entirely (`Client::upload_plain`, vs. the fragment-generating
 `Client::upload`).
 
+## iOS job (`ios` in `tip.yml` / `release.yml`)
+
+Runs on `macos-host` and calls `cargo dtb-ke-bundle bundle --release --target aarch64-apple-ios --mac-wrapper`,
+producing `DTB Kampfrichtereinsatzpläne.app`, `.ipa` (zip of `Payload/<app>`), and
+`mac-wrapper/<app>.app` (the "Designed for iPad" wrapper macOS launches iOS apps from, not a real
+Catalyst build). Uploaded with `--plain` as `…-aarch64-apple-ios{.ipa,.app.tar.gz,-mac-wrapper.tar.gz}`
+so the in-app updater's manifest never lists them. `publish` deliberately does **not** `need` this job —
+an iOS failure must not block the desktop release.
+
+- **Signing**: `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (see Secrets); otherwise ad-hoc.
+- **SDK**: like the macOS leg, `dtb-ke-bundle` restamps the binary's `LC_BUILD_VERSION` SDK up to
+  `meta::IOS_SDK_FLOOR` (26.0) with `vtool`, because Liquid Glass is gated on the *linked* SDK.
+- **Toolchain on the legacy Mac**: iOS needs a **full Xcode** (Command Line Tools have no iPhoneOS SDK) —
+  the newest one macOS 13 runs is Xcode 15.2. Known limits of that: `actool` there cannot compile the Icon
+  Composer `.icon` (the bundle then ships without the app icon and warns), and the Metal 4 shader path in
+  `gpui_apple` may not compile against the old Metal toolchain. `runner-setup-macos.sh` installs the
+  `aarch64-apple-ios` Rust target; installing Xcode is manual. Not yet run for real.
+
 ## Secrets
 
 Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
@@ -871,6 +889,7 @@ Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
 |---|---|---|
 | `CODEBERG_TOKEN` | both workflows, every job that touches the API | a Codeberg personal access token with `repo` (write) scope — creates/updates releases, uploads assets, force-pushes the rolling `tip`/`latest` tags |
 | `ZIPSIGN_KEY` | both workflows (every archive on both channels is zipsign-signed) | base64 of the zipsign **private** key (`base64 -w0 release.priv`) — see `UPDATER.md` § 1 for key generation |
+| `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (optional, both needed) | `tip.yml` / `release.yml`'s `ios` job | the `Apple Development: …` / `Apple Distribution: …` identity present in the macOS runner's keychain, and the base64 of a `.mobileprovision` for `de.philippremy.DTB-Kampfrichtereinsatzplaene`. Unset → ad-hoc signing (artifacts build but an iPad won't install them). The Mac wrapper only launches on a Mac if the profile allows Apple Silicon Macs |
 | `MACOS_SIGN_IDENTITY` (optional) | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; unset falls back to ad-hoc signing and skips notarization (see above) rather than failing the job |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` (optional, only matter with `MACOS_SIGN_IDENTITY` set) | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
 | `DTB_KE_SMTP_HOST`, `DTB_KE_SMTP_PORT`, `DTB_KE_SMTP_USER`, `DTB_KE_SMTP_PASS`, `DTB_KE_SMTP_FROM`, `DTB_KE_SMTP_TO` (optional) | both workflows, every build job (top-level `env:`) | the crash-reporter/feedback-window mail transport's credentials, baked in at compile time by `dtb-ke-ui/build.rs::emit_smtp_secret` (see `mail.rs`) — unset leaves the feature compiled in but disabled (`mail::available()` false), never a build failure |

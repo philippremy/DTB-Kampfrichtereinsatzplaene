@@ -49,7 +49,7 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     // macOS 26 interface (larger window controls, Liquid Glass) regardless of
     // which macOS SDK the linker on the build host had. No-op when it's
     // already ≥ the floor. See `meta::MACOS_SDK_FLOOR` / RUNNERS.md.
-    ensure_min_sdk(&exe)?;
+    ensure_min_sdk(&exe, "macos", meta::MACOS_MIN_VERSION, meta::MACOS_SDK_FLOOR)?;
 
     // Icon. `AppIcon.icns` is the pre-Tahoe fallback (`CFBundleIconFile`);
     // `Assets.car` carries the actual Liquid Glass icon that Tahoe+ Finder
@@ -251,9 +251,16 @@ fn info_plist(icon_name: Option<&str>, doc_icon_name: Option<&str>) -> String {
 ///
 /// A build *on* macOS 26 already has SDK ≥ the floor and is left untouched
 /// (we never lower it).
-fn ensure_min_sdk(binary: &Path) -> Result<(), String> {
-    let floor = parse_version(meta::MACOS_SDK_FLOOR)
-        .ok_or_else(|| format!("bad MACOS_SDK_FLOOR {:?}", meta::MACOS_SDK_FLOOR))?;
+///
+/// `platform` is vtool's platform name (`macos`, `ios`, `iossim`), `minos` the deployment target that
+/// is kept, `floor_str` the SDK floor.
+pub(crate) fn ensure_min_sdk(
+    binary: &Path,
+    platform: &str,
+    minos: &str,
+    floor_str: &str,
+) -> Result<(), String> {
+    let floor = parse_version(floor_str).ok_or_else(|| format!("bad SDK floor {floor_str:?}"))?;
 
     let shown = Command::new("vtool")
         .arg("-show-build")
@@ -278,10 +285,9 @@ fn ensure_min_sdk(binary: &Path) -> Result<(), String> {
 
     if current >= floor {
         eprintln!(
-            "dtb-ke-bundle: macOS SDK stamp {}.{} already ≥ {} — left as is",
+            "dtb-ke-bundle: {platform} SDK stamp {}.{} already ≥ {floor_str} — left as is",
             current.0,
-            current.1,
-            meta::MACOS_SDK_FLOOR
+            current.1
         );
         return Ok(());
     }
@@ -292,9 +298,9 @@ fn ensure_min_sdk(binary: &Path) -> Result<(), String> {
         "vtool",
         &[
             "-set-build-version",
-            "macos",
-            meta::MACOS_MIN_VERSION,
-            meta::MACOS_SDK_FLOOR,
+            platform,
+            minos,
+            floor_str,
             "-replace",
             "-output",
             path,
@@ -303,10 +309,9 @@ fn ensure_min_sdk(binary: &Path) -> Result<(), String> {
         &workspace_root(),
     )?;
     eprintln!(
-        "dtb-ke-bundle: restamped macOS SDK {}.{} → {} for the macOS 26 interface",
+        "dtb-ke-bundle: restamped {platform} SDK {}.{} → {floor_str} for the 26-era interface",
         current.0,
-        current.1,
-        meta::MACOS_SDK_FLOOR
+        current.1
     );
     Ok(())
 }

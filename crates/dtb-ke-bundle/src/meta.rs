@@ -99,6 +99,11 @@ pub const IOS_MIN_VERSION: &str = "15.0";
 /// left alone. Raise this when a later redesign moves the gate. See RUNNERS.md.
 pub const MACOS_SDK_FLOOR: &str = "26.0";
 
+/// Minimum iOS **SDK** stamped into the built iOS binary's `LC_BUILD_VERSION` (`macos::ensure_min_sdk`,
+/// shared with the macOS path). `UIGlassEffect` (Liquid Glass) and the iOS 26 window chrome are gated on
+/// the SDK the binary was linked against, and the legacy CI Mac tops out far below iOS 26.
+pub const IOS_SDK_FLOOR: &str = "26.0";
+
 /// The `.dtbke` file type — a single-competition postcard blob (see
 /// `dtb-ke-ui/src/save/mod.rs` / `store.rs::export_competition`; **not** the
 /// whole-database backup, which is a plain `.bin` file with no registered

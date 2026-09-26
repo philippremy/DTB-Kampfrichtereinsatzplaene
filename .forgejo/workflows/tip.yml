@@ -451,6 +451,53 @@ jobs:
           cargo dtb-ke-bundle debug-info --universal "$dbgname"
           cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
 
+  ios:
+    needs: prepare
+    runs-on: [macos-host]
+    env:
+      CARGO_TARGET_DIR: /Users/Shared/Codeberg/DTB-Kampfrichtereinsatzplaene/Cache/tip/aarch64-apple-ios
+      DTB_KE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Build the iOS app, .ipa and Mac wrapper
+        # Signs when IOS_SIGN_IDENTITY + IOS_PROVISIONING_PROFILE are both set (a codesigning identity
+        # in the runner's keychain + a base64 .mobileprovision); otherwise dtb-ke-bundle falls back to
+        # ad-hoc, which an iPad refuses to install but which keeps the artifacts buildable. The Mac
+        # wrapper additionally needs a profile that allows Apple Silicon Macs. The legacy runner's
+        # old SDK is restamped to iOS 26 by dtb-ke-bundle itself (macos::ensure_min_sdk).
+        env:
+          IOS_SIGN_IDENTITY: ${{ secrets.IOS_SIGN_IDENTITY }}
+          IOS_PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          args=(--release --target aarch64-apple-ios --mac-wrapper)
+          if [ -n "$IOS_SIGN_IDENTITY" ] && [ -n "$IOS_PROVISIONING_PROFILE_B64" ]; then
+            profile="$(mktemp -t dtbke-profile).mobileprovision"
+            echo "$IOS_PROVISIONING_PROFILE_B64" | base64 -d > "$profile"
+            args+=(--sign "$IOS_SIGN_IDENTITY" --provisioning-profile "$profile")
+          else
+            echo "::warning::IOS_SIGN_IDENTITY / IOS_PROVISIONING_PROFILE not set — building ad-hoc signed (not installable on a device)." >&2
+          fi
+          cargo dtb-ke-bundle bundle "${args[@]}"
+      - name: Package + upload
+        # --plain: no manifest fragment, so the in-app updater (which only reads the manifest) never
+        # sees these; they are for manual install / TestFlight / sideloading.
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          set -euo pipefail
+          base="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-aarch64-apple-ios"
+          bundle=target/bundle/release
+          cp "$bundle/DTB Kampfrichtereinsatzpläne.ipa" "$base.ipa"
+          tar -C "$bundle" -czf "$base.app.tar.gz" "DTB Kampfrichtereinsatzpläne.app"
+          tar -C "$bundle/mac-wrapper" -czf "$base-mac-wrapper.tar.gz" "DTB Kampfrichtereinsatzpläne.app"
+          cargo dtb-ke-bundle codeberg upload --plain \
+            --release-id ${{ needs.prepare.outputs.release_id }} \
+            "$base.ipa" "$base.app.tar.gz" "$base-mac-wrapper.tar.gz"
+
   publish:
     needs:
       - prepare
