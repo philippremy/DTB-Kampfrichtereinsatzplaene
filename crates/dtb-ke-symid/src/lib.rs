@@ -9,7 +9,7 @@ use std::path::Path;
 
 pub use samply_symbols::debugid;
 use samply_symbols::debugid::DebugId;
-use samply_symbols::object::{self, Object, ObjectSection};
+use samply_symbols::object::{self, Object, ObjectSection, ObjectSymbol, SymbolKind};
 use samply_symbols::{debug_id_for_object, pdb};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileType {
@@ -26,6 +26,9 @@ pub struct FileIdentity {
     pub file_type: FileType,
     /// Carries DWARF / CodeView line info, not just a symbol table.
     pub has_debug_info: bool,
+    /// Defines at least one named function symbol. A stripped binary has none: everything a symbolizer can say about
+    /// it is a synthesized `fun_<address>` from the function-start addresses.
+    pub has_symbols: bool,
 }
 
 impl FileIdentity {
@@ -107,8 +110,24 @@ fn identify_object(data: &[u8]) -> Option<FileIdentity> {
     Some(FileIdentity {
         debug_id: debug_id_for_object(&obj)?,
         file_type,
-        has_debug_info: obj.has_debug_symbols(),
+        // DWARF sections, or a Mach-O debug map (N_OSO): a local debug build keeps its DWARF in the object files and
+        // points at them from the executable, which has no DWARF of its own — but the symbolizer follows the map.
+        has_debug_info: obj.has_debug_symbols() || !obj.object_map().objects().is_empty(),
+        has_symbols: has_function_symbols(&obj),
     })
+}
+
+/// A stripped binary still defines a handful of functions for the dynamic linker (`_main`, exports), so "any" says
+/// nothing about whether its frames get names: a real symbol table has many.
+const MIN_FUNCTION_SYMBOLS: usize = 8;
+
+fn has_function_symbols(obj: &object::File) -> bool {
+    obj.symbols()
+        .chain(obj.dynamic_symbols())
+        .filter(|s| s.kind() == SymbolKind::Text && s.is_definition())
+        .take(MIN_FUNCTION_SYMBOLS)
+        .count()
+        >= MIN_FUNCTION_SYMBOLS
 }
 
 fn identify_pdb(file: &std::fs::File) -> Option<FileIdentity> {
@@ -118,5 +137,31 @@ fn identify_pdb(file: &std::fs::File) -> Option<FileIdentity> {
         debug_id: DebugId::from_parts(info.guid, info.age),
         file_type: FileType::Pdb,
         has_debug_info: true,
+        has_symbols: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unstripped_executable_has_symbols() {
+        let ids = identify(&std::env::current_exe().unwrap());
+        assert!(!ids.is_empty());
+        assert!(
+            ids.iter().all(|i| i.has_symbols),
+            "a test executable defines named functions"
+        );
+    }
+
+    #[test]
+    fn a_local_debug_build_counts_as_having_debug_info() {
+        // Mach-O keeps the DWARF in the object files (a debug map in the executable); ELF embeds it. Either way the
+        // symbolizer can produce source lines, so the file must not be called "no debug info".
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            let ids = identify(&std::env::current_exe().unwrap());
+            assert!(ids.iter().all(|i| i.has_debug_info), "{ids:?}");
+        }
+    }
 }
