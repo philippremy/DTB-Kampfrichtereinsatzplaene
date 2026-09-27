@@ -17,11 +17,14 @@
 //! [`Lookup::Submodule`], and [`crate::sources`] continues in the submodule's own repository at the pinned commit.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context as _, anyhow};
 use gix::ObjectId;
 use gix::protocol::fetch::{Arguments, Negotiate, negotiate};
+
+use crate::progress::Progress;
 
 /// Where a path in a commit leads.
 #[derive(Debug, PartialEq, Eq)]
@@ -41,6 +44,9 @@ pub struct RemoteRepo {
     /// Never touch the network: whatever is not already in the local repository is reported as
     /// [`NeedsNetwork`].
     offline: bool,
+    /// One `advance` per step of a read (the commit, each directory listing, the file) — a fetch is that fixed
+    /// sequence of small requests, so the steps are the honest unit.
+    progress: Option<Arc<Progress>>,
 }
 
 /// The requested object is not in the local cache and going online was not allowed.
@@ -83,12 +89,31 @@ impl RemoteRepo {
             url: url.to_owned(),
             repo,
             offline: false,
+            progress: None,
         })
     }
 
     /// Whether a repository for `url` was ever created under `cache_root` (so an offline read has a chance).
     pub fn exists(cache_root: &Path, url: &str) -> bool {
         cache_root.join(cache_dir_name(url)).join("HEAD").is_file()
+    }
+
+    /// Report the steps of every [`Self::read_file`] to `progress`.
+    pub fn with_progress(mut self, progress: Arc<Progress>) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
+    fn step(&self, label: &str) {
+        if let Some(p) = &self.progress {
+            p.set_label(label);
+        }
+    }
+
+    fn step_done(&self) {
+        if let Some(p) = &self.progress {
+            p.advance(1);
+        }
     }
 
     /// Refuse to download: reads succeed only from what is already cached.
@@ -99,21 +124,30 @@ impl RemoteRepo {
 
     /// The bytes of `path` at `commit`, fetching only what is missing.
     pub fn read_file(&self, commit: ObjectId, path: &str) -> anyhow::Result<Lookup> {
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        // The steps of this read: the commit, one directory listing per path component, the file itself. Cached ones
+        // finish at once.
+        if let Some(p) = &self.progress {
+            p.add_total(parts.len() as u64 + 2);
+        }
+        self.step("commit");
         if self.find(commit).is_none() {
             self.fetch(&[commit], "tree:0", true)
                 .context("fetching the commit")?;
         }
+        self.step_done();
         let commit_obj = self
             .find(commit)
             .ok_or_else(|| anyhow!("the server did not send commit {commit}"))?;
         let mut tree_id = commit_obj.try_into_commit()?.tree_id()?.detach();
 
-        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         for (i, part) in parts.iter().enumerate() {
+            self.step(&format!("directory {}", parts[..=i].join("/")));
             if self.find(tree_id).is_none() {
                 self.fetch(&[tree_id], "tree:0", false)
                     .with_context(|| format!("fetching the directory listing for {part}"))?;
             }
+            self.step_done();
             let tree = self
                 .find(tree_id)
                 .ok_or_else(|| anyhow!("tree {tree_id} was not delivered"))?
@@ -139,9 +173,11 @@ impl RemoteRepo {
                 | gix::object::tree::EntryKind::BlobExecutable
                     if last =>
                 {
+                    self.step(&format!("file {path}"));
                     if self.find(id).is_none() {
                         self.fetch(&[id], "", false).context("fetching the file")?;
                     }
+                    self.step_done();
                     let blob = self
                         .find(id)
                         .ok_or_else(|| anyhow!("blob {id} was not delivered"))?;

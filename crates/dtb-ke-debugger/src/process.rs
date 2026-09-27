@@ -13,8 +13,9 @@ use dtb_ke_crash::syshints::{self, Hints};
 use crate::build::BuildInfo;
 use crate::discover::SystemFacts;
 use crate::identity::{ModuleRef, modules_of};
+use crate::progress::Progress;
 use crate::resolve::{Resolution, Resolver};
-use crate::symbolize::NativeSymbolProvider;
+use crate::symbolize::{NativeSymbolProvider, NoSymbols};
 
 pub struct OpenedDump {
     pub dump: Minidump<'static, Mmap>,
@@ -75,17 +76,47 @@ pub struct Analysis {
     pub resolution: Resolution,
 }
 
+/// The four stages `analyze` reports to its [`Progress`].
+pub const STAGES: usize = 4;
+
+/// Open → resolve → load symbols → unwind + symbolicate, reporting each stage (with an `n / m` where it can be
+/// counted) to `progress`. Every stage but the unwind is countable: modules, modules, then frames — the unwind is one
+/// short call without a count, and its result is what gives the last stage its total.
 pub async fn analyze(
     opened: &OpenedDump,
     resolver: &Resolver,
-    progress: &(dyn Fn(&str) + Sync),
+    progress: &Arc<Progress>,
 ) -> anyhow::Result<Analysis> {
+    progress.begin_stage(
+        1,
+        STAGES,
+        "Finding debug files",
+        opened.modules.len() as u64,
+    );
     let resolution = resolver
-        .resolve(&opened.modules, opened.build.as_ref(), progress)
+        .with_progress(progress.clone())
+        .resolve(&opened.modules, opened.build.as_ref(), &|_| {})
         .await;
-    progress("symbolicating");
-    let provider = NativeSymbolProvider::load(&resolution, opened.hints.clone()).await;
-    progress("walking stacks");
+
+    progress.begin_stage(
+        2,
+        STAGES,
+        "Loading symbols",
+        resolution.found().count() as u64,
+    );
+    let provider =
+        NativeSymbolProvider::load_with(&resolution, opened.hints.clone(), Some(progress.clone()))
+            .await;
+
+    // Unwind once without symbols to learn how many frames there are …
+    progress.begin_stage(3, STAGES, "Unwinding stacks", 0);
+    let unwound = minidump_processor::process_minidump(&opened.dump, &NoSymbols).await?;
+    let frames: u64 = unwound.threads.iter().map(|t| t.frames.len() as u64).sum();
+    drop(unwound);
+
+    // … so the pass that symbolicates them can count.
+    progress.begin_stage(4, STAGES, "Symbolicating frames", frames);
     let state = minidump_processor::process_minidump(&opened.dump, &provider).await?;
+    progress.finish_stage();
     Ok(Analysis { state, resolution })
 }

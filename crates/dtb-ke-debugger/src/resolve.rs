@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::build::BuildInfo;
 use crate::identity::ModuleRef;
+use crate::progress::Progress;
 use crate::source::{DebugFileSource, FoundFile};
 
 pub enum Outcome {
@@ -49,6 +50,8 @@ impl Resolution {
 #[derive(Default, Clone)]
 pub struct Resolver {
     sources: Vec<Arc<dyn DebugFileSource>>,
+    /// Told which module is being looked up and when it is done (for the `n / m` bar).
+    progress: Option<Arc<Progress>>,
 }
 
 impl Resolver {
@@ -59,6 +62,14 @@ impl Resolver {
     pub fn with(mut self, source: impl DebugFileSource + 'static) -> Self {
         self.sources.push(Arc::new(source));
         self
+    }
+
+    /// A copy of this resolver that reports each module to `progress` (one `advance` per module).
+    pub fn with_progress(&self, progress: Arc<Progress>) -> Self {
+        Self {
+            progress: Some(progress),
+            ..self.clone()
+        }
     }
 
     pub fn push(&mut self, source: Arc<dyn DebugFileSource>) {
@@ -142,7 +153,13 @@ impl Resolver {
     ) -> Resolution {
         let mut out = Resolution::default();
         for module in modules {
+            if let Some(p) = &self.progress {
+                p.set_label(module.short_name());
+            }
             let (outcome, notes) = self.resolve_module(module, build, progress).await;
+            if let Some(p) = &self.progress {
+                p.advance(1);
+            }
             out.modules.push(ModuleResolution {
                 module: module.clone(),
                 outcome,

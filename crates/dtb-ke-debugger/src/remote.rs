@@ -80,6 +80,22 @@ impl CacheSource {
         self.root.join(id).join("debug-file")
     }
 
+    /// A fresh scratch path *inside* the cache (so the final rename never crosses a filesystem) for a download of `id`.
+    pub fn scratch_path(&self, id: &str) -> PathBuf {
+        static DOWNLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = DOWNLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.root
+            .join(format!(".download-{}-{n}-{id}.part", std::process::id()))
+    }
+
+    /// Moves a finished, verified download (a file made with [`Self::scratch_path`]) into place under `id`.
+    pub fn adopt(&self, id: &str, scratch: &Path) -> std::io::Result<PathBuf> {
+        let target = self.path_for(id);
+        std::fs::create_dir_all(target.parent().expect("has parent"))?;
+        std::fs::rename(scratch, &target)?;
+        Ok(target)
+    }
+
     /// Atomically add a file (temp + rename), so a crash mid-write never leaves a torn cache entry.
     pub fn store(&self, id: &str, bytes: &[u8]) -> anyhow::Result<PathBuf> {
         let target = self.path_for(id);
@@ -169,6 +185,8 @@ pub struct SymbolServerSource {
     server: ServerHandle,
     client: reqwest::Client,
     cache: std::sync::Arc<CacheSource>,
+    /// Told about the download in flight (bytes done / total), if the view wants a progress bar.
+    progress: Option<std::sync::Arc<crate::progress::Progress>>,
 }
 
 fn http_client() -> anyhow::Result<reqwest::Client> {
@@ -201,7 +219,14 @@ impl SymbolServerSource {
             server,
             client: http_client()?,
             cache,
+            progress: None,
         })
+    }
+
+    /// Report each download's bytes done / total to `progress`.
+    pub fn with_progress(mut self, progress: std::sync::Arc<crate::progress::Progress>) -> Self {
+        self.progress = Some(progress);
+        self
     }
 }
 
@@ -288,31 +313,62 @@ impl DebugFileSource for SymbolServerSource {
             request = request.bearer_auth(token);
         }
 
-        let response = request.send().await.context("request failed")?;
+        let mut response = request.send().await.context("request failed")?;
         match response.status() {
             s if s == reqwest::StatusCode::NOT_FOUND => return Ok(None),
             s if !s.is_success() => bail!("server answered {s}"),
             _ => {}
         }
-        let bytes = response.bytes().await.context("download interrupted")?;
 
-        // Verify before caching: identify a scratch copy, so a wrong file never enters the cache.
-        static DOWNLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = DOWNLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let scratch =
-            std::env::temp_dir().join(format!("dtbke-dl-{}-{n}-{breakpad}", std::process::id()));
-        std::fs::write(&scratch, &bytes)?;
-        let identity = identify_matching(&scratch, id);
-        let _ = std::fs::remove_file(&scratch);
-        let Some(identity) = identity else {
-            bail!("the server sent a file that does not match debug id {breakpad}");
+        // Stream into a scratch file inside the cache — never the whole (possibly gigabyte) body in memory — telling
+        // the progress bar as the bytes arrive. The file only enters the cache once it has been verified.
+        let total = response.content_length();
+        let scratch = self.cache.scratch_path(&breakpad);
+        std::fs::create_dir_all(scratch.parent().expect("has parent"))?;
+        if let Some(p) = &self.progress {
+            p.begin_transfer(
+                &format!("{} from the symbol server", module.short_name()),
+                total,
+            );
+        }
+        let received = {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&scratch)?;
+            let mut received = 0u64;
+            let result: anyhow::Result<u64> = async {
+                while let Some(chunk) = response.chunk().await.context("download interrupted")? {
+                    file.write_all(&chunk)?;
+                    received += chunk.len() as u64;
+                    if let Some(p) = &self.progress {
+                        p.transfer_progress(received);
+                    }
+                }
+                file.flush()?;
+                Ok(received)
+            }
+            .await;
+            if let Some(p) = &self.progress {
+                p.end_transfer();
+            }
+            match result {
+                Ok(received) => received,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&scratch);
+                    return Err(err);
+                }
+            }
         };
 
-        let path = self.cache.store(&breakpad, &bytes)?;
-        log::info!(
-            "downloaded {breakpad} ({} bytes) into the cache",
-            bytes.len()
-        );
+        // Verify before it counts: a wrong file never enters the cache.
+        let verify_path = scratch.clone();
+        let identity =
+            tokio::task::spawn_blocking(move || identify_matching(&verify_path, id)).await?;
+        let Some(identity) = identity else {
+            let _ = std::fs::remove_file(&scratch);
+            bail!("the server sent a file that does not match debug id {breakpad}");
+        };
+        let path = self.cache.adopt(&breakpad, &scratch)?;
+        log::info!("downloaded {breakpad} ({received} bytes) into the cache");
         Ok(Some(FoundFile {
             path,
             has_debug_info: identity.has_debug_info,

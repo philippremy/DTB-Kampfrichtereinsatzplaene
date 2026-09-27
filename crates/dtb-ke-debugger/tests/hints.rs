@@ -8,6 +8,7 @@ use dtb_ke_crash::snapshot::{
 use dtb_ke_crash::syshints::{Entry, Hints, Quality, STREAM_TYPE};
 use dtb_ke_debugger::Resolver;
 use dtb_ke_debugger::process::{OpenedDump, analyze};
+use dtb_ke_debugger::progress::Progress;
 
 const LIB_UUID: [u8; 16] = [0x42; 16];
 const BASE: u64 = 0x1_8000_0000;
@@ -81,7 +82,9 @@ fn hints(quality: Quality, complete: bool) -> Hints {
 
 async fn top_frame_name(path: &std::path::Path) -> Option<String> {
     let opened = OpenedDump::open(path).unwrap();
-    let analysis = analyze(&opened, &Resolver::new(), &|_| {}).await.unwrap();
+    let analysis = analyze(&opened, &Resolver::new(), &Progress::new())
+        .await
+        .unwrap();
     analysis.state.threads[0].frames[0].function_name.clone()
 }
 

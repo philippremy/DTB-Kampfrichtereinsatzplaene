@@ -12,6 +12,9 @@
 //! Git fetches go through [`crate::git`] (pure-Rust `gix`, partial-clone requests: kilobytes, not the repository).
 //! Nothing here runs by itself — the viewer shows a [`Plan`] and fetches only after the user confirms it.
 
+use std::sync::Arc;
+
+use crate::progress::Progress;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -235,6 +238,7 @@ fn read_in_repo(
     path: &str,
     depth: u8,
     online: bool,
+    progress: Option<&Arc<Progress>>,
 ) -> anyhow::Result<Vec<u8>> {
     if depth > 4 {
         bail!("too many nested submodules");
@@ -244,7 +248,10 @@ fn read_in_repo(
     if !online && !RemoteRepo::exists(&cache.join("git"), url) {
         return Err(crate::git::NeedsNetwork.into());
     }
-    let repo = RemoteRepo::open(&cache.join("git"), url)?.offline(!online);
+    let mut repo = RemoteRepo::open(&cache.join("git"), url)?.offline(!online);
+    if let Some(p) = progress {
+        repo = repo.with_progress(p.clone());
+    }
     match repo.read_file(id, path)? {
         Lookup::File(bytes) => Ok(bytes),
         Lookup::NotFound => bail!(
@@ -274,6 +281,7 @@ fn read_in_repo(
                 &rest,
                 depth + 1,
                 online,
+                progress,
             )
         }
     }
@@ -283,27 +291,41 @@ fn read_in_repo(
 /// reads only what an earlier fetch left in the cache and fails with [`crate::git::NeedsNetwork`] otherwise — that is
 /// how the viewer shows a file it already has without asking again.
 pub fn fetch_blocking(plan: &Plan, cache: &Path, online: bool) -> anyhow::Result<String> {
+    fetch_with_progress(plan, cache, online, &Progress::new())
+}
+
+/// [`fetch_blocking`] that reports to `progress`: one step per request of a git read (the commit, each directory
+/// listing, the file — for a git dependency the `Cargo.lock` read counts too), or the bytes of a crate download.
+pub fn fetch_with_progress(
+    plan: &Plan,
+    cache: &Path,
+    online: bool,
+    progress: &Arc<Progress>,
+) -> anyhow::Result<String> {
+    progress.begin_stage(1, 1, "Fetching source", 0);
+    let p = Some(progress);
     let bytes = match (&plan.origin, &plan.repo) {
         (Origin::Workspace { rel }, Some((url, commit))) => {
-            read_in_repo(cache, url, commit, rel, 0, online)?
+            read_in_repo(cache, url, commit, rel, 0, online, p)?
         }
         (Origin::RustStd { commit, rel }, _) => {
-            read_in_repo(cache, RUST_REPOSITORY, commit, rel, 0, online)?
+            read_in_repo(cache, RUST_REPOSITORY, commit, rel, 0, online, p)?
         }
         (Origin::GitDependency { short_rev, rel }, Some((url, commit))) => {
-            let lock = read_in_repo(cache, url, commit, "Cargo.lock", 0, online)
+            let lock = read_in_repo(cache, url, commit, "Cargo.lock", 0, online, p)
                 .context("reading the Cargo.lock at the dump's commit")?;
             let (dep_url, dep_commit) =
                 git_dependency_in_lock(&String::from_utf8_lossy(&lock), short_rev).ok_or_else(
                     || anyhow!("no git dependency at {short_rev} in that Cargo.lock"),
                 )?;
-            read_in_repo(cache, &dep_url, &dep_commit, rel, 0, online)?
+            read_in_repo(cache, &dep_url, &dep_commit, rel, 0, online, p)?
         }
         (Origin::Registry { name, version, rel }, _) => {
-            fetch_registry_file(cache, name, version, rel, online)?
+            fetch_registry_file(cache, name, version, rel, online, progress)?
         }
         _ => bail!("this plan has no repository to read from"),
     };
+    progress.finish_stage();
     String::from_utf8(bytes).or_else(|e| Ok(String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
@@ -315,6 +337,7 @@ fn fetch_registry_file(
     version: &str,
     rel: &str,
     online: bool,
+    progress: &Arc<Progress>,
 ) -> anyhow::Result<Vec<u8>> {
     use std::io::Read;
     let archive_path: PathBuf = cache.join("crates").join(format!("{name}-{version}.crate"));
@@ -323,13 +346,34 @@ fn fetch_registry_file(
             return Err(crate::git::NeedsNetwork.into());
         }
         let url = format!("https://static.crates.io/crates/{name}/{name}-{version}.crate");
-        let bytes = reqwest::blocking::get(&url)
+        let mut response = reqwest::blocking::get(&url)
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.bytes())
             .with_context(|| format!("downloading {url}"))?;
         std::fs::create_dir_all(archive_path.parent().expect("has parent"))?;
         let tmp = archive_path.with_extension("part");
-        std::fs::write(&tmp, &bytes)?;
+        progress.begin_transfer(&format!("{name} {version}"), response.content_length());
+        let copied = (|| -> anyhow::Result<()> {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&tmp)?;
+            let (mut buf, mut received) = (vec![0u8; 64 * 1024], 0u64);
+            loop {
+                let n = response
+                    .read(&mut buf)
+                    .with_context(|| format!("downloading {url}"))?;
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n])?;
+                received += n as u64;
+                progress.transfer_progress(received);
+            }
+            Ok(())
+        })();
+        progress.end_transfer();
+        if let Err(err) = copied {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(err);
+        }
         std::fs::rename(&tmp, &archive_path)?;
     }
     let file = std::fs::File::open(&archive_path)?;

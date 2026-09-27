@@ -13,6 +13,7 @@ pub mod git;
 pub mod highlight;
 pub mod identity;
 pub mod process;
+pub mod progress;
 pub mod rawdump;
 pub mod remote;
 pub mod resolve;

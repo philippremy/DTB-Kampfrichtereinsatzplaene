@@ -17,6 +17,7 @@ use wholesym::{
     LookupAddress, MultiArchDisambiguator, SymbolManager, SymbolManagerConfig, SymbolMap,
 };
 
+use crate::progress::Progress;
 use crate::resolve::Resolution;
 
 pub struct NativeSymbolProvider {
@@ -29,20 +30,38 @@ pub struct NativeSymbolProvider {
     /// system modules no source could locate. Keyed by module base → image UUID.
     hints: Option<Arc<Hints>>,
     uuids: HashMap<u64, [u8; 16]>,
+    /// Told after every symbolicated frame (the `n / N` bar of the last stage).
+    progress: Option<Arc<Progress>>,
 }
 
 impl NativeSymbolProvider {
     /// Load a symbol map for every resolved module. A file wholesym cannot read is logged and skipped —
     /// that module simply stays unsymbolicated.
     pub async fn load(resolution: &Resolution, hints: Option<Arc<Hints>>) -> Self {
+        Self::load_with(resolution, hints, None).await
+    }
+
+    /// Like [`Self::load`], reporting each loaded module to `progress` and — afterwards, while frames are looked up —
+    /// each symbolicated frame.
+    pub async fn load_with(
+        resolution: &Resolution,
+        hints: Option<Arc<Hints>>,
+        progress: Option<Arc<Progress>>,
+    ) -> Self {
         let manager = SymbolManager::with_config(SymbolManagerConfig::new());
         let mut maps = HashMap::new();
         let mut files = HashMap::new();
         let mut cached = HashMap::new();
         for (module, found) in resolution.found() {
+            if let Some(p) = &progress {
+                p.set_label(module.short_name());
+            }
             if found.in_dyld_cache {
                 if let Some(id) = module.debug_id {
                     cached.insert(module.base, (module.install_name().to_owned(), id));
+                }
+                if let Some(p) = &progress {
+                    p.advance(1);
                 }
                 continue;
             }
@@ -58,6 +77,9 @@ impl NativeSymbolProvider {
                 }
                 Err(err) => log::warn!("cannot load symbols from {}: {err}", found.path.display()),
             }
+            if let Some(p) = &progress {
+                p.advance(1);
+            }
         }
         let uuids = resolution
             .modules
@@ -70,6 +92,7 @@ impl NativeSymbolProvider {
             files,
             hints,
             uuids,
+            progress,
         }
     }
 
@@ -103,9 +126,8 @@ impl NativeSymbolProvider {
     }
 }
 
-#[async_trait]
-impl SymbolProvider for NativeSymbolProvider {
-    async fn fill_symbol(
+impl NativeSymbolProvider {
+    async fn symbolicate(
         &self,
         module: &(dyn Module + Sync),
         frame: &mut (dyn FrameSymbolizer + Send),
@@ -167,6 +189,21 @@ impl SymbolProvider for NativeSymbolProvider {
         }
         Ok(())
     }
+}
+
+#[async_trait]
+impl SymbolProvider for NativeSymbolProvider {
+    async fn fill_symbol(
+        &self,
+        module: &(dyn Module + Sync),
+        frame: &mut (dyn FrameSymbolizer + Send),
+    ) -> Result<(), FillSymbolError> {
+        let result = self.symbolicate(module, frame).await;
+        if let Some(p) = &self.progress {
+            p.advance(1);
+        }
+        result
+    }
 
     async fn walk_frame(
         &self,
@@ -185,5 +222,36 @@ impl SymbolProvider for NativeSymbolProvider {
             .get(&module.base_address())
             .cloned()
             .ok_or(FileError::NotFound)
+    }
+}
+
+/// Answers nothing: with it `process_minidump` only unwinds, which is cheap — and tells how many frames the real
+/// (symbolicating) pass will be asked about, so that pass can show an `n / N` bar.
+pub struct NoSymbols;
+
+#[async_trait]
+impl SymbolProvider for NoSymbols {
+    async fn fill_symbol(
+        &self,
+        _module: &(dyn Module + Sync),
+        _frame: &mut (dyn FrameSymbolizer + Send),
+    ) -> Result<(), FillSymbolError> {
+        Err(FillSymbolError {})
+    }
+
+    async fn walk_frame(
+        &self,
+        _module: &(dyn Module + Sync),
+        _walker: &mut (dyn FrameWalker + Send),
+    ) -> Option<()> {
+        None
+    }
+
+    async fn get_file_path(
+        &self,
+        _module: &(dyn Module + Sync),
+        _kind: FileKind,
+    ) -> Result<PathBuf, FileError> {
+        Err(FileError::NotFound)
     }
 }

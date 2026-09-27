@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use dtb_ke_debugger::code::{self, SourceText};
+use dtb_ke_debugger::progress::Progress;
 use dtb_ke_debugger::sources::{self, Plan};
 use dtb_ke_ui::components::icon::Icon;
-use dtb_ke_ui::components::{Button, ButtonTone, Spinner};
+use dtb_ke_ui::components::{Button, ButtonTone};
 use dtb_ke_ui::theme::ActiveTheme;
 use gpui_kit::base::Scrollbar;
 use gpui_kit::base::{ResizableState, h_resizable, resizable_panel, v_resizable};
@@ -55,7 +56,13 @@ pub enum CodeView {
     },
     /// A fetch the user asked for is running.
     #[allow(unused)]
-    Fetching { file: String, line: u32, plan: Plan },
+    Fetching {
+        file: String,
+        line: u32,
+        plan: Plan,
+        /// Steps / bytes of the running fetch, for its bar.
+        progress: Arc<Progress>,
+    },
     FetchFailed {
         file: String,
         line: u32,
@@ -395,20 +402,39 @@ impl DebuggerWindow {
             } => (file.clone(), *line, plan.clone()),
             _ => return,
         };
+        let progress = Progress::new();
         self.processed.code = CodeView::Fetching {
             file: file.clone(),
             line,
             plan: plan.clone(),
+            progress: progress.clone(),
         };
         log::info!("fetching {} from {}", plan.title, plan.source);
 
         let (cache, worker_plan) = (self.sources_cache.clone(), plan.clone());
+        let worker_progress = progress.clone();
         let work = Tokio::spawn_result(cx, async move {
             Ok(tokio::task::spawn_blocking(move || {
-                sources::fetch_blocking(&worker_plan, &cache, true)
+                sources::fetch_with_progress(&worker_plan, &cache, true, &worker_progress)
             })
             .await??)
         });
+        // Repaint while the fetch runs, so its bar moves.
+        let ticking = file.clone();
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(120)).await;
+                let still_fetching = this
+                    .update(cx, |this, cx| {
+                        cx.notify();
+                        matches!(&this.processed.code, CodeView::Fetching { file, .. } if *file == ticking)
+                    })
+                    .unwrap_or(false);
+                if !still_fetching {
+                    break;
+                }
+            }
+        }));
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
@@ -993,25 +1019,11 @@ impl DebuggerWindow {
                     &c,
                 ),
             },
-            CodeView::Fetching { plan, .. } => div()
-                .flex()
-                .w_full()
-                .items_center()
-                .gap(px(10.))
-                .p(px(24.))
-                .text_size(px(13.))
-                .text_color(c.muted_foreground)
-                .child(div().flex_none().child(Spinner::new()))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .child(SharedString::from(format!(
-                            "Fetching {} from {} …",
-                            plan.title, plan.source
-                        ))),
-                )
-                .into_any_element(),
+            CodeView::Fetching { plan, progress, .. } => super::progress_view::fetch_card(
+                format!("Fetching {} from {}", plan.title, plan.source),
+                &progress.snapshot(),
+                cx,
+            ),
             CodeView::FetchFailed { plan, error, .. } => {
                 fetch_prompt(plan, Some(error), "Try again", &c, cx)
             }

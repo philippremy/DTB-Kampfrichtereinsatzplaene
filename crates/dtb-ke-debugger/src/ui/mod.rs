@@ -6,6 +6,7 @@
 
 mod info;
 mod processed;
+mod progress_view;
 mod raw;
 mod server;
 mod symbols;
@@ -13,18 +14,19 @@ pub mod widgets;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use dtb_ke_debugger::code::SourceRoots;
 use dtb_ke_debugger::process::{Analysis, OpenedDump, analyze};
+use dtb_ke_debugger::progress::Progress;
 use dtb_ke_debugger::remote::{CacheSource, SymbolServerSource};
 use dtb_ke_debugger::{
     DebugFileSource, DirectorySource, DyldSharedCacheSource, ExecutableSource, Resolver,
 };
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::menu_bar::MenuBar;
-use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Segmented, Spinner};
+use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Segmented};
 use dtb_ke_ui::theme::{ActiveTheme, Appearance, Theme, ThemeMode};
 use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::{
@@ -105,7 +107,8 @@ pub struct DebuggerWindow {
     dir_source: Arc<DirectorySource>,
     resolver: Resolver,
     source_roots: SourceRoots,
-    progress: Arc<Mutex<String>>,
+    /// What the analysis is doing right now (stage, `n / m`, download) — drawn as bars while loading.
+    progress: Arc<Progress>,
     tasks: Vec<Task<()>>,
     /// Where fetched sources live: the bare git repositories the partial fetches build, and downloaded `.crate`s.
     sources_cache: PathBuf,
@@ -229,8 +232,9 @@ impl DebuggerWindow {
         // The symbol server is last and always in the chain: it follows `server_ui.handle`, so setting or clearing the
         // address in the Symbols tab takes effect without rebuilding anything (unconfigured = a plain miss).
         let server_ui = server::ServerUi::new(window, cx);
+        let progress = Progress::new();
         match SymbolServerSource::with_handle(server_ui.handle.clone(), cache) {
-            Ok(server) => resolver.push(Arc::new(server)),
+            Ok(server) => resolver.push(Arc::new(server.with_progress(progress.clone()))),
             Err(err) => log::error!("symbol server client: {err:#}"),
         }
 
@@ -256,7 +260,7 @@ impl DebuggerWindow {
             dir_source,
             resolver,
             source_roots,
-            progress: Arc::default(),
+            progress,
             tasks: Vec::new(),
             sources_cache: dirs::cache_dir()
                 .unwrap_or_else(std::env::temp_dir)
@@ -354,16 +358,14 @@ impl DebuggerWindow {
         let opened = session.opened.clone();
         let resolver = self.resolver.clone();
         let progress = self.progress.clone();
-        *progress.lock().unwrap() = "Resolving modules".into();
+        progress.clear();
         self.phase = Phase::Loading;
         self.tasks.clear();
 
-        let work = Tokio::spawn_result(cx, async move {
-            analyze(&opened, &resolver, &|s| {
-                *progress.lock().unwrap() = s.to_owned()
-            })
-            .await
-        });
+        let work = Tokio::spawn_result(
+            cx,
+            async move { analyze(&opened, &resolver, &progress).await },
+        );
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| this.finish(result, cx)).ok();
@@ -389,6 +391,7 @@ impl DebuggerWindow {
     }
 
     fn finish(&mut self, result: anyhow::Result<Analysis>, cx: &mut Context<Self>) {
+        self.progress.clear();
         match result {
             Ok(analysis) => {
                 let analysis = Arc::new(analysis);
@@ -852,11 +855,8 @@ impl DebuggerWindow {
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .gap(px(10.))
-                .text_size(px(13.))
-                .text_color(c.muted_foreground)
-                .child(Spinner::new())
-                .child(SharedString::from(self.progress.lock().unwrap().clone()))
+                .p(px(24.))
+                .child(progress_view::loading_card(&self.progress.snapshot(), cx))
                 .into_any_element(),
             Phase::Ready => match self.tab {
                 Tab::Processed => self.render_processed(window, cx),

@@ -33,7 +33,12 @@ async fn main() -> anyhow::Result<()> {
         resolver = resolver.with(DirectorySource::new(extra));
     }
 
-    let analysis = analyze(&opened, &resolver, &|s| eprintln!("… {s}")).await?;
+    let analysis = analyze(
+        &opened,
+        &resolver,
+        &dtb_ke_debugger::progress::Progress::new(),
+    )
+    .await?;
 
     println!("\nmodules:");
     for m in &analysis.resolution.modules {
