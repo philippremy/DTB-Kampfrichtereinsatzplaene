@@ -74,6 +74,17 @@ pub fn run(opts: Options) -> Result<(), String> {
 /// DWARF binaries with `lipo` (exactly like `build_universal` merges the two
 /// slices' actual executables) and archives the result.
 fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
+    let Some(merged_dir) = merged_universal_dsym(release)? else {
+        return Ok(());
+    };
+    tar_entry(&merged_dir, out)?;
+    util::report(out);
+    Ok(())
+}
+
+/// Merges the two `apple-darwin` slices' `.dSYM`s into `target/universal/<profile>/<name>.dSYM` (inner DWARF
+/// binaries `lipo`-ed together). `Ok(None)` (with a note) if a slice hasn't been built.
+pub fn merged_universal_dsym(release: bool) -> Result<Option<PathBuf>, String> {
     let mut dsyms = Vec::with_capacity(UNIVERSAL_TARGETS.len());
     for triple in UNIVERSAL_TARGETS {
         let path = util::debug_info_path(release, Some(triple), meta::p().raw_bin_name)
@@ -84,7 +95,7 @@ fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
                  with `bundle --universal` first",
                 path.display()
             );
-            return Ok(());
+            return Ok(None);
         }
         dsyms.push(path);
     }
@@ -111,10 +122,7 @@ fn universal_dsym(release: bool, out: &Path) -> Result<(), String> {
     if !status.success() {
         return Err(format!("lipo exited {status}"));
     }
-
-    tar_entry(&merged_dir, out)?;
-    util::report(out);
-    Ok(())
+    Ok(Some(merged_dir))
 }
 
 /// `tar -czf <out> -C <entry's parent> <entry's own name>` — plain, portable

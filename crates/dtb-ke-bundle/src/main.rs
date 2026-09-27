@@ -26,6 +26,9 @@
 //!     macOS's `.dSYM`, Linux's `.dwp` — kept entirely separate from `bundle`
 //!     so it never leaks into an installed `.deb`/`.rpm`/`.AppImage`. Windows
 //!     (gnullvm) produces nothing to package here — see `debug_info.rs`.
+//!   cargo dtb-ke-bundle symbols upload [--debug] [--strict] [--universal | --target <t>]
+//!     PUT this build's debug file to the symbol server (`DTB_KE_SYMBOLS_URL` +
+//!     `DTB_KE_SYMBOLS_UPLOAD_TOKEN`; best effort — see `symbols.rs`).
 
 mod archive;
 mod bundle;
@@ -38,6 +41,7 @@ mod linux;
 mod macos;
 mod manifest;
 mod meta;
+mod symbols;
 mod util;
 mod windows;
 
@@ -123,6 +127,23 @@ fn main() {
                 universal,
                 target,
                 out: std::path::PathBuf::from(out),
+            }) {
+                eprintln!("dtb-ke-bundle: {e}");
+                exit(1);
+            }
+        }
+        "symbols" => {
+            if rest.first().map(String::as_str) != Some("upload") {
+                eprintln!(
+                    "dtb-ke-bundle: usage: symbols upload [--debug] [--strict] [--universal | --target <t>]"
+                );
+                exit(2);
+            }
+            if let Err(e) = symbols::run(symbols::Options {
+                release: !has("--debug"),
+                universal: has("--universal"),
+                target: flag_value(&rest, "--target"),
+                strict: has("--strict"),
             }) {
                 eprintln!("dtb-ke-bundle: {e}");
                 exit(1);

@@ -10,6 +10,7 @@ name = "dtb-ke-bundle"
 path = "src/main.rs"
 
 [dependencies]
+dtb-ke-symid.workspace = true
 # `<release date>` in the AppStream metainfo (linux.rs) — appstreamcli
 # rejects a release with no date and appimagetool treats that as fatal.
 chrono = { workspace = true }
@@ -29,3 +30,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2 = "0.10"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "json"] }
+
+[dev-dependencies]
+# The uploader is tested against the real symbol server, in-process.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+dtb-ke-symbol-server = { path = "../dtb-ke-symbol-server" }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }

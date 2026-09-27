@@ -315,24 +315,15 @@ jobs:
           if ($zipsignExit -ne 0) { exit $zipsignExit }
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Package + upload debug info
-        # dtb-ke-ui-x86_64.pdb: a real PDB, emitted straight into the
-        # workspace root by .cargo/config.toml's rustflags for this target
-        # (llvm-mingw's ld.lld, given --pdb= via -Wl, — split-debuginfo=packed
-        # doesn't work at all here, see RUNNERS.md). --plain: this must never
-        # get a manifest fragment, or self_update would think it's a
-        # downloadable app update.
+      - name: Upload debug symbols to the symbol server
+        # The PDB lld emits (see RUNNERS.md), keyed by its debug id.
+        # Best effort: a symbol-server outage must not fail a Tip build.
         env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
+          DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          # See the Package + upload step above for why "ä" is built from
-          # its code point rather than typed literally.
-          $ae = [char]0x00E4
-          $dbgname = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-gnullvm.debuginfo.tar.gz"
-          cargo dtb-ke-bundle debug-info --target x86_64-pc-windows-gnullvm "$dbgname"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
+          cargo dtb-ke-bundle symbols upload --target x86_64-pc-windows-gnullvm
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64:
@@ -385,17 +376,15 @@ jobs:
           if ($zipsignExit -ne 0) { exit $zipsignExit }
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Package + upload debug info
-        # See the windows-x86_64 job above for the full story.
+      - name: Upload debug symbols to the symbol server
+        # The PDB lld emits (see RUNNERS.md), keyed by its debug id.
+        # Best effort: a symbol-server outage must not fail a Tip build.
         env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
+          DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          $ae = [char]0x00E4
-          $dbgname = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-aarch64-pc-windows-gnullvm.debuginfo.tar.gz"
-          cargo dtb-ke-bundle debug-info --target aarch64-pc-windows-gnullvm "$dbgname"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
+          cargo dtb-ke-bundle symbols upload --target aarch64-pc-windows-gnullvm
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   macos-universal:
@@ -436,20 +425,13 @@ jobs:
           zipsign sign tar "$name" /tmp/release.priv
           shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
           cargo dtb-ke-bundle codeberg upload --release-id ${{ needs.prepare.outputs.release_id }} "$name"
-      - name: Package + upload debug info
-        # --universal: merges the two slices' own .dSYM (a side effect of the
-        # Build universal binary step above, one per arch) with lipo, the
-        # same way the binary itself was merged. --plain: this must never
-        # get a manifest fragment, or self_update would think it's a
-        # downloadable app update.
+      - name: Upload debug symbols to the symbol server
+        # The merged universal dSYM's DWARF file, once per slice id.
+        # Best effort: a symbol-server outage must not fail a Tip build.
         env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
-        run: |
-          set -euo pipefail
-          triple=universal-apple-darwin
-          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.debuginfo.tar.gz"
-          cargo dtb-ke-bundle debug-info --universal "$dbgname"
-          cargo dtb-ke-bundle codeberg upload --plain --release-id ${{ needs.prepare.outputs.release_id }} "$dbgname"
+          DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
+          DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
+        run: cargo dtb-ke-bundle symbols upload --universal
 
   ios:
     needs: prepare
@@ -498,18 +480,13 @@ jobs:
             --release-id ${{ needs.prepare.outputs.release_id }} \
             "$base.ipa" "$base.app.tar.gz" "$base-mac-wrapper.tar.gz"
 
-      - name: Package + upload debug info
-        # The iOS crash reporter records only image UUIDs + offsets; this dSYM (--plain: never in the
-        # update manifest) is what symbolicates them offline.
+      - name: Upload debug symbols to the symbol server
+        # The iOS crash reporter records only image UUIDs + offsets; the dSYM on the server symbolicates them.
+        # Best effort: a symbol-server outage must not fail a Tip build.
         env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
-        run: |
-          set -euo pipefail
-          dbgname="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-aarch64-apple-ios.debuginfo.tar.gz"
-          cargo dtb-ke-bundle debug-info --target aarch64-apple-ios "$dbgname"
-          cargo dtb-ke-bundle codeberg upload --plain \
-            --release-id ${{ needs.prepare.outputs.release_id }} \
-            "$dbgname"
+          DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
+          DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
+        run: cargo dtb-ke-bundle symbols upload --target aarch64-apple-ios
 
   publish:
     needs:
