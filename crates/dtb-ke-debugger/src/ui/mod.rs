@@ -7,6 +7,7 @@
 mod info;
 mod processed;
 mod raw;
+mod server;
 mod symbols;
 pub mod widgets;
 
@@ -121,6 +122,8 @@ pub struct DebuggerWindow {
     raw: raw::State,
     symbols: symbols::State,
     info: info::State,
+    /// The symbol server: address / token fields, the shared handle the resolver follows, and the hint bar.
+    server_ui: server::ServerUi,
 }
 
 /// Open the window (or focus the existing one), optionally with a dump and extra debug-file locations.
@@ -208,7 +211,7 @@ impl DebuggerWindow {
 
         let dir_source = Arc::new(DirectorySource::new(std::iter::empty()));
         // Cheapest first: the module's own file → files the developer supplied → the download cache →
-        // the symbol server (`DTB_KE_SYMBOL_SERVER=https://…`, optional `DTB_KE_SYMBOL_TOKEN`).
+        // the symbol server (set in the Symbols tab; `DTB_KE_SYMBOL_SERVER` / `DTB_KE_SYMBOL_TOKEN` are the default).
         // A real cache belongs in the OS cache directory, not in the app's data folder nor the (temporary) data root
         // this process runs with (see `main`).
         let cache_dir = dirs::cache_dir()
@@ -223,11 +226,12 @@ impl DebuggerWindow {
             resolver.push(Arc::new(DyldSharedCacheSource));
         }
         resolver.push(cache.clone() as Arc<dyn DebugFileSource>);
-        if let Ok(base) = std::env::var("DTB_KE_SYMBOL_SERVER") {
-            match SymbolServerSource::new(&base, std::env::var("DTB_KE_SYMBOL_TOKEN").ok(), cache) {
-                Ok(server) => resolver.push(Arc::new(server)),
-                Err(err) => log::error!("symbol server client for {base}: {err:#}"),
-            }
+        // The symbol server is last and always in the chain: it follows `server_ui.handle`, so setting or clearing the
+        // address in the Symbols tab takes effect without rebuilding anything (unconfigured = a plain miss).
+        let server_ui = server::ServerUi::new(window, cx);
+        match SymbolServerSource::with_handle(server_ui.handle.clone(), cache) {
+            Ok(server) => resolver.push(Arc::new(server)),
+            Err(err) => log::error!("symbol server client: {err:#}"),
         }
 
         // This checkout is where a dump's workspace paths are re-rooted to by default.
@@ -268,6 +272,7 @@ impl DebuggerWindow {
             raw: Default::default(),
             symbols: Default::default(),
             info: Default::default(),
+            server_ui,
         }
     }
 
@@ -326,6 +331,8 @@ impl DebuggerWindow {
                     names: Arc::new(names),
                 });
                 self.hint_dismissed = false;
+                self.server_ui.hint_dismissed = false;
+                self.server_ui.hint = None;
                 self.unlocated.clear();
                 self.processed = Default::default();
                 self.raw = Default::default();
@@ -393,6 +400,7 @@ impl DebuggerWindow {
                     analysis.resolution.found().count()
                 );
                 self.unlocated = self.unlocated_system_libraries(&analysis);
+                self.server_ui.hint = self.server_hint_for(&analysis);
                 if !self.unlocated.is_empty() {
                     log::info!(
                         "system libraries in stack frames that no source located: {}",
@@ -645,6 +653,29 @@ impl DebuggerWindow {
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.hint_dismissed = !this.hint_dismissed;
+                            cx.notify();
+                        })),
+                )
+            })
+            // Modules with only a symbol table: the same idea for the symbol server.
+            .when(self.server_hint_available(), |el| {
+                let shown = !self.server_ui.hint_dismissed;
+                el.child(
+                    Button::icon("toggle-server-hint", Icon::Download)
+                        .small()
+                        .tone(if shown {
+                            ButtonTone::Secondary
+                        } else {
+                            ButtonTone::Ghost
+                        })
+                        .foreground(c.warn)
+                        .tooltip(if shown {
+                            "Hide the symbol-server hint"
+                        } else {
+                            "Show the symbol-server hint"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.server_ui.hint_dismissed = !this.server_ui.hint_dismissed;
                             cx.notify();
                         })),
                 )
@@ -907,6 +938,10 @@ impl Render for DebuggerWindow {
             .when(self.hint_available() && !self.hint_dismissed, |el| {
                 el.child(self.system_hint(cx))
             })
+            .when(
+                self.server_hint_available() && !self.server_ui.hint_dismissed,
+                |el| el.child(self.server_hint_bar(cx)),
+            )
             .child(
                 div()
                     .flex()

@@ -82,23 +82,35 @@ impl DebuggerWindow {
                 .into_iter()
                 .map(|m| {
                     let (chip, tone, detail) = match &m.outcome {
-                        Outcome::Found(f) => (
-                            if f.has_debug_info {
-                                "debug info"
+                        Outcome::Found(f) => {
+                            // Three honest states: real debug info; only symbol names (no source lines); or a stripped
+                            // file whose "names" the symbolizer has to invent (`fun_<address>`).
+                            let (chip, tone) = if f.has_debug_info {
+                                ("debug info", ChipTone::Ok)
+                            } else if f.has_symbols {
+                                ("symbols only", ChipTone::Warn)
                             } else {
-                                "symbol table only"
-                            },
-                            if f.has_debug_info {
-                                ChipTone::Ok
-                            } else {
-                                ChipTone::Warn
-                            },
-                            if f.in_dyld_cache {
+                                ("no symbols", ChipTone::Warn)
+                            };
+                            let mut detail = if f.in_dyld_cache {
                                 f.origin.clone()
                             } else {
                                 format!("{} — {}", f.origin, f.path.display())
-                            },
-                        ),
+                            };
+                            if !f.has_debug_info {
+                                detail.push_str(if f.has_symbols {
+                                    "  ·  function names only, no source lines"
+                                } else {
+                                    "  ·  stripped: no function names (frames show synthesized fun_<address>), no source lines"
+                                });
+                                // Why nothing better turned up.
+                                for note in &m.notes {
+                                    detail.push_str("  ·  ");
+                                    detail.push_str(note);
+                                }
+                            }
+                            (chip, tone, detail)
+                        }
                         Outcome::Missing { tried } => {
                             ("missing", ChipTone::Critical, tried.join("  ·  "))
                         }
@@ -225,11 +237,13 @@ impl DebuggerWindow {
         .track_scroll(&self.symbols.scroll)
         .size_full();
 
+        let server_panel = self.server_panel(cx);
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h(px(0.))
+            .child(server_panel)
             .child(bar)
             .child(
                 div()
@@ -240,7 +254,7 @@ impl DebuggerWindow {
                     .child(Scrollbar::vertical(&self.symbols.scroll)),
             )
             .child(widgets::placeholder(
-                "Missing modules: drop debug files (dSYM, PDB, binary) or whole folders in, or add them with \"Debug files …\" — the dump is then resolved again.",
+                "Missing modules: drop debug files (dSYM, PDB, binary) or whole folders in, add them with \"Debug files …\", or set the symbol server above — the dump is then resolved again.",
                 &c,
             ))
             .into_any_element()

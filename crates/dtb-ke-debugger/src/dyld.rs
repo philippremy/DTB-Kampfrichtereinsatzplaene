@@ -110,6 +110,7 @@ impl DebugFileSource for DyldSharedCacheSource {
         Ok(found.then(|| FoundFile {
             path,
             has_debug_info: false,
+            has_symbols: true, // the cache reader includes the images' local symbols
             origin: "dyld shared cache".into(),
             in_dyld_cache: true,
         }))

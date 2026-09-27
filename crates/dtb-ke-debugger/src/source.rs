@@ -17,6 +17,8 @@ use crate::identity::{FileIdentity, ModuleRef, identify};
 pub struct FoundFile {
     pub path: PathBuf,
     pub has_debug_info: bool,
+    /// Defines named function symbols (a stripped binary does not — its frames only get synthesized `fun_<address>` names).
+    pub has_symbols: bool,
     /// Human-readable origin for the UI (`"the executable itself"`, `"~/dsyms"`, `"symbol server"`).
     pub origin: String,
     /// The image lives inside this Mac's dyld shared cache (no file to load): `path` is only its install name.
@@ -66,6 +68,7 @@ impl DebugFileSource for ExecutableSource {
         Ok(found.map(|(path, id)| FoundFile {
             path,
             has_debug_info: id.has_debug_info,
+            has_symbols: id.has_symbols,
             origin: "the executable itself".into(),
             in_dyld_cache: false,
         }))
@@ -144,7 +147,7 @@ impl DirInner {
         index
             .get(&id)?
             .iter()
-            .max_by_key(|e| e.identity.has_debug_info)
+            .max_by_key(|e| (e.identity.has_debug_info, e.identity.has_symbols))
             .cloned()
     }
 }
@@ -177,6 +180,7 @@ impl DebugFileSource for DirectorySource {
         Ok(hit.map(|e| FoundFile {
             origin: format!("local file {}", e.path.display()),
             has_debug_info: e.identity.has_debug_info,
+            has_symbols: e.identity.has_symbols,
             path: e.path,
             in_dyld_cache: false,
         }))

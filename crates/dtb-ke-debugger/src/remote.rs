@@ -74,17 +74,65 @@ impl DebugFileSource for CacheSource {
         Ok(found.map(|(path, i)| FoundFile {
             path,
             has_debug_info: i.has_debug_info,
+            has_symbols: i.has_symbols,
             origin: "cache".into(),
             in_dyld_cache: false,
         }))
     }
 }
 
+/// The server the debugger talks to: an address and an optional bearer token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerConfig {
+    pub base: String,
+    pub token: Option<String>,
+}
+
+impl ServerConfig {
+    /// Normalises what a user typed: trims whitespace and trailing slashes, drops an empty token. `None` for an empty
+    /// address; an error if it is not a full `http(s)://` address.
+    pub fn parse(base: &str, token: &str) -> Result<Option<Self>, String> {
+        let base = base.trim().trim_end_matches('/');
+        if base.is_empty() {
+            return Ok(None);
+        }
+        if !(base.starts_with("https://") || base.starts_with("http://")) {
+            return Err("Enter the full address, e.g. https://symbols.example.net".into());
+        }
+        let token = token.trim();
+        Ok(Some(Self {
+            base: base.to_owned(),
+            token: (!token.is_empty()).then(|| token.to_owned()),
+        }))
+    }
+}
+
+/// A shared, changeable [`ServerConfig`]: the resolver's [`SymbolServerSource`] reads it on every request, so the UI
+/// can set or clear the server without rebuilding the resolver.
+#[derive(Clone, Default)]
+pub struct ServerHandle(std::sync::Arc<std::sync::Mutex<Option<ServerConfig>>>);
+
+impl ServerHandle {
+    pub fn get(&self) -> Option<ServerConfig> {
+        self.0.lock().unwrap().clone()
+    }
+
+    pub fn set(&self, config: Option<ServerConfig>) {
+        *self.0.lock().unwrap() = config;
+    }
+}
+
 pub struct SymbolServerSource {
-    base: String,
-    token: Option<String>,
+    server: ServerHandle,
     client: reqwest::Client,
     cache: std::sync::Arc<CacheSource>,
+}
+
+fn http_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(concat!("dtb-ke-debugger/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?)
 }
 
 impl SymbolServerSource {
@@ -93,23 +141,72 @@ impl SymbolServerSource {
         token: Option<String>,
         cache: std::sync::Arc<CacheSource>,
     ) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("dtb-ke-debugger/", env!("CARGO_PKG_VERSION")))
-            .timeout(std::time::Duration::from_secs(60))
-            .build()?;
-        Ok(Self {
+        let server = ServerHandle::default();
+        server.set(Some(ServerConfig {
             base: base.trim_end_matches('/').to_owned(),
             token,
-            client,
+        }));
+        Self::with_handle(server, cache)
+    }
+
+    /// A source that follows `server`: unconfigured (a miss for everything) until the handle holds a config.
+    pub fn with_handle(
+        server: ServerHandle,
+        cache: std::sync::Arc<CacheSource>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            server,
+            client: http_client()?,
             cache,
         })
+    }
+}
+
+/// Whether `config` points at a reachable server that accepts its token: `GET /healthz`, then a lookup of an id
+/// that cannot exist (a valid token answers 404 for it, a bad one 401/403). Returns a one-line description.
+pub async fn check_server(config: &ServerConfig) -> Result<String, String> {
+    let client = http_client().map_err(|e| e.to_string())?;
+    let health = client
+        .get(format!("{}/healthz", config.base))
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach {}: {e}", config.base))?;
+    if !health.status().is_success() {
+        return Err(format!(
+            "{} answered {} to /healthz — is this the symbol server?",
+            config.base,
+            health.status()
+        ));
+    }
+    let mut probe = client.get(format!("{}/v1/debug/{}", config.base, "0".repeat(33)));
+    if let Some(token) = &config.token {
+        probe = probe.bearer_auth(token);
+    }
+    let probe = probe
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    match probe.status().as_u16() {
+        404 | 200 => Ok(format!(
+            "Connected to {} — the token is accepted.",
+            config.base
+        )),
+        401 => Err(
+            "The server rejected the token (401) — check it, or enter it if none is set.".into(),
+        ),
+        403 => Err("The token is not allowed to read (403).".into()),
+        429 => Err("Too many failed attempts from this address (429) — wait a few minutes.".into()),
+        other => Err(format!("The server answered {other} to a lookup.")),
     }
 }
 
 #[async_trait]
 impl DebugFileSource for SymbolServerSource {
     fn name(&self) -> String {
-        format!("symbol server ({})", self.base)
+        match self.server.get() {
+            Some(config) => format!("symbol server ({})", config.base),
+            None => "symbol server (not configured)".into(),
+        }
     }
 
     async fn find(
@@ -123,11 +220,14 @@ impl DebugFileSource for SymbolServerSource {
         if module.is_system() {
             return Ok(None);
         }
+        let Some(config) = self.server.get() else {
+            return Ok(None);
+        };
         let breakpad = id.breakpad().to_string();
 
         let mut request = self
             .client
-            .get(format!("{}/v1/debug/{breakpad}", self.base));
+            .get(format!("{}/v1/debug/{breakpad}", config.base));
         let mut query: Vec<(&str, &str)> = Vec::new();
         if let Some(name) = module.debug_file.as_deref() {
             query.push(("name", name));
@@ -141,7 +241,7 @@ impl DebugFileSource for SymbolServerSource {
             }
         }
         request = request.query(&query);
-        if let Some(token) = &self.token {
+        if let Some(token) = &config.token {
             request = request.bearer_auth(token);
         }
 
@@ -154,8 +254,10 @@ impl DebugFileSource for SymbolServerSource {
         let bytes = response.bytes().await.context("download interrupted")?;
 
         // Verify before caching: identify a scratch copy, so a wrong file never enters the cache.
+        static DOWNLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = DOWNLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let scratch =
-            std::env::temp_dir().join(format!("dtbke-dl-{}-{breakpad}", std::process::id()));
+            std::env::temp_dir().join(format!("dtbke-dl-{}-{n}-{breakpad}", std::process::id()));
         std::fs::write(&scratch, &bytes)?;
         let identity = identify_matching(&scratch, id);
         let _ = std::fs::remove_file(&scratch);
@@ -171,7 +273,8 @@ impl DebugFileSource for SymbolServerSource {
         Ok(Some(FoundFile {
             path,
             has_debug_info: identity.has_debug_info,
-            origin: format!("symbol server {}", self.base),
+            has_symbols: identity.has_symbols,
+            origin: format!("symbol server {}", config.base),
             in_dyld_cache: false,
         }))
     }

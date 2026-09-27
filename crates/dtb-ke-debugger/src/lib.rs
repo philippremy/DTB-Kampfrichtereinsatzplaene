@@ -16,6 +16,7 @@ pub mod process;
 pub mod rawdump;
 pub mod remote;
 pub mod resolve;
+pub mod server_settings;
 pub mod source;
 pub mod sources;
 pub mod symbolize;

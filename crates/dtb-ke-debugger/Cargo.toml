@@ -24,6 +24,7 @@ dtb-ke-ui = { path = "../dtb-ke-ui" }
 gpui-kit.workspace = true
 
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
 async-trait = "0.1"
 log.workspace = true
 memmap2 = "0.9"
