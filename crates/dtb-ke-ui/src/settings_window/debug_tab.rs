@@ -6,17 +6,20 @@ use std::time::Duration;
 
 use gpui_kit::base::input::InputState;
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, PromptLevel,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    AnyElement, App, AppContext, Context, ElementId, Entity, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, PromptLevel, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    px,
 };
 
 use super::{SettingsWindow, divider, section_label, setting_row};
 use crate::components::field::Field;
+use crate::components::icon::Icon;
 use crate::i18n::ActiveLocale;
 use crate::components::toggle::Toggle;
 use crate::components::{Button, ButtonTone};
-use crate::debug::crash::{Kind, Thread};
+use crate::debug::crash::Thread;
 use crate::debug::{DebugSettings, MailSim, SkinOverride, Tri};
+use crate::fault::Fault;
 use crate::settings::Settings;
 use crate::theme::ActiveTheme;
 
@@ -39,22 +42,38 @@ impl SettingsWindow {
         let d = Settings::global(cx).debug;
         let locale = cx.global::<crate::i18n::Locale>().clone();
 
-        let crash_rows: Vec<AnyElement> = Kind::ALL
+        // The four "scenario" faults — always their own row, never in the signal picker (they
+        // aren't "raise this literal signal", they're a specific code path).
+        let scenario_rows: Vec<AnyElement> = Fault::SCENARIOS
             .into_iter()
-            .map(|kind| {
+            .map(|fault| {
                 setting_row(
-                    kind.label(&locale),
-                    kind.description(&locale),
+                    fault.label(&locale),
+                    fault.description(&locale),
                     &c,
-                    Button::new(SharedString::from(format!("crash-{kind:?}")), cx.t(&key("trigger-button")))
-                        .small()
-                        .tone(ButtonTone::Danger)
-                        .on_click(cx.listener(move |this, _, window, cx| this.confirm_crash(kind, window, cx)))
-                        .into_any_element(),
+                    self.trigger_button(format!("crash-{fault:?}"), fault, &locale, cx),
                 )
                 .into_any_element()
             })
             .collect();
+
+        // Every literal OS signal our crash handler is meant to catch, picked from one dropdown —
+        // still selectable even where it can't actually be triggered on this platform/architecture
+        // (for completeness; `Fault::available` gates only the trigger button, via a tooltip
+        // explaining why).
+        let signal_fault = self.signal_fault;
+        let signal_row = setting_row(
+            cx.t(&key("crash-trigger-title")),
+            signal_fault.description(&locale),
+            &c,
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(self.signal_fault_picker(&locale, cx))
+                .child(self.trigger_button("crash-signal-trigger", signal_fault, &locale, cx))
+                .into_any_element(),
+        );
 
         div()
             .flex()
@@ -76,7 +95,8 @@ impl SettingsWindow {
                     cx,
                 ),
             ))
-            .children(crash_rows)
+            .children(scenario_rows)
+            .child(signal_row)
             .child(divider(&c))
             .child(section_label(cx.t(&key("report-section")), &c))
             .child(setting_row(
@@ -199,15 +219,122 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// A trigger button for `fault`: wired to [`Self::confirm_crash`] when [`Fault::available`]
+    /// says yes; disabled with a tooltip explaining why otherwise.
+    fn trigger_button(
+        &self,
+        id: impl Into<ElementId>,
+        fault: Fault,
+        locale: &crate::i18n::Locale,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let button = Button::new(id, cx.t(&key("trigger-button"))).small().tone(ButtonTone::Danger);
+        match fault.available(locale) {
+            Ok(()) => button.on_click(cx.listener(move |this, _, window, cx| this.confirm_crash(fault, window, cx))),
+            Err(reason) => button.disabled(true).tooltip(reason),
+        }
+        .into_any_element()
+    }
+
+    /// The dropdown that picks which [`Fault::SIGNALS`] entry the signal row's trigger button
+    /// raises. Same trigger-anchored-popover convention as `SettingsWindow::language_switch`.
+    fn signal_fault_picker(&self, locale: &crate::i18n::Locale, cx: &mut Context<Self>) -> AnyElement {
+        let c = cx.theme().color;
+        let radius = cx.theme().skin.radius_control_px();
+        let open = self.signal_fault_open;
+        let current = self.signal_fault;
+
+        let list = open.then(|| self.signal_fault_bounds.get()).flatten().map(|b| {
+            let option = |fault: Fault, cx: &mut Context<Self>| {
+                let selected = fault == current;
+                div()
+                    .id(SharedString::from(format!("signal-fault-{fault:?}")))
+                    .px(px(8.))
+                    .py(px(5.))
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .when(selected, |el| el.text_color(c.primary))
+                    .hover(|el| el.bg(c.accent_soft))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _w, cx| {
+                            this.signal_fault_open = false;
+                            this.signal_fault = fault;
+                            cx.notify();
+                        }),
+                    )
+                    .child(fault.label(locale))
+            };
+
+            let mut col = div()
+                .id("signal-fault-list")
+                .w(b.size.width)
+                .max_h(px(260.))
+                .flex()
+                .flex_col()
+                .py(px(2.))
+                .rounded(radius)
+                .border_1()
+                .border_color(c.border)
+                .bg(c.surface)
+                .shadow_lg()
+                .overflow_y_scroll()
+                .occlude();
+            for fault in Fault::SIGNALS {
+                col = col.child(option(fault, cx));
+            }
+            col
+        });
+        let list = list.and_then(|col| self.signal_fault_bounds.float_below(px(3.), col));
+
+        div()
+            .id("signal-fault-select")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(px(220.))
+            .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
+                if this.signal_fault_open {
+                    this.signal_fault_open = false;
+                    cx.notify();
+                }
+            }))
+            .child(self.signal_fault_bounds.probe())
+            .child(
+                div()
+                    .id("signal-fault-trigger")
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(6.))
+                    .h(px(28.))
+                    .px(px(10.))
+                    .rounded(radius)
+                    .border_1()
+                    .border_color(if open { c.primary } else { c.border })
+                    .bg(c.surface)
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _w, cx| {
+                        this.signal_fault_open = !this.signal_fault_open;
+                        cx.notify();
+                    }))
+                    .child(div().flex_1().truncate().child(current.label(locale)))
+                    .child(Icon::ChevronDown.size(px(13.)).color(c.muted_foreground)),
+            )
+            .children(list)
+            .into_any_element()
+    }
+
     /// Ask before crashing on purpose — it ends the app and drops any edit still in the autosave debounce.
-    fn confirm_crash(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
-        let thread = if kind == Kind::Borrow || !self.crash_on_worker { Thread::Main } else { Thread::NamedWorker };
+    fn confirm_crash(&mut self, fault: Fault, window: &mut Window, cx: &mut Context<Self>) {
+        let thread = if fault == Fault::Borrow || !self.crash_on_worker { Thread::Main } else { Thread::NamedWorker };
         let locale = cx.global::<crate::i18n::Locale>().clone();
         let thread_name = locale.t(&key(if thread == Thread::Main { "thread-main" } else { "thread-worker" }));
         let detail = cx.t_fmt(
             &key("confirm-detail"),
             &[
-                ("kind", kind.label(&locale).as_ref()),
+                ("kind", fault.label(&locale).as_ref()),
                 ("thread", thread_name.as_ref()),
                 ("seconds", &CRASH_DELAY.as_secs().to_string()),
             ],
@@ -226,7 +353,7 @@ impl SettingsWindow {
             if answer.await.unwrap_or(1) != 0 {
                 return;
             }
-            cx.update(|_, cx| crate::crash_countdown::start(kind, thread, CRASH_DELAY, cx)).ok();
+            cx.update(|_, cx| crate::crash_countdown::start(fault, thread, CRASH_DELAY, cx)).ok();
         })
         .detach();
     }

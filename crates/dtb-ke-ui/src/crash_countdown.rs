@@ -19,7 +19,8 @@ use gpui_kit::{
 };
 
 use crate::components::{Button, ButtonTone};
-use crate::debug::crash::{self, Kind, Thread};
+use crate::debug::crash::{self, Thread};
+use crate::fault::Fault;
 use crate::i18n::ActiveLocale;
 use crate::theme::ActiveTheme;
 
@@ -32,7 +33,7 @@ const NUMBER_BOX: f32 = 200.;
 struct Countdown {
     id: u64,
     ends: Instant,
-    kind: Kind,
+    fault: Fault,
     thread: Thread,
     /// The number last painted, so windows are refreshed only when it changes.
     shown: u64,
@@ -70,10 +71,10 @@ fn shown_for(left: Duration) -> u64 {
 }
 
 /// Start the countdown; when it reaches zero the crash is triggered. Replaces one already running.
-pub fn start(kind: Kind, thread: Thread, delay: Duration, cx: &mut App) {
+pub fn start(fault: Fault, thread: Thread, delay: Duration, cx: &mut App) {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    log::warn!("crash simulation countdown: {kind:?} on {thread:?} in {delay:?}");
+    log::warn!("crash simulation countdown: {fault:?} on {thread:?} in {delay:?}");
 
     // Swallow every key while it runs (typing, shortcuts); Esc cancels.
     let keys = cx.intercept_keystrokes(|event, _window, cx| {
@@ -83,7 +84,7 @@ pub fn start(kind: Kind, thread: Thread, delay: Duration, cx: &mut App) {
         cx.stop_propagation();
     });
     cx.default_global::<Slot>().0 =
-        Some(Countdown { id, ends: Instant::now() + delay, kind, thread, shown: shown_for(delay), _keys: keys });
+        Some(Countdown { id, ends: Instant::now() + delay, fault, thread, shown: shown_for(delay), _keys: keys });
     cx.refresh_windows();
 
     cx.spawn(async move |cx| {
@@ -118,7 +119,7 @@ fn tick(id: u64, cx: &mut App) -> bool {
         // simulated fault is somehow survived.
         drop(done._keys);
         cx.refresh_windows();
-        crash::trigger(done.kind, done.thread, Duration::ZERO, cx);
+        crash::trigger(done.fault, done.thread, Duration::ZERO, cx);
         return true;
     }
     let shown = shown_for(left);

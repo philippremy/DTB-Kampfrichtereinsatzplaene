@@ -281,60 +281,15 @@ pub mod live {
     }
 }
 
-/// Crash simulations.
+/// Crash simulations. What can actually be raised, and how, is [`crate::fault::Fault`] — this
+/// module is just the scheduling/marker plumbing around it (the countdown delay, which thread,
+/// the `DTB_KE_CRASH_TEST` env hook, and marking a report as a simulation).
 pub mod crash {
     use std::time::Duration;
 
-    use gpui_kit::{App, AppContext, SharedString};
+    use gpui_kit::{App, AppContext};
 
-    use crate::i18n::{ActiveLocale, Locale};
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Kind {
-        /// A Rust panic (the hook traps to the OS exception path).
-        Panic,
-        /// A write through a null pointer (`EXC_BAD_ACCESS` / `SIGSEGV`).
-        NullWrite,
-        /// A write to address 1 (`EXC_BAD_ACCESS`, alignment).
-        BusError,
-        /// Reading a gpui entity from inside its own `update` — the panic class the drag-reorder work hit.
-        Borrow,
-        /// `std::process::abort()` (`SIGABRT`).
-        Abort,
-        /// Unbounded recursion.
-        StackOverflow,
-    }
-
-    impl Kind {
-        pub const ALL: [Self; 6] = [
-            Self::Panic,
-            Self::NullWrite,
-            Self::BusError,
-            Self::Borrow,
-            Self::Abort,
-            Self::StackOverflow,
-        ];
-
-        /// The catalog key stem: `settings.debug.crash-<stem>-title` / `-description`.
-        fn stem(self) -> &'static str {
-            match self {
-                Self::Panic => "panic",
-                Self::NullWrite => "null-write",
-                Self::BusError => "bus-error",
-                Self::Borrow => "borrow",
-                Self::Abort => "abort",
-                Self::StackOverflow => "overflow",
-            }
-        }
-
-        pub fn label(self, locale: &Locale) -> SharedString {
-            locale.t(&format!("settings.debug.crash-{}-title", self.stem()))
-        }
-
-        pub fn description(self, locale: &Locale) -> SharedString {
-            locale.t(&format!("settings.debug.crash-{}-description", self.stem()))
-        }
-    }
+    use crate::fault::Fault;
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Thread {
@@ -372,36 +327,17 @@ pub mod crash {
         if take_simulated() { format!("[Test] {subject}") } else { subject }
     }
 
-    // Unbounded recursion is the point.
-    #[allow(unconditional_recursion)]
-    #[inline(never)]
-    fn overflow(depth: u64) -> u64 {
-        let pad = [depth as u8; 1024];
-        std::hint::black_box(&pad);
-        overflow(depth + 1) + u64::from(pad[0])
-    }
-
     /// Fault right here, right now.
-    #[allow(clippy::manual_dangling_ptr)]
-    fn fault(kind: Kind) {
-        eprintln!("crash simulation: faulting now ({kind:?})");
+    fn fault_now(fault: Fault) {
+        eprintln!("crash simulation: faulting now ({fault:?})");
         mark_simulated();
-        match kind {
-            Kind::Panic => panic!("DTB_KE_CRASH_TEST: deliberate panic"),
-            Kind::NullWrite => unsafe { std::ptr::null_mut::<u64>().write_volatile(0xdead) },
-            Kind::BusError => unsafe { std::ptr::with_exposed_provenance_mut::<u64>(1).write_volatile(0) },
-            Kind::Abort => std::process::abort(),
-            Kind::StackOverflow => {
-                std::hint::black_box(overflow(0));
-            }
-            Kind::Borrow => {}
-        }
+        fault.trigger();
     }
 
     /// Crash the app on purpose after `delay`.
-    pub fn trigger(kind: Kind, thread: Thread, delay: Duration, cx: &mut App) {
-        log::warn!("crash simulation armed: {kind:?} on {thread:?} in {delay:?}");
-        if kind == Kind::Borrow {
+    pub fn trigger(fault: Fault, thread: Thread, delay: Duration, cx: &mut App) {
+        log::warn!("crash simulation armed: {fault:?} on {thread:?} in {delay:?}");
+        if fault == Fault::Borrow {
             // Needs a real entity mid-`update`, which only exists on the main thread's `App`.
             struct Dummy;
             let entity = cx.new(|_| Dummy);
@@ -423,14 +359,14 @@ pub mod crash {
             Thread::Main => {
                 cx.spawn(async move |cx| {
                     cx.background_executor().timer(delay).await;
-                    cx.update(|_| fault(kind));
+                    cx.update(|_| fault_now(fault));
                 })
                 .detach();
             }
             Thread::Worker | Thread::NamedWorker => {
                 let run = move || {
                     std::thread::sleep(delay);
-                    fault(kind);
+                    fault_now(fault);
                 };
                 let named = thread == Thread::NamedWorker;
                 let spawned = if named {
@@ -445,20 +381,38 @@ pub mod crash {
         }
     }
 
-    /// `DTB_KE_CRASH_TEST=segv|panic|bus|borrow|abort|overflow[,thread]` — faults 2 s after launch, on
-    /// an unnamed worker thread (a named one with the `,thread` suffix).
+    /// `DTB_KE_CRASH_TEST=segv|bus|ill|trap|fpe|abort|sys|xcpu|xfsz|emt|pipe|panic|borrow|overflow|nsexception[,thread|,main]`
+    /// — faults 2 s after launch, on an unnamed worker thread by default (a named one with
+    /// `,thread`, the main thread with `,main`). Not gated by [`Fault::available`] — an
+    /// unavailable-on-this-platform choice falls back to its own module-level `std::process::abort()`
+    /// safety net (see `crate::fault`) rather than silently no-opping.
     pub fn from_env(cx: &mut App) {
         let Ok(spec) = std::env::var("DTB_KE_CRASH_TEST") else { return };
-        let kind = match spec.split(',').next() {
-            Some("panic") => Kind::Panic,
-            Some("bus") => Kind::BusError,
-            Some("borrow") => Kind::Borrow,
-            Some("abort") => Kind::Abort,
-            Some("overflow") => Kind::StackOverflow,
-            _ => Kind::NullWrite,
+        let fault = match spec.split(',').next() {
+            Some("bus") => Fault::Bus,
+            Some("ill") => Fault::Ill,
+            Some("trap") => Fault::Trap,
+            Some("fpe") => Fault::Fpe,
+            Some("abort") => Fault::Abort,
+            Some("sys") => Fault::Sys,
+            Some("xcpu") => Fault::Xcpu,
+            Some("xfsz") => Fault::Xfsz,
+            Some("emt") => Fault::Emt,
+            Some("pipe") => Fault::Pipe,
+            Some("panic") => Fault::Panic,
+            Some("borrow") => Fault::Borrow,
+            Some("overflow") => Fault::StackOverflow,
+            Some("nsexception") => Fault::NSException,
+            _ => Fault::Segv,
         };
-        let thread = if spec.contains(",thread") { Thread::NamedWorker } else { Thread::Worker };
-        trigger(kind, thread, Duration::from_secs(2), cx);
+        let thread = if spec.contains(",main") {
+            Thread::Main
+        } else if spec.contains(",thread") {
+            Thread::NamedWorker
+        } else {
+            Thread::Worker
+        };
+        trigger(fault, thread, Duration::from_secs(2), cx);
     }
 }
 
@@ -490,7 +444,9 @@ mod tests {
         assert_eq!(toml::from_str::<DebugSettings>(&text).unwrap(), d);
     }
 
-    /// Every label and crash-kind text resolves to real text — a missing key would show as the key itself.
+    /// Every label text resolves to real text — a missing key would show as the key itself.
+    /// [`crate::fault::Fault`]'s own labels/descriptions/unavailable-reasons are covered by
+    /// `fault::tests::labels_are_all_in_the_catalog`.
     #[test]
     fn debug_labels_are_all_in_the_catalog() {
         let locale = crate::i18n::test_locale();
@@ -503,10 +459,6 @@ mod tests {
         }
         for k in SkinOverride::ALL {
             assert!(!looks_like_key(k.label(&locale)), "{k:?}");
-        }
-        for kind in crash::Kind::ALL {
-            assert!(!looks_like_key(kind.label(&locale)), "{kind:?} label");
-            assert!(!looks_like_key(kind.description(&locale)), "{kind:?} description");
         }
     }
 

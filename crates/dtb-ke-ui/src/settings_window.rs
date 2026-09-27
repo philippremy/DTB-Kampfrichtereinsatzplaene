@@ -150,6 +150,13 @@ pub struct SettingsWindow {
     advanced_clicks: Vec<Instant>,
     /// Debugging tab: simulate crashes on a worker thread instead of the main thread.
     crash_on_worker: bool,
+    /// Debugging tab: which signal the signal-picker dropdown currently has selected (always one
+    /// of [`crate::fault::Fault::SIGNALS`]).
+    signal_fault: crate::fault::Fault,
+    /// Whether the signal-picker dropdown's popover is open.
+    signal_fault_open: bool,
+    /// Absolute bounds of the signal-picker dropdown trigger — same convention as `language_bounds`.
+    signal_fault_bounds: PopoverAnchor,
     /// Debugging tab: the update-manifest override.
     manifest_input: Entity<InputState>,
     _manifest_sub: Subscription,
@@ -189,6 +196,9 @@ impl SettingsWindow {
             language_bounds: PopoverAnchor::new(),
             advanced_clicks: Vec::new(),
             crash_on_worker: false,
+            signal_fault: crate::fault::Fault::SIGNALS[0],
+            signal_fault_open: false,
+            signal_fault_bounds: PopoverAnchor::new(),
             manifest_input,
             _manifest_sub: manifest_sub,
         }
@@ -212,6 +222,7 @@ impl SettingsWindow {
             self.tab = tab;
             self.stop_recording(cx);
             self.language_open = false;
+            self.signal_fault_open = false;
             self.scroll.set_offset(point(px(0.), px(0.)));
             cx.notify();
         }

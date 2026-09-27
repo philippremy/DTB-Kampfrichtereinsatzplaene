@@ -15,6 +15,7 @@ pub mod crash_hints;
 pub mod crash_report;
 pub mod debug;
 pub mod detail;
+pub mod fault;
 pub mod feedback_window;
 pub mod filesystem;
 pub mod i18n;
