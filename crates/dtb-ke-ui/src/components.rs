@@ -18,6 +18,7 @@ pub mod menu_bar;
 pub mod org_emblem;
 pub mod overlay_host;
 pub mod popover;
+pub mod progress_bar;
 pub mod segmented;
 pub mod spinner;
 pub mod template_tile;
@@ -46,6 +47,8 @@ pub use org_emblem::OrgEmblem;
 pub use overlay_host::OverlayHost;
 #[allow(unused_imports)]
 pub use popover::PopoverAnchor;
+#[allow(unused_imports)]
+pub use progress_bar::ProgressBar;
 #[allow(unused_imports)]
 pub use segmented::Segmented;
 #[allow(unused_imports)]

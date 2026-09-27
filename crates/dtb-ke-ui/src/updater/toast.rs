@@ -15,7 +15,7 @@ use gpui_kit::{
 
 use super::{Release, State};
 use crate::components::icon::Icon;
-use crate::components::{Button, ButtonTone, Spinner};
+use crate::components::{Button, ButtonTone, ProgressBar, Spinner};
 use crate::i18n::ActiveLocale;
 use crate::theme::ActiveTheme;
 
@@ -373,25 +373,8 @@ impl UpdaterToast {
                             .child(label),
                     ),
             )
-            .child(
-                // Track + fill. An indeterminate phase (`None`) shows an empty
-                // track — the spinner already signals "working".
-                div()
-                    .w_full()
-                    .h(px(4.))
-                    .rounded_full()
-                    .bg(c.border)
-                    .overflow_hidden()
-                    .when_some(fraction, |el, f| {
-                        el.child(
-                            div()
-                                .h_full()
-                                .w(gpui_kit::relative(f))
-                                .rounded_full()
-                                .bg(c.primary),
-                        )
-                    }),
-            )
+            // A real fraction fills the bar; an unknown one (the size is not known yet) slides a segment.
+            .child(ProgressBar::new(fraction).height(px(4.)))
     }
 
     fn restart_body(&self, c: crate::theme::PaletteColors, cx: &App) -> impl IntoElement {
