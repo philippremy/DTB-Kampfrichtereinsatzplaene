@@ -15,8 +15,8 @@ use dtb_ke_ui::components::{Button, ButtonTone, Field};
 use dtb_ke_ui::theme::ActiveTheme;
 use gpui_kit::base::input::{InputEvent, InputState};
 use gpui_kit::{
-    AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement, SharedString, Styled,
-    Subscription, Window, div, prelude::FluentBuilder, px,
+    AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement, PromptButton,
+    PromptLevel, SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
 };
 
 use super::widgets;
@@ -177,6 +177,91 @@ impl DebuggerWindow {
         } else {
             cx.notify();
         }
+    }
+
+    /// File ▸ Clear Symbol Cache …: says what is in the cache, asks, empties it, reports what was freed. The next
+    /// resolve downloads what it needs from the server again.
+    pub(super) fn clear_symbol_cache(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cache = self.symbol_cache.clone();
+        let (files, bytes) = cache.usage();
+        let location = cache.root().display().to_string();
+        if files == 0 {
+            let done = window.prompt(
+                PromptLevel::Info,
+                "The symbol cache is empty",
+                Some(&format!(
+                    "Nothing downloaded from the symbol server is stored in {location}."
+                )),
+                &[PromptButton::Cancel("OK".into())],
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                let _ = done.await;
+            })
+            .detach();
+            return;
+        }
+        let detail = format!(
+            "This deletes {files} downloaded debug file{} ({}) from {location}. They are fetched from the symbol server \
+             again the next time a crash report needs them.",
+            if files == 1 { "" } else { "s" },
+            human_bytes(bytes),
+        );
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Clear the symbol cache?",
+            Some(&detail),
+            &[
+                PromptButton::new("Clear"),
+                PromptButton::Cancel("Cancel".into()),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await.unwrap_or(1) != 0 {
+                return;
+            }
+            let (title, message, level) = match cache.clear() {
+                Ok((files, bytes)) => {
+                    log::info!(
+                        "symbol cache cleared: {files} file(s), {} freed",
+                        human_bytes(bytes)
+                    );
+                    (
+                        "Symbol cache cleared".to_owned(),
+                        format!(
+                            "Deleted {files} file{} ({}).",
+                            if files == 1 { "" } else { "s" },
+                            human_bytes(bytes)
+                        ),
+                        PromptLevel::Info,
+                    )
+                }
+                Err(err) => {
+                    log::error!("cannot clear the symbol cache: {err}");
+                    (
+                        "Could not clear the symbol cache".to_owned(),
+                        err.to_string(),
+                        PromptLevel::Critical,
+                    )
+                }
+            };
+            this.update_in(cx, |_, window, cx| {
+                let done = window.prompt(
+                    level,
+                    &title,
+                    Some(&message),
+                    &[PromptButton::Cancel("OK".into())],
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    let _ = done.await;
+                })
+                .detach();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Jumps to the server settings (from the hint bar) and puts the cursor in the address field.
@@ -377,5 +462,35 @@ impl DebuggerWindow {
                         cx.notify();
                     })),
             )
+    }
+}
+
+/// `1.0 GB`, `312 MB`, `4.5 KB` — decimal units, one decimal above MB.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [(&str, f64); 3] = [("GB", 1e9), ("MB", 1e6), ("KB", 1e3)];
+    for (unit, size) in UNITS {
+        if bytes as f64 >= size {
+            let value = bytes as f64 / size;
+            return if value >= 100.0 {
+                format!("{value:.0} {unit}")
+            } else {
+                format!("{value:.1} {unit}")
+            };
+        }
+    }
+    format!("{bytes} B")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::human_bytes;
+
+    #[test]
+    fn sizes_read_naturally() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(999), "999 B");
+        assert_eq!(human_bytes(4_500), "4.5 KB");
+        assert_eq!(human_bytes(312_000_000), "312 MB");
+        assert_eq!(human_bytes(1_061_046_214), "1.1 GB");
     }
 }

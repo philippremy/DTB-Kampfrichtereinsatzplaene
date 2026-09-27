@@ -28,9 +28,52 @@ pub struct CacheSource {
     root: PathBuf,
 }
 
+/// Where downloads live between runs: `<OS cache dir>/de.philippremy.DTB-KE-Debugger/symbols`.
+pub fn cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("de.philippremy.DTB-KE-Debugger")
+        .join("symbols")
+}
+
 impl CacheSource {
     pub fn new(root: PathBuf) -> Self {
         Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// `(files, bytes)` of everything below the root (a missing root is empty).
+    pub fn usage(&self) -> (usize, u64) {
+        walkdir::WalkDir::new(&self.root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+            .fold((0, 0), |(files, bytes), e| {
+                (files + 1, bytes + e.metadata().map_or(0, |m| m.len()))
+            })
+    }
+
+    /// Deletes every cached download (the root itself stays). Returns what was freed as `(files, bytes)`. Only ever
+    /// removes the root's own children — symlinks are unlinked, never followed.
+    pub fn clear(&self) -> std::io::Result<(usize, u64)> {
+        let freed = self.usage();
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(freed),
+            Err(e) => return Err(e),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(freed)
     }
 
     fn path_for(&self, id: &str) -> PathBuf {
@@ -285,4 +328,48 @@ fn identify_matching(
     id: samply_symbols::debugid::DebugId,
 ) -> Option<crate::identity::FileIdentity> {
     identify(path).into_iter().find(|i| i.debug_id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cache_reports_its_size_and_clears_completely() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheSource::new(dir.path().join("symbols"));
+        assert_eq!(cache.usage(), (0, 0));
+        assert_eq!(
+            cache.clear().unwrap(),
+            (0, 0),
+            "a missing root is already empty"
+        );
+
+        cache.store("AAAA", &[1; 100]).unwrap();
+        cache.store("BBBB", &[2; 50]).unwrap();
+        std::fs::write(cache.root().join("stray.part"), [3; 10]).unwrap();
+        assert_eq!(cache.usage(), (3, 160));
+
+        assert_eq!(cache.clear().unwrap(), (3, 160));
+        assert_eq!(cache.usage(), (0, 0));
+        assert!(cache.root().is_dir(), "the root stays");
+        assert_eq!(std::fs::read_dir(cache.root()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn clearing_never_follows_a_symlink_out_of_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), b"keep").unwrap();
+        let cache = CacheSource::new(dir.path().join("symbols"));
+        std::fs::create_dir(cache.root()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, cache.root().join("link")).unwrap();
+        cache.clear().unwrap();
+        assert!(
+            outside.join("keep.txt").exists(),
+            "the target of a symlink must survive"
+        );
+    }
 }

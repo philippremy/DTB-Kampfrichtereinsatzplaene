@@ -41,6 +41,7 @@ gpui_kit::actions!(
     [
         OpenDump,
         AddSymbols,
+        ClearSymbolCache,
         Quit,
         ShowLogs,
         ToggleSidebar,
@@ -124,6 +125,8 @@ pub struct DebuggerWindow {
     info: info::State,
     /// The symbol server: address / token fields, the shared handle the resolver follows, and the hint bar.
     server_ui: server::ServerUi,
+    /// The download cache the resolver reads (and "Clear Symbol Cache …" empties).
+    symbol_cache: Arc<CacheSource>,
 }
 
 /// Open the window (or focus the existing one), optionally with a dump and extra debug-file locations.
@@ -214,11 +217,7 @@ impl DebuggerWindow {
         // the symbol server (set in the Symbols tab; `DTB_KE_SYMBOL_SERVER` / `DTB_KE_SYMBOL_TOKEN` are the default).
         // A real cache belongs in the OS cache directory, not in the app's data folder nor the (temporary) data root
         // this process runs with (see `main`).
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("de.philippremy.DTB-KE-Debugger")
-            .join("symbols");
-        let cache = Arc::new(CacheSource::new(cache_dir.clone()));
+        let cache = Arc::new(CacheSource::new(dtb_ke_debugger::remote::cache_dir()));
         let mut resolver = Resolver::new().with(ExecutableSource);
         resolver.push(dir_source.clone() as Arc<dyn DebugFileSource>);
         // Debug aid: `DTB_KE_NO_DYLD=1` leaves this Mac's cache out, to see the "unlocated system libraries" hint.
@@ -226,6 +225,7 @@ impl DebuggerWindow {
             resolver.push(Arc::new(DyldSharedCacheSource));
         }
         resolver.push(cache.clone() as Arc<dyn DebugFileSource>);
+        let symbol_cache = cache.clone();
         // The symbol server is last and always in the chain: it follows `server_ui.handle`, so setting or clearing the
         // address in the Symbols tab takes effect without rebuilding anything (unconfigured = a plain miss).
         let server_ui = server::ServerUi::new(window, cx);
@@ -273,6 +273,7 @@ impl DebuggerWindow {
             symbols: Default::default(),
             info: Default::default(),
             server_ui,
+            symbol_cache,
         }
     }
 
@@ -893,6 +894,9 @@ impl Render for DebuggerWindow {
             .key_context("Debugger")
             .on_action(cx.listener(|this, _: &OpenDump, _, cx| this.prompt_open(cx)))
             .on_action(cx.listener(|this, _: &AddSymbols, _, cx| this.prompt_add_symbols(cx)))
+            .on_action(cx.listener(|this, _: &ClearSymbolCache, window, cx| {
+                this.clear_symbol_cache(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(cx.listener(|this, _: &ToggleSource, _, cx| this.toggle_code(cx)))
             .on_action(cx.listener(|this, _: &ToggleRegisters, _, cx| this.toggle_registers(cx)))

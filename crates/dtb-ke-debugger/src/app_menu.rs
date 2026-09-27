@@ -10,8 +10,9 @@ use dtb_ke_ui::skin::menu::has_window_commands;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem};
 
 use crate::ui::{
-    About, AddSymbols, CloseWindow, HideApp, HideOthers, Minimize, OpenDump, OpenRepository, Quit,
-    ShowLogs, ToggleFullscreen, ToggleRegisters, ToggleSidebar, ToggleSource, Zoom,
+    About, AddSymbols, ClearSymbolCache, CloseWindow, HideApp, HideOthers, Minimize, OpenDump,
+    OpenRepository, Quit, ShowLogs, ToggleFullscreen, ToggleRegisters, ToggleSidebar, ToggleSource,
+    Zoom,
 };
 
 /// Every binding: (action name, keystroke, constructor). `secondary` is ⌘ on macOS, Ctrl elsewhere.
@@ -139,6 +140,7 @@ pub fn build() -> Vec<Menu> {
         Menu::new("File").items([
             MenuItem::action("Open …", OpenDump),
             MenuItem::action("Add Debug Files …", AddSymbols),
+            MenuItem::action("Clear Symbol Cache …", ClearSymbolCache),
             MenuItem::separator(),
             MenuItem::action("Close Window", CloseWindow),
         ]),
