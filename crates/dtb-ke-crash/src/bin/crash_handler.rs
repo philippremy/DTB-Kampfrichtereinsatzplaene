@@ -111,7 +111,7 @@ mod common {
                     None => format!("{tid:#x}"),
                 };
                 Some((
-                    exc.get_crash_reason(sys.os, sys.cpu).to_string(),
+                    with_signal_name(exc.get_crash_reason(sys.os, sys.cpu).to_string(), &exc.raw.exception_record),
                     format!("{:#018x}", exc.get_crash_address(sys.os, sys.cpu)),
                     thread,
                 ))
@@ -150,6 +150,27 @@ mod common {
         }
         v.extend_from_slice(dmp);
         v
+    }
+
+    /// Appends the real signal's POSIX name to `reason` when the raw exception is our synthetic
+    /// `EXC_SOFTWARE`/`EXC_SOFT_SIGNAL` shape (see `dtb_ke_crash::snapshot::summary::signal_name`'s
+    /// doc comment): `minidump`'s own `get_crash_reason` has no idea what to do with it (Breakpad's
+    /// convention only special-cases one hard-coded `SIGABRT` encoding, which isn't the one we
+    /// produce), so every one of our software-only signals otherwise shows up as a bare/unknown
+    /// `EXC_SOFTWARE` with no indication of which real signal it was.
+    fn with_signal_name(reason: String, exc: &minidump_common::format::MINIDUMP_EXCEPTION) -> String {
+        const EXC_SOFTWARE: u64 = 5;
+        const EXC_SOFT_SIGNAL: u64 = 0x0001_0003;
+        if exc.number_parameters < 3
+            || exc.exception_information[0] != EXC_SOFTWARE
+            || exc.exception_information[1] != EXC_SOFT_SIGNAL
+        {
+            return reason;
+        }
+        match dtb_ke_crash::snapshot::summary::signal_name(exc.exception_information[2]) {
+            Some(signal) if !reason.contains(signal) => format!("{reason} / {signal}"),
+            _ => reason,
+        }
     }
 
     /// A symbol-free walk of **every thread**: one `FrameRef` (image UUID + offset into it) per frame that lands in a

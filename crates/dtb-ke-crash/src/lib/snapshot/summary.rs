@@ -13,6 +13,13 @@ pub struct Digest {
     pub stack: String,
 }
 
+/// Mach exception kind that wraps a synthesized software signal — see `macos`/`ios`'s
+/// `FATAL_SIGNALS` handling.
+const EXC_SOFTWARE: u32 = 5;
+/// The `code` value that shape uses (`mach2::exception_types::EXC_SOFT_SIGNAL`); the real signal
+/// number rides in `subcode`.
+const EXC_SOFT_SIGNAL: u64 = 0x0001_0003;
+
 fn exception_name(kind: u32) -> &'static str {
     match kind {
         1 => "EXC_BAD_ACCESS",
@@ -25,6 +32,23 @@ fn exception_name(kind: u32) -> &'static str {
         11 => "EXC_RESOURCE",
         12 => "EXC_GUARD",
         _ => "EXC_UNKNOWN",
+    }
+}
+
+/// The POSIX name for `signo`, when it names one of the software-only signals `dtb-ke-crash`
+/// forwards through a synthetic [`EXC_SOFTWARE`]/[`EXC_SOFT_SIGNAL`] exception on Apple platforms
+/// (see `macos`/`ios`'s `FATAL_SIGNALS`). The numbers are Darwin's (`<sys/signal.h>`) — that shape
+/// only ever originates there. `None` for anything else, including every hardware fault, which
+/// [`exception_name`] alone already names correctly.
+pub fn signal_name(signo: u64) -> Option<&'static str> {
+    match signo {
+        6 => Some("SIGABRT"),
+        7 => Some("SIGEMT"),
+        12 => Some("SIGSYS"),
+        13 => Some("SIGPIPE"),
+        24 => Some("SIGXCPU"),
+        25 => Some("SIGXFSZ"),
+        _ => None,
     }
 }
 
@@ -76,10 +100,19 @@ pub fn digest(snap: &CrashSnapshotDTO) -> Digest {
         .or_else(|| snap.exception.as_ref().and_then(|e| snap.threads.iter().find(|t| t.id == e.thread_id)));
 
     let (reason, address) = match &snap.exception {
-        Some(e) => (
-            format!("{} (code {:#x}, subcode {:#x})", exception_name(e.kind), e.code, e.subcode),
-            if e.kind == 1 { e.subcode } else { crashed.map(|t| t.regs.pc).unwrap_or(0) },
-        ),
+        Some(e) => {
+            let mut name = exception_name(e.kind).to_string();
+            if e.kind == EXC_SOFTWARE
+                && e.code == EXC_SOFT_SIGNAL
+                && let Some(signal) = signal_name(e.subcode)
+            {
+                name.push_str(&format!(" / {signal}"));
+            }
+            (
+                format!("{name} (code {:#x}, subcode {:#x})", e.code, e.subcode),
+                if e.kind == 1 { e.subcode } else { crashed.map(|t| t.regs.pc).unwrap_or(0) },
+            )
+        }
         None => ("no exception recorded".to_string(), 0),
     };
 

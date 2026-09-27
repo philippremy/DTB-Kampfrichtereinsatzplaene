@@ -153,6 +153,26 @@ fn digest_names_frames_by_module_offset() {
     assert!(d.stack.contains("#2 App +0x3300"), "{}", d.stack);
 }
 
+/// A synthetic `EXC_SOFTWARE`/`EXC_SOFT_SIGNAL` exception (the shape `macos`/`ios` build for the
+/// `FATAL_SIGNALS` — see their module doc comments) names the real signal in the digest's reason,
+/// not just the bare Mach exception kind.
+#[test]
+fn digest_names_the_real_signal_behind_a_synthetic_exc_software() {
+    let mut snap = synthetic();
+    snap.exception = Some(ExceptionDTO { kind: 5, code: 0x10003, subcode: 6, thread_id: 0xabc });
+    let d = snapshot::summary::digest(&snap);
+    assert!(d.reason.starts_with("EXC_SOFTWARE / SIGABRT"), "{}", d.reason);
+
+    // An unrecognized subcode (not one of `FATAL_SIGNALS`) falls back to the bare exception name.
+    snap.exception = Some(ExceptionDTO { kind: 5, code: 0x10003, subcode: 999, thread_id: 0xabc });
+    let d = snapshot::summary::digest(&snap);
+    assert!(d.reason.starts_with("EXC_SOFTWARE ("), "{}", d.reason);
+
+    // A hardware fault (not EXC_SOFTWARE at all) is untouched.
+    let d = snapshot::summary::digest(&synthetic());
+    assert!(!d.reason.contains('/'), "{}", d.reason);
+}
+
 const INFO: &str = "app_version=1.2.3\ncommit=abc123\ntarget=aarch64-apple-ios\n";
 
 fn user_stream(dmp: Vec<u8>) -> Option<String> {
