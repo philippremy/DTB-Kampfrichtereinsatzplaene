@@ -41,6 +41,7 @@ mod linux;
 mod macos;
 mod manifest;
 mod meta;
+mod strip;
 mod symbols;
 mod util;
 mod windows;

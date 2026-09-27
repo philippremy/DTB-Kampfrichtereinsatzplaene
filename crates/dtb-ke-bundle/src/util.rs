@@ -132,41 +132,34 @@ pub fn built_binary_path(release: bool, target: Option<&str>, name: &str) -> Pat
     target_dir_for(release, target).join(format!("{name}{}", exe_suffix(target)))
 }
 
-/// Where this build's debug-info sidecar lands, for the platforms that
-/// produce one. `release`/`target` select which build; `name` only matters
-/// for macOS/Linux (see below) — existence isn't checked here, that's the
-/// caller's job, since a target that's never been built yet has no debug
-/// info regardless of platform.
+pub use dtb_ke_symid::debug_section_bytes;
+
+/// Whether `target` (or, when `None`, the build host) is Linux.
+pub fn is_linux_target(target: Option<&str>) -> bool {
+    match target {
+        Some(triple) => triple.contains("linux"),
+        None => cfg!(target_os = "linux"),
+    }
+}
+
+/// Where `strip::split` writes a build's standalone debug file (`<name>.debug`).
+pub fn split_debug_file(release: bool, target: Option<&str>, name: &str) -> PathBuf {
+    target_dir_for(release, target)
+        .join("stripped")
+        .join(format!("{name}.debug"))
+}
+
+/// Where this build's debug file lands, for the platforms that produce one. `release`/`target` select which
+/// build; existence isn't checked here (a target that's never been built has no debug info regardless).
 ///
-/// - **macOS**: `<name>.dSYM` next to the binary (a directory bundle;
-///   `dsymutil` runs automatically) — `[profile.release] split-debuginfo =
-///   "packed"` (workspace Cargo.toml) genuinely works here, confirmed
-///   locally.
-/// - **Linux**: `<name>.dwp` next to the binary (a single file) — `packed`
-///   is stably supported per the rustc book; unverified locally (no Linux
-///   linker on this dev machine).
-/// - **Windows (gnullvm)**: `packed` does *not* work at all — confirmed by
-///   testing `-C split-debuginfo=packed -Z unstable-options` on a real
-///   nightly toolchain: accepted with no error, but the binary ends up with
-///   no debug sections whatsoever, with or without `-C debuginfo=2` forcing
-///   full debug info. Matches a real-world report of the identical
-///   "unstable on this platform" wall on windows-gnu (a May-2025
-///   users.rust-lang.org thread, closed unresolved) and the upstream
-///   tracking issue acknowledging split-debuginfo is "effectively untested"
-///   on Windows generally (rust-lang/rust#135531). A **real, separate PDB**
-///   is produced anyway, by an entirely different, non-nightly mechanism:
-///   `.cargo/config.toml` passes `-Wl,--pdb=<file>` through the
-///   `x86_64-w64-mingw32-clang` linker driver to llvm-mingw's own `ld.lld`,
-///   which genuinely emits one (`file` identifies it as "MSVC program
-///   database ver 7.00" — confirmed real, not a guess). That path is a fixed
-///   literal in `.cargo/config.toml` (rustflags there can't be templated,
-///   and CI always overrides `$CARGO_TARGET_DIR` to something else anyway),
-///   resolved relative to the workspace root — matching where the linker
-///   actually runs, since every cargo invocation this project makes pins its
-///   `current_dir` there (`Self::run`). `name` is ignored for this branch:
-///   the filename is whatever's literally written into `.cargo/config.toml`,
-///   independent of `RAW_BIN_NAME`. See RUNNERS.md's "Debug info" section
-///   for the full investigation of both the packed dead end and the PDB fix.
+/// - **macOS / iOS**: `<name>.dSYM` next to the binary (a directory bundle; `dsymutil` runs automatically) —
+///   `[profile.release] split-debuginfo = "packed"` (workspace Cargo.toml) works here.
+/// - **Linux**: the standalone `<name>.debug` from `objcopy --only-keep-debug` ([`split_debug_file`]).
+/// - **Windows-gnullvm**: the same `.debug` when `llvm-objcopy` could split it off a PE file and the result
+///   verified, otherwise the *unstripped executable* cargo built (DWARF embedded). Both come from the split
+///   build in `strip.rs`. `packed` gives nothing usable there: a Linux `.dwp` needs the stripped executable's skeleton
+///   and has no debug id, and Windows-gnullvm ignores `packed` entirely (rust-lang/rust#135531); lld's `--pdb=` carries
+///   no line numbers for a DWARF build. The executable's debug id (a CodeView GUID + age) is written by lld by default.
 pub fn debug_info_path(release: bool, target: Option<&str>, name: &str) -> Option<PathBuf> {
     let is_macos = match target {
         Some(triple) => triple.contains("apple-darwin") || triple.contains("apple-ios"),
@@ -180,11 +173,15 @@ pub fn debug_info_path(release: bool, target: Option<&str>, name: &str) -> Optio
     if is_macos {
         Some(dir.join(format!("{name}.dSYM")))
     } else if is_linux {
-        Some(dir.join(format!("{name}.dwp")))
-    } else if target == Some("x86_64-pc-windows-gnullvm") {
-        Some(workspace_root().join("dtb-ke-ui-x86_64.pdb"))
-    } else if target == Some("aarch64-pc-windows-gnullvm") {
-        Some(workspace_root().join("dtb-ke-ui-aarch64.pdb"))
+        Some(split_debug_file(release, target, name))
+    } else if target.is_some_and(|t| t.contains("windows-gnullvm")) {
+        // The standalone `.debug` if the split produced one, else the unstripped executable itself.
+        let split = split_debug_file(release, target, name);
+        Some(if split.exists() {
+            split
+        } else {
+            built_binary_path(release, target, name)
+        })
     } else {
         None
     }

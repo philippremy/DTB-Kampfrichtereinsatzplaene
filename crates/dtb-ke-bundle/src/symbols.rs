@@ -2,10 +2,12 @@
 //! so the debugger can symbolicate a crash dump from exactly this build (`dtb-ke-symbol-server`,
 //! `PUT /v1/debug/{id}`).
 //!
-//! What is uploaded is what `debug-info` archives: macOS / iOS — the DWARF file inside the `.dSYM` (a fat file for
-//! `--universal`, which identifies as one id per slice, so it is uploaded once per id); Windows — the `.pdb`.
-//! Linux's `.dwp` has no debug id of its own (the id belongs to the executable's build-id), so it is skipped with
-//! a note rather than stored where nothing can ever ask for it.
+//! What is uploaded is the build's debug file (`util::debug_info_path`): macOS / iOS — the DWARF file inside the
+//! `.dSYM` (a fat file for `--universal`, which identifies as one id per slice, so it is uploaded once per id);
+//! Linux — the standalone `.debug` file from `objcopy --only-keep-debug`; Windows-gnullvm — the unstripped
+//! executable the split build (`strip.rs`) keeps. A file that carries no
+//! debug info (an old, already-stripped build) or no debug id is skipped with a warning rather than stored where it
+//! could never symbolicate anything.
 //!
 //! **Best effort by default**: no server configured (forks, local runs) or a failed upload prints a warning and
 //! leaves the job green. `--strict` (release builds) turns both into a failure, since a release without its symbols
@@ -79,7 +81,14 @@ pub fn run(opts: Options) -> Result<(), String> {
         let identities = dtb_ke_symid::identify(file);
         if identities.is_empty() {
             eprintln!(
-                "dtb-ke-bundle: WARNING {} has no debug id (Linux `.dwp` files carry none) — skipped",
+                "dtb-ke-bundle: WARNING {} has no debug id — skipped",
+                file.display()
+            );
+            continue;
+        }
+        if !identities.iter().any(|i| i.has_debug_info) {
+            eprintln!(
+                "dtb-ke-bundle: WARNING {} carries no debug info (stripped?) — skipped",
                 file.display()
             );
             continue;

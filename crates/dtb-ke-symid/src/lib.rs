@@ -9,7 +9,7 @@ use std::path::Path;
 
 pub use samply_symbols::debugid;
 use samply_symbols::debugid::DebugId;
-use samply_symbols::object::{self, Object};
+use samply_symbols::object::{self, Object, ObjectSection};
 use samply_symbols::{debug_id_for_object, pdb};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileType {
@@ -33,6 +33,28 @@ impl FileIdentity {
     pub fn breakpad(&self) -> String {
         self.debug_id.breakpad().to_string()
     }
+}
+
+/// Total size of the DWARF sections (`.debug_*` / `.zdebug_*`) of a single (non-fat) object file; 0 if it has none
+/// or is not an object file. Lets a caller check that a debug file split off a binary still holds all of the DWARF.
+pub fn debug_section_bytes(path: &Path) -> u64 {
+    let Ok(file) = std::fs::File::open(path) else {
+        return 0;
+    };
+    // SAFETY: as in `identify` — a read-only map, every read bounds-checked by `object`.
+    let Ok(map) = (unsafe { memmap2::Mmap::map(&file) }) else {
+        return 0;
+    };
+    let Ok(obj) = object::File::parse(&*map) else {
+        return 0;
+    };
+    obj.sections()
+        .filter(|s| {
+            s.name()
+                .is_ok_and(|n| n.starts_with(".debug_") || n.starts_with(".zdebug_"))
+        })
+        .map(|s| s.size())
+        .sum()
 }
 
 const PDB_MAGIC: &[u8] = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0";

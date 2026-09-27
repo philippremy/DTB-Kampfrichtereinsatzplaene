@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::util::{self, built_binary_path, bundle_dir, fresh_dir};
-use crate::{helper, icon, ios, linux, macos, meta, windows};
+use crate::{helper, icon, ios, linux, macos, meta, strip, windows};
 
 /// The two Mach-O slices a `--universal` build merges with `lipo`. `pub(crate)`
 /// — `debug_info::universal_dsym` merges the same two slices' `.dSYM`s the
@@ -81,6 +81,8 @@ pub fn run(opts: Options) -> Result<(), String> {
             cargo.push("--target".into());
             cargo.push(triple.to_string());
         }
+        // Linux / Windows-gnullvm releases: build unstripped, ship a stripped copy (see `strip.rs`).
+        let split = strip::splits_debug_info(target, opts.release);
         if ios {
             // rustc's own default is far older than the backend supports; the Metal shaders
             // are compiled against the same floor in `gpui_apple`'s build script.
@@ -89,6 +91,8 @@ pub fn run(opts: Options) -> Result<(), String> {
                 &cargo,
                 &[("IPHONEOS_DEPLOYMENT_TARGET", meta::IOS_MIN_VERSION)],
             );
+        } else if split {
+            util::run_with_env("cargo", &cargo, &strip::PROFILE_ENV);
         } else {
             util::run("cargo", &cargo);
         }
@@ -97,7 +101,11 @@ pub fn run(opts: Options) -> Result<(), String> {
         if !binary.exists() {
             return Err(format!("built binary not found at {}", binary.display()));
         }
-        binary
+        if split {
+            strip::split(&binary, opts.release, target)?
+        } else {
+            binary
+        }
     };
 
     // 2. Icons — already generated and committed to `assets/icons/generated/`

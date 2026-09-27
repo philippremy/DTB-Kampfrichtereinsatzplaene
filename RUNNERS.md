@@ -725,7 +725,22 @@ unaffected either way (it doesn't touch entry names, only appends signature
 data) but hasn't been separately re-verified against a `Compress-Archive`-
 built zip specifically.
 
-## Debug info: dSYM / dwp / PDB alongside the release binaries
+## Debug info: how each platform's debug file is produced and where it goes
+
+**Current state (supersedes the `.dwp` / `.pdb` history below).** Debug files go to the **symbol server**
+(`cargo dtb-ke-bundle symbols upload`, keyed by debug id), not to a Codeberg archive:
+
+| Platform | Debug file | How |
+|---|---|---|
+| macOS / iOS | the DWARF file in the `.dSYM` | `split-debuginfo = "packed"` |
+| Linux | standalone `<name>.debug` | `dtb-ke-bundle/src/strip.rs`: cargo builds the release **unstripped** (`CARGO_PROFILE_RELEASE_STRIP=none`, `…SPLIT_DEBUGINFO=off`, set for these builds only), then `objcopy --only-keep-debug`, `--strip-debug --strip-unneeded` on a *copy* (which ships), `--add-gnu-debuglink`. Needs `objcopy` (`aarch64-linux-gnu-objcopy` from the runner's cross binutils, or `llvm-objcopy`). |
+| Windows (gnullvm) | standalone `<name>.debug` (the unstripped `.exe` if that split cannot be verified) | same build; `llvm-strip --strip-all` on the shipped copy, `llvm-objcopy --only-keep-debug` for the debug file. No `--pdb=` flag any more: lld's MinGW driver writes the CodeView GUID + age (the debug id) into the `.exe` by default, and a PDB would have no line numbers anyway. |
+
+`strip.rs` verifies that the shipped binary and the debug file carry the same debug id(s) as the build, and that the
+debug file kept all the DWARF bytes; a mismatch fails the build. Checked by hand against a real lld-linked PE and ELF
+(same id before/after, all DWARF kept). The `.dwp` / `.pdb` text below is the history of why `packed` alone was not enough.
+
+### History
 
 CI uploads each platform's separate debug-info file — macOS's `.dSYM`,
 Linux's `.dwp`, Windows' `.pdb` — so a real crash minidump can be symbolised
@@ -894,7 +909,7 @@ Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
 | `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (optional, both needed) | `tip.yml` / `release.yml`'s `ios` job | the `Apple Development: …` / `Apple Distribution: …` identity present in the macOS runner's keychain, and the base64 of a `.mobileprovision` for `de.philippremy.DTB-Kampfrichtereinsatzplaene`. Unset → ad-hoc signing (artifacts build but an iPad won't install them). The Mac wrapper only launches on a Mac if the profile allows Apple Silicon Macs |
 | `MACOS_SIGN_IDENTITY` (optional) | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; unset falls back to ad-hoc signing and skips notarization (see above) rather than failing the job |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` (optional, only matter with `MACOS_SIGN_IDENTITY` set) | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
-| `DTB_KE_SYMBOLS_URL`, `DTB_KE_SYMBOLS_UPLOAD_TOKEN` | the Windows, macOS and iOS jobs' "Upload debug symbols" step (both workflows) | the symbol server (`dtb-ke-symbol-server`, on the home Pi) — URL like `https://symbols.<domain>` and the **upload** token from the Pi's `/etc/dtb-ke-symbol-server.env`. `cargo dtb-ke-bundle symbols upload` PUTs each build's dSYM / PDB keyed by debug id. Unset = skipped with a note on Tip; `release.yml` passes `--strict`, so a release fails without them. The URL is a secret only to keep the home domain out of a public repo. **The runners must resolve that name to the Pi from inside the LAN** (router NAT loopback, or a hosts / local-DNS override to the Pi's LAN address). Linux keeps its Codeberg `.debuginfo.tar.gz`: a `.dwp` carries no debug id, so there is nothing to key it by on the server |
+| `DTB_KE_SYMBOLS_URL`, `DTB_KE_SYMBOLS_UPLOAD_TOKEN` | the Windows, macOS and iOS jobs' "Upload debug symbols" step (both workflows) | the symbol server (`dtb-ke-symbol-server`, on the home Pi) — URL like `https://symbols.<domain>` and the **upload** token from the Pi's `/etc/dtb-ke-symbol-server.env`. `cargo dtb-ke-bundle symbols upload` PUTs each build's dSYM / PDB keyed by debug id. Unset = skipped with a note on Tip; `release.yml` passes `--strict`, so a release fails without them. The URL is a secret only to keep the home domain out of a public repo. **The runners must resolve that name to the Pi from inside the LAN** (router NAT loopback, or a hosts / local-DNS override to the Pi's LAN address). Linux and Windows upload the standalone `.debug` file that `strip.rs` splits off the unstripped build (see "Debug info" below) |
 | `DTB_KE_SMTP_HOST`, `DTB_KE_SMTP_PORT`, `DTB_KE_SMTP_USER`, `DTB_KE_SMTP_PASS`, `DTB_KE_SMTP_FROM`, `DTB_KE_SMTP_TO` (optional) | both workflows, every build job (top-level `env:`) | the crash-reporter/feedback-window mail transport's credentials, baked in at compile time by `dtb-ke-ui/build.rs::emit_smtp_secret` (see `mail.rs`) — unset leaves the feature compiled in but disabled (`mail::available()` false), never a build failure |
 
 `CODEBERG_TOKEN` is also what `scripts/release.sh` needs *not* have —
