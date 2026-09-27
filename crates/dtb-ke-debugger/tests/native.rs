@@ -96,3 +96,67 @@ async fn symbolicates_a_function_in_the_running_binary() {
     assert!(file.ends_with("native.rs"), "got {file}");
     assert!(line > 0);
 }
+
+/// The status a user sees for the crashed executable of a local `cargo run` build. On macOS such an executable has no
+/// DWARF of its own (a debug map points at the object files), so judging it by its file alone said "symbols only" even
+/// though every frame had a source line. The status must follow what the frames actually got.
+#[tokio::test]
+async fn a_local_debug_build_is_debug_info_in_the_analysis() {
+    use dtb_ke_crash::snapshot::{
+        Arm64RegsDTO, CrashSnapshotDTO, ModuleDTO, SessionDTO, ThreadDTO, to_minidump,
+    };
+    use dtb_ke_debugger::process::{OpenedDump, analyze};
+    use dtb_ke_debugger::progress::Progress;
+    use dtb_ke_debugger::quality::Quality;
+
+    let addr = dtb_ke_debugger_test_marker as *const () as usize;
+    let (base, path) = image_of(addr);
+    let id = identify(std::path::Path::new(&path))
+        .into_iter()
+        .next()
+        .expect("identity")
+        .debug_id;
+
+    let snap = CrashSnapshotDTO {
+        threads: vec![ThreadDTO {
+            id: 1,
+            crashed: true,
+            name: "main".into(),
+            regs: Arm64RegsDTO {
+                pc: addr as u64 + 4,
+                ..Default::default()
+            },
+            stack: None,
+        }],
+        session: SessionDTO {
+            modules: vec![ModuleDTO {
+                base,
+                size: 0x0100_0000,
+                uuid: *id.uuid().as_bytes(),
+                is_main: true,
+                path: path.clone(),
+            }],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dump = std::env::temp_dir().join(format!("dtbke-quality-{}.dtbkedmp", std::process::id()));
+    std::fs::write(&dump, to_minidump(&snap)).unwrap();
+    let opened = OpenedDump::open(&dump).unwrap();
+    let _ = std::fs::remove_file(&dump);
+
+    let resolver = Resolver::new().with(ExecutableSource);
+    let analysis = analyze(&opened, &resolver, &Progress::new()).await.unwrap();
+
+    let module = analysis.resolution.for_module(base).expect("the module");
+    let usage = analysis.usage.get(&base).expect("a frame sits in it");
+    assert!(
+        usage.with_lines >= 1,
+        "the frame must have a source line: {usage:?}"
+    );
+    assert_eq!(
+        analysis.quality(module),
+        Quality::DebugInfo,
+        "usage: {usage:?}"
+    );
+}

@@ -41,10 +41,13 @@ fn dump_with(hints: Option<&Hints>) -> std::path::PathBuf {
     if let Some(h) = hints {
         dtb_ke_crash::patch::append_stream(&mut bytes, STREAM_TYPE, h.encode().as_bytes()).unwrap();
     }
+    // Unique per call: tests run in parallel and each removes its own file.
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
-        "dtbke-hints-{}-{}.dtbkedmp",
+        "dtbke-hints-{}-{}-{}.dtbkedmp",
         std::process::id(),
-        h_id(hints)
+        h_id(hints),
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::write(&path, bytes).unwrap();
     path
@@ -119,5 +122,31 @@ async fn without_hints_the_frame_stays_unnamed() {
     let path = dump_with(None);
     assert!(OpenedDump::open(&path).unwrap().hints.is_none());
     assert_eq!(top_frame_name(&path).await, None);
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn a_module_no_file_was_found_for_is_from_the_crash_report_only_if_its_frames_got_names_from_it()
+ {
+    use dtb_ke_debugger::quality::Quality as Status;
+
+    // With the dump's own hints the frame is named, so the module reads "from crash report".
+    let path = dump_with(Some(&hints(Quality::Exact, true)));
+    let opened = OpenedDump::open(&path).unwrap();
+    let analysis = analyze(&opened, &Resolver::new(), &Progress::new())
+        .await
+        .unwrap();
+    let module = analysis.resolution.for_module(BASE).expect("the module");
+    assert_eq!(analysis.quality(module), Status::FromDump);
+    let _ = std::fs::remove_file(path);
+
+    // Without hints nothing names it: plainly missing.
+    let path = dump_with(None);
+    let opened = OpenedDump::open(&path).unwrap();
+    let analysis = analyze(&opened, &Resolver::new(), &Progress::new())
+        .await
+        .unwrap();
+    let module = analysis.resolution.for_module(BASE).expect("the module");
+    assert_eq!(analysis.quality(module), Status::Missing);
     let _ = std::fs::remove_file(path);
 }

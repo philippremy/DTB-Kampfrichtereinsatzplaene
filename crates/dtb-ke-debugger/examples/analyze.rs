@@ -40,12 +40,36 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    println!("\nmodules:");
+    // The status is what the frames of each module actually got (see `dtb_ke_debugger::quality`).
+    println!("\nmodules (not part of the OS):");
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for m in &analysis.resolution.modules {
-        match &m.outcome {
-            Outcome::Found(f) => println!("  ok   {:<40} {}", m.module.short_name(), f.origin),
-            Outcome::Missing { .. } => println!("  --   {}", m.module.short_name()),
+        let quality = analysis.quality(m);
+        *counts.entry(quality.label()).or_default() += 1;
+        if m.module.is_system() {
+            continue;
         }
+        let origin = match &m.outcome {
+            Outcome::Found(f) => f.origin.as_str(),
+            Outcome::Missing { .. } => "-",
+        };
+        let usage = analysis
+            .usage
+            .get(&m.module.base)
+            .map(|u| u.summary())
+            .unwrap_or_else(|| "no frames".into());
+        println!(
+            "  {:<18} {:<36} {origin}  [{usage}]",
+            quality.label(),
+            m.module.short_name()
+        );
+    }
+    println!(
+        "\nstatus of all {} modules:",
+        analysis.resolution.modules.len()
+    );
+    for (label, n) in &counts {
+        println!("  {label:<18} {n}");
     }
 
     // `ALL_THREADS=1` prints every thread, not just the crashing one.

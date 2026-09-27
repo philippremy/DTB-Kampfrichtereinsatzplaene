@@ -6,8 +6,8 @@
 
 use std::collections::BTreeSet;
 
-use dtb_ke_debugger::Outcome;
 use dtb_ke_debugger::process::Analysis;
+use dtb_ke_debugger::quality::Quality;
 use dtb_ke_debugger::remote::{ServerConfig, ServerHandle, check_server};
 use dtb_ke_debugger::server_settings::{self, Stored};
 use dtb_ke_ui::components::icon::Icon;
@@ -290,14 +290,13 @@ impl DebuggerWindow {
             if resolution.module.is_system() {
                 continue;
             }
-            let lacking = match &resolution.outcome {
-                Outcome::Missing { .. } => true,
-                Outcome::Found(f) => !f.has_debug_info && !f.in_dyld_cache,
-            };
-            if !lacking {
+            // By what the module's frames actually got: a debug-map executable has lines although its file has no DWARF,
+            // and a stripped one has synthesized `fun_…` names although its file lists a few symbols.
+            let quality = analysis.quality(resolution);
+            if quality == Quality::DebugInfo {
                 continue;
             }
-            all_named &= matches!(&resolution.outcome, Outcome::Found(f) if f.has_symbols);
+            all_named &= quality.has_names();
             if why.is_none() {
                 why = resolution
                     .notes

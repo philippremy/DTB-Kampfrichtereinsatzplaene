@@ -74,6 +74,15 @@ impl OpenedDump {
 pub struct Analysis {
     pub state: ProcessState,
     pub resolution: Resolution,
+    /// What the frames of each module (by base address) received when the stacks were symbolicated.
+    pub usage: std::collections::HashMap<u64, crate::quality::ModuleUsage>,
+}
+
+impl Analysis {
+    /// The status of one module: what its frames got, or — with no frame in it — what its file offers.
+    pub fn quality(&self, module: &crate::resolve::ModuleResolution) -> crate::quality::Quality {
+        crate::quality::classify(&module.outcome, self.usage.get(&module.module.base))
+    }
 }
 
 /// The four stages `analyze` reports to its [`Progress`].
@@ -118,5 +127,10 @@ pub async fn analyze(
     progress.begin_stage(4, STAGES, "Symbolicating frames", frames);
     let state = minidump_processor::process_minidump(&opened.dump, &provider).await?;
     progress.finish_stage();
-    Ok(Analysis { state, resolution })
+    let usage = crate::quality::usage_of(&state);
+    Ok(Analysis {
+        state,
+        resolution,
+        usage,
+    })
 }

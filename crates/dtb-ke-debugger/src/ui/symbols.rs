@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use dtb_ke_debugger::Outcome;
+use dtb_ke_debugger::quality::Quality;
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Toggle};
 use dtb_ke_ui::theme::ActiveTheme;
@@ -81,40 +82,43 @@ impl DebuggerWindow {
             let rows: Vec<Row> = modules
                 .into_iter()
                 .map(|m| {
-                    let (chip, tone, detail) = match &m.outcome {
-                        Outcome::Found(f) => {
-                            // Three honest states: real debug info; only symbol names (no source lines); or a stripped
-                            // file whose "names" the symbolizer has to invent (`fun_<address>`).
-                            let (chip, tone) = if f.has_debug_info {
-                                ("debug info", ChipTone::Ok)
-                            } else if f.has_symbols {
-                                ("symbols only", ChipTone::Warn)
-                            } else {
-                                ("no symbols", ChipTone::Warn)
-                            };
-                            let mut detail = if f.in_dyld_cache {
-                                f.origin.clone()
-                            } else {
-                                format!("{} — {}", f.origin, f.path.display())
-                            };
-                            if !f.has_debug_info {
-                                detail.push_str(if f.has_symbols {
-                                    "  ·  function names only, no source lines"
-                                } else {
-                                    "  ·  stripped: no function names (frames show synthesized fun_<address>), no source lines"
-                                });
-                                // Why nothing better turned up.
-                                for note in &m.notes {
-                                    detail.push_str("  ·  ");
-                                    detail.push_str(note);
-                                }
-                            }
-                            (chip, tone, detail)
+                    // What the debugger actually got for this module (its frames' names / lines), not just what its
+                    // file claims — see `dtb_ke_debugger::quality`.
+                    let quality = analysis.quality(m);
+                    let chip = quality.label();
+                    let tone = match quality {
+                        Quality::DebugInfo => ChipTone::Ok,
+                        Quality::SymbolsOnly | Quality::NoSymbols | Quality::FromDump => {
+                            ChipTone::Warn
                         }
-                        Outcome::Missing { tried } => {
-                            ("missing", ChipTone::Critical, tried.join("  ·  "))
+                        Quality::Missing => ChipTone::Critical,
+                    };
+                    let usage = analysis.usage.get(&m.module.base).filter(|u| u.frames > 0);
+                    let mut detail = match &m.outcome {
+                        Outcome::Found(f) if f.in_dyld_cache => f.origin.clone(),
+                        Outcome::Found(f) => format!("{} — {}", f.origin, f.path.display()),
+                        Outcome::Missing { tried } => tried.join("  ·  "),
+                    };
+                    let mut push = |part: &str| {
+                        if !part.is_empty() {
+                            if !detail.is_empty() {
+                                detail.push_str("  ·  ");
+                            }
+                            detail.push_str(part);
                         }
                     };
+                    if let Some(u) = usage {
+                        push(&u.summary());
+                    }
+                    push(quality.explanation());
+                    // Why nothing better turned up (a found file that is not the full picture).
+                    if matches!(quality, Quality::SymbolsOnly | Quality::NoSymbols)
+                        && matches!(m.outcome, Outcome::Found(_))
+                    {
+                        for note in &m.notes {
+                            push(note);
+                        }
+                    }
                     let id = m
                         .module
                         .debug_id
