@@ -673,6 +673,12 @@ impl DebuggerWindow {
             rows.push(("Crash reason".into(), e.reason.to_string()));
             rows.push(("Crash address".into(), format!("{:#018x}", e.address.0)));
         }
+        if let Some(ex) = self.session.as_ref().and_then(|s| s.opened.nsexception.as_ref()) {
+            // The much more useful reason an uncaught `NSException` actually gives — the Mach
+            // exception above it is just AppKit's own trap once it decided to abort.
+            rows.push(("NSException".into(), ex.name.clone()));
+            rows.push(("NSException reason".into(), ex.reason.clone()));
+        }
         if let Some(a) = &state.assertion {
             rows.push(("Assertion".into(), a.clone()));
         }

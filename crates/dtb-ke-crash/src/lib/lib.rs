@@ -50,6 +50,9 @@ pub mod buildinfo;
 /// System-symbol hints: names for OS-library frames, computed on the crashed machine (a second user stream).
 pub mod syshints;
 
+/// An uncaught `NSException`'s name/reason/call-stack — macOS only (a third user stream).
+pub mod nsexception;
+
 /// Append a stream to a finished minidump (the helper adds [`buildinfo::STREAM_TYPE`] this way).
 #[cfg(feature = "snapshot")]
 pub mod patch;
@@ -81,6 +84,14 @@ pub(crate) fn oops_art() {
 
 #[cfg(all(feature = "as-library", target_os = "macos"))]
 mod macos;
+
+/// Test hook (the hidden Debugging tab / `DTB_KE_CRASH_TEST=nsexception`): raises a real, deliberately
+/// unhandled `NSException` on the calling thread — see `macos::simulate_uncaught_nsexception`'s doc
+/// comment for exactly what it exercises depending on which thread it's called from.
+#[cfg(all(feature = "as-library", target_os = "macos"))]
+pub fn simulate_uncaught_nsexception() {
+    macos::simulate_uncaught_nsexception();
+}
 
 #[cfg(all(feature = "as-library", target_os = "ios"))]
 pub mod ios;

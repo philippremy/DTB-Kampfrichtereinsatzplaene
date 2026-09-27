@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::ops::Deref;
 
 use dtb_ke_crash::buildinfo::STREAM_TYPE as BUILD_INFO_STREAM;
+use dtb_ke_crash::nsexception::STREAM_TYPE as NSEXCEPTION_STREAM;
 use dtb_ke_crash::syshints::{Hints, Quality, STREAM_TYPE as SYSTEM_HINTS_STREAM};
 use minidump::{
     Minidump, MinidumpAssertion, MinidumpBreakpadInfo, MinidumpCrashpadInfo, MinidumpException,
@@ -32,6 +33,7 @@ fn own_stream_name(type_id: u32) -> Option<&'static str> {
     match type_id {
         BUILD_INFO_STREAM => Some("BuildInfoStream"),
         SYSTEM_HINTS_STREAM => Some("SystemSymbolHintsStream"),
+        NSEXCEPTION_STREAM => Some("NSExceptionStream"),
         _ => None,
     }
 }
@@ -134,6 +136,13 @@ pub fn stream_text<'a, T: Deref<Target = [u8]> + 'a>(
 
     if type_id == SYSTEM_HINTS_STREAM {
         return system_hints_text(dump);
+    }
+
+    if type_id == NSEXCEPTION_STREAM {
+        return dump
+            .get_raw_stream(type_id)
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_else(|e| format!("Could not read stream: {e}"));
     }
 
     match ty {

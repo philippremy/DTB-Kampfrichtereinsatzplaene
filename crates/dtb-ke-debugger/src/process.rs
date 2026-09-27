@@ -8,6 +8,7 @@ use minidump_processor::ProcessState;
 
 use std::sync::Arc;
 
+use dtb_ke_crash::nsexception::{self, NsException};
 use dtb_ke_crash::syshints::{self, Hints};
 
 use crate::build::BuildInfo;
@@ -24,6 +25,9 @@ pub struct OpenedDump {
     pub build: Option<BuildInfo>,
     /// The system-symbol hints the crashed machine wrote into the dump, if any (`dtb-ke-crash::syshints`).
     pub hints: Option<Arc<Hints>>,
+    /// An uncaught `NSException`'s name/reason/call stack, if that's what crashed the process
+    /// (macOS only — see `dtb-ke-crash::nsexception`).
+    pub nsexception: Option<NsException>,
     pub modules: Vec<ModuleRef>,
 }
 
@@ -61,11 +65,16 @@ impl OpenedDump {
             .ok()
             .and_then(|raw| Hints::parse(&String::from_utf8_lossy(raw)))
             .map(Arc::new);
+        let nsexception = dump
+            .get_raw_stream(nsexception::STREAM_TYPE)
+            .ok()
+            .and_then(|raw| nsexception::parse(&String::from_utf8_lossy(raw)));
         Ok(Self {
             dump,
             system,
             build,
             hints,
+            nsexception,
             modules,
         })
     }

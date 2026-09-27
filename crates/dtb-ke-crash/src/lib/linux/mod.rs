@@ -31,14 +31,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use libc::{c_int, c_long, c_void};
 
 /// Signals we take over. `SIGILL`/`SIGTRAP` cover the panic-hook trap
-/// (`ud2` / `brk`), the rest are the usual hardware faults + `abort`.
-const FATAL_SIGNALS: [c_int; 6] = [
+/// (`ud2` / `brk`), `SIGSEGV`/`SIGBUS`/`SIGFPE` the usual hardware faults, and the
+/// rest (`SIGABRT`, `SIGSYS`, `SIGXCPU`, `SIGXFSZ`, `SIGPIPE`) the software-only
+/// signals with no hardware fault behind them — no special casing needed for any
+/// of them: unlike macOS/iOS (a *hardware* fault is a Mach exception first, a
+/// *software* signal never is, so those two need genuinely different capture
+/// paths), Linux signal delivery is already one uniform mechanism for all of
+/// these, [`handler`] below already treats `sig` completely generically, and
+/// `si_addr` is already only read for the four where it's a real fault address
+/// (see the `matches!` below).
+const FATAL_SIGNALS: [c_int; 10] = [
     libc::SIGSEGV,
     libc::SIGBUS,
     libc::SIGABRT,
     libc::SIGILL,
     libc::SIGFPE,
     libc::SIGTRAP,
+    libc::SIGSYS,
+    libc::SIGXCPU,
+    libc::SIGXFSZ,
+    libc::SIGPIPE,
 ];
 
 /// How many bytes at `uctx` we forward to the helper: exactly one

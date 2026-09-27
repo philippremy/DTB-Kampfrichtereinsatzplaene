@@ -36,6 +36,7 @@ mod common {
 
     /// Persist the dump, then relaunch `main_exe` as the crash reporter, stream it
     /// the digest + dump, and delete the `.dtbkedmp` iff the reporter exited `SENT`.
+    #[allow(clippy::too_many_arguments)] // one positional arg per wire field, 1:1 with the pipe layout
     pub fn finish(
         dump_dir: &str,
         slug: &str,
@@ -44,6 +45,7 @@ mod common {
         main_exe: &str,
         panic_msg: &str,
         build_info: &str,
+        nsexception: &str,
     ) {
         // The build-info user stream, so a debugger can tell exactly which build crashed. A failure
         // here must never cost us the dump itself.
@@ -52,6 +54,15 @@ mod common {
                 &mut dmp,
                 dtb_ke_crash::buildinfo::STREAM_TYPE,
                 build_info.as_bytes(),
+            );
+        }
+        // The uncaught-`NSException` user stream (macOS only, empty for every other fault kind —
+        // see `dtb_ke_crash::nsexception`).
+        if !nsexception.is_empty() {
+            let _ = dtb_ke_crash::patch::append_stream(
+                &mut dmp,
+                dtb_ke_crash::nsexception::STREAM_TYPE,
+                nsexception.as_bytes(),
             );
         }
 
@@ -357,7 +368,8 @@ mod macos {
     pub fn run() {
         // Parameters arrive on stdin as NUL-separated fields (see `dtb-ke-crash`):
         // dump_dir, slug, bootstrap_name, main_exe, panic_msg (empty for a
-        // hardware fault).
+        // hardware fault), build_info, nsexception (empty unless an uncaught
+        // `NSException` is what's crashing us).
         use std::io::Read;
         let mut blob = Vec::with_capacity(1024);
         if std::io::stdin().read_to_end(&mut blob).is_err() || blob.is_empty() {
@@ -376,6 +388,7 @@ mod macos {
         let main_exe = next();
         let panic_msg = next();
         let build_info = next();
+        let nsexception = next();
         if dump_dir.is_empty() || bootstrap_name.is_empty() {
             std::process::exit(2);
         }
@@ -384,7 +397,16 @@ mod macos {
             std::process::exit(3)
         };
 
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
+        super::common::finish(
+            &dump_dir,
+            &slug,
+            pid as i64,
+            dmp,
+            &main_exe,
+            &panic_msg,
+            &build_info,
+            &nsexception,
+        );
     }
 
     unsafe fn capture(bootstrap_name: &str) -> Option<(Vec<u8>, i32)> {
@@ -606,7 +628,8 @@ mod windows {
         };
         release();
 
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
+        // No `NSException` on Windows — the pipe carries no field for it.
+        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info, "");
     }
 
     fn capture(pid: u32, tid: u32, exc_ptr: usize, exc_code: i32, slug: &str) -> Option<Vec<u8>> {
@@ -686,7 +709,8 @@ mod linux {
         let Some(dmp) = dmp else {
             std::process::exit(3)
         };
-        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info);
+        // No `NSException` on Linux — the pipe carries no field for it.
+        super::common::finish(&dump_dir, &slug, pid as i64, dmp, &main_exe, &panic_msg, &build_info, "");
     }
 
     fn capture(

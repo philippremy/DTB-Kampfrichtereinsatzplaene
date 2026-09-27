@@ -65,6 +65,32 @@ fn streams_are_listed_and_rendered() {
 }
 
 #[test]
+fn nsexception_stream_is_appended_and_read_back() {
+    // Unlike build-info/syshints, the iOS-assembler `dump()` fixture never carries this stream (it's
+    // macOS-only, appended by the crash helper via `patch::append_stream`) — so append it the same way.
+    use dtb_ke_crash::nsexception::{self, NsException};
+    let ex = NsException {
+        name: "NSInternalInconsistencyException".into(),
+        reason: "An instance was deallocated while key value observers were still registered."
+            .into(),
+        frames: vec!["0   AppKit   0x1 -[NSApplication _crashOnException:] + 1".into()],
+    };
+    let mut bytes = dtb_ke_crash::snapshot::to_minidump(&CrashSnapshotDTO::default());
+    dtb_ke_crash::patch::append_stream(&mut bytes, nsexception::STREAM_TYPE, nsexception::render(&ex).as_bytes())
+        .unwrap();
+    let d = Minidump::read(bytes).expect("valid dump");
+
+    let raw = d.get_raw_stream(nsexception::STREAM_TYPE).expect("stream present");
+    assert_eq!(nsexception::parse(&String::from_utf8_lossy(raw)), Some(ex));
+
+    let list = rawdump::streams(&d);
+    let entry = list.iter().find(|s| s.name == "NSExceptionStream").expect("named");
+    assert_eq!(entry.vendor, "DTB KE");
+    assert!(entry.understood);
+    assert!(rawdump::stream_text(&d, entry.type_id).contains("NSInternalInconsistencyException"));
+}
+
+#[test]
 fn a_relative_main_module_path_is_replaced_by_the_build_infos_absolute_exe_path() {
     let snap = CrashSnapshotDTO {
         session: SessionDTO {
