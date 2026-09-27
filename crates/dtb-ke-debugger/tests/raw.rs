@@ -86,3 +86,101 @@ fn a_relative_main_module_path_is_replaced_by_the_build_infos_absolute_exe_path(
     let _ = std::fs::remove_file(&path);
     assert_eq!(opened.modules[0].code_file, "/abs/target/debug/app");
 }
+
+/// A dump whose module list has `libx.dylib` (uuid 0x42…) and which carries a system-symbol stream.
+fn dump_with_system_hints(stream: &[u8]) -> Minidump<'static, Vec<u8>> {
+    let snap = CrashSnapshotDTO {
+        session: SessionDTO {
+            modules: vec![ModuleDTO {
+                base: 0x1_8000_0000,
+                size: 0x10_0000,
+                uuid: [0x42; 16],
+                is_main: false,
+                path: "/usr/lib/libx.dylib".into(),
+            }],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bytes = to_minidump(&snap);
+    dtb_ke_crash::patch::append_stream(&mut bytes, dtb_ke_crash::syshints::STREAM_TYPE, stream)
+        .unwrap();
+    Minidump::read(bytes).expect("valid dump")
+}
+
+#[test]
+fn the_system_symbol_stream_has_a_name_and_a_structured_view() {
+    use dtb_ke_crash::syshints::{Entry, Hints, Quality};
+    let hints = Hints {
+        producer: "macos-dyld-cache".into(),
+        quality: Quality::Exact,
+        complete: false,
+        incomplete_reason: "skipped".into(),
+        frames_total: 93,
+        frames_resolved: 71,
+        os_build: "26A428".into(),
+        entries: vec![
+            Entry {
+                uuid: [0x42; 16],
+                start: 0x2000,
+                end: 0x2040,
+                name: "_second".into(),
+            },
+            Entry {
+                uuid: [0x42; 16],
+                start: 0x1000,
+                end: 0x1080,
+                name: "_first".into(),
+            },
+            Entry {
+                uuid: [0x99; 16],
+                start: 0x10,
+                end: 0x20,
+                name: "_orphan".into(),
+            },
+        ],
+    };
+    let d = dump_with_system_hints(hints.encode().as_bytes());
+
+    let list = rawdump::streams(&d);
+    let stream = list
+        .iter()
+        .find(|s| s.name == "SystemSymbolHintsStream")
+        .expect("a name, not a hex number");
+    assert_eq!(stream.vendor, "DTB KE");
+    assert!(stream.understood);
+
+    let text = rawdump::stream_text(&d, stream.type_id);
+    for expected in [
+        "macos-dyld-cache",
+        "exact",
+        "no — skipped",
+        "71 of 93 system-library frames named (22 without a name)",
+        "26A428",
+        "3 functions in 2 images",
+        "── libx.dylib",
+        "(image not in the module list)",
+        "_orphan",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+    // Entries within an image are ordered by address.
+    assert!(
+        text.find("_first").unwrap() < text.find("_second").unwrap(),
+        "{text}"
+    );
+    assert!(!text.contains("hex dump"));
+}
+
+#[test]
+fn a_damaged_system_symbol_stream_says_so_and_falls_back_to_hex() {
+    let d = dump_with_system_hints(b"not a hints stream at all");
+    let list = rawdump::streams(&d);
+    let stream = list
+        .iter()
+        .find(|s| s.name == "SystemSymbolHintsStream")
+        .unwrap();
+    let text = rawdump::stream_text(&d, stream.type_id);
+    assert!(text.contains("not a system-symbol stream"), "{text}");
+    assert!(text.contains("hex dump"), "{text}");
+}
