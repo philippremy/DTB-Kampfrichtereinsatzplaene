@@ -146,6 +146,11 @@ mime_info_path = "crates/dtb-ke-ui/mime-dtbke.xml"
 # above carries the "ä" (needed for macOS, see its own comment), so this ASCII form is what the
 # metainfo's own <id> below must match too (dtb-ke-patches: LinuxSettings::appstream_id).
 appstream_id = "de.philippremy.DTB-Kampfrichtereinsatzplaene"
+# The .dtbke document icon for file managers (Nautilus/Dolphin/Thunar's own icon, distinct from the
+# app icon) — scripts/icons.py already rendered this whole tree (both its apps/ and mimetypes/
+# halves; only the latter is consumed here) from assets/icons/FileIcon.png, the same master the
+# macOS/Windows DocumentIcon.icns/.ico come from (dtb-ke-patches: LinuxSettings::mime_icon_dir).
+mime_icon_dir = "assets/icons/generated/hicolor"
 # deb_depends deliberately left unset for now: cargo-bundle's .deb backend (deb_bundle.rs) has no
 # ldd-style auto-detection, so a real list needs verifying against an actual Linux build's linked
 # libraries first, not guessed here.

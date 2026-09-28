@@ -99,6 +99,8 @@ use_terminal = false
 package_name = "dtb-ke-debugger"
 mime_info_path = "crates/dtb-ke-debugger/mime-dtbkedmp.xml"
 appstream_id = "de.philippremy.DTB-Kampfrichtereinsatzplaene-Debugger"
+# See dtb-ke-ui's own mime_icon_dir comment — rendered from assets/icons/CrashDumpIcon.png.
+mime_icon_dir = "assets/icons/debugger/generated/hicolor"
 
 [package.metadata.bundle.windows.file_association]
 extension = "dtbkedmp"
