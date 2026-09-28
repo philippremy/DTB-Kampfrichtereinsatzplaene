@@ -119,10 +119,11 @@ fn capture_linux() -> Option<(Digest, String)> {
 
 /// macOS only: this process is a self-relaunch of the crashed app in capture-and-report mode
 /// (`dtb_ke_crash::RELAUNCH_ARG` on argv — `main()` checks for it before calling this). Reads the
-/// crash parameters the original process wrote to our inherited stdin pipe, looks up its bootstrap
-/// port and captures the dump directly (`dtb_ke_crash::writer::macos::capture`, no separate helper
-/// process involved at all), then shows the same dialog `run()` does — this process *is* the
-/// reporter, so deleting the dump on `SENT` is our own job.
+/// crash parameters the original process wrote to our inherited stdin pipe, retrieves the carrier
+/// port it installed before the crash and captures the dump directly
+/// (`dtb_ke_crash::writer::macos::capture`, no separate helper process involved at all — and no
+/// bootstrap namespace, so this works under App Sandbox), then shows the same dialog `run()` does —
+/// this process *is* the reporter, so deleting the dump on `SENT` is our own job.
 #[cfg(target_os = "macos")]
 pub fn run_macos_capture() -> i32 {
     let Some((digest, dump_path)) = capture_macos() else {
@@ -131,9 +132,9 @@ pub fn run_macos_capture() -> i32 {
     run_with_digest(digest, dump_path)
 }
 
-/// Reads the macOS crash pipe (dump_dir, slug, bootstrap_name, panic_msg, build_info, nsexception —
-/// written by `dtb-ke-crash`'s macOS handler, see its module doc comment), performs the Mach
-/// handshake + capture, and digests the result into a [`Digest`] + its persisted path.
+/// Reads the macOS crash pipe (dump_dir, slug, panic_msg, build_info, nsexception — written by
+/// `dtb-ke-crash`'s macOS handler, see its module doc comment), performs the Mach handshake +
+/// capture, and digests the result into a [`Digest`] + its persisted path.
 #[cfg(target_os = "macos")]
 fn capture_macos() -> Option<(Digest, String)> {
     use std::io::Read;
@@ -146,15 +147,14 @@ fn capture_macos() -> Option<(Digest, String)> {
     let mut next = || fields.next().map(|f| String::from_utf8_lossy(f).into_owned()).unwrap_or_default();
     let dump_dir = next();
     let slug = next();
-    let bootstrap_name = next();
     let panic_msg = next();
     let build_info = next();
     let nsexception = next();
-    if dump_dir.is_empty() || bootstrap_name.is_empty() {
+    if dump_dir.is_empty() {
         return None;
     }
 
-    let (dmp, pid) = unsafe { dtb_ke_crash::writer::macos::capture(&bootstrap_name) }?;
+    let (dmp, pid) = unsafe { dtb_ke_crash::writer::macos::capture() }?;
 
     let report = dtb_ke_crash::writer::build_report(&dump_dir, &slug, pid as i64, dmp, &build_info, &nsexception);
     let dump_path = report.dump_path.clone();

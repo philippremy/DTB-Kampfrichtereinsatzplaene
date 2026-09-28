@@ -1,5 +1,6 @@
-//! macOS out-of-process capture: the Mach handshake (look up the bootstrap name the crashed process
-//! registered, receive its task/thread port rights, `task_suspend` + `MinidumpWriter`).
+//! macOS out-of-process capture: the Mach handshake (retrieve the carrier port the crashed process
+//! installed on its task exception-port table before the crash — see `crate::macos::CARRIER_MASK` —
+//! receive its task/thread port rights, `task_suspend` + `MinidumpWriter`).
 
 #![allow(clippy::missing_safety_doc, unsafe_op_in_unsafe_fn)]
 
@@ -7,7 +8,7 @@ use std::io::Cursor;
 use std::mem::{size_of, zeroed};
 
 use crash_context::{CrashContext, ExceptionInfo};
-use mach2::bootstrap::{bootstrap_look_up, bootstrap_port};
+use mach2::exception_types::{exception_behavior_t, exception_mask_t};
 use mach2::kern_return::{KERN_SUCCESS, kern_return_t};
 use mach2::mach_port::{mach_port_allocate, mach_port_insert_right};
 use mach2::message::{
@@ -16,36 +17,62 @@ use mach2::message::{
     mach_msg_header_t, mach_msg_port_descriptor_t,
 };
 use mach2::port::{MACH_PORT_NULL, MACH_PORT_RIGHT_RECEIVE, mach_port_t};
+use mach2::thread_status::thread_state_flavor_t;
 use minidump_writer::minidump_writer::MinidumpWriter;
 
 const MSG_ID_HELPER_HELLO: i32 = 0x6b63_0001;
 const MSG_ID_FORWARD: i32 = 0x6b63_0002;
 const MSG_ID_HELPER_DONE: i32 = 0x6b63_0003;
 
+/// `mach/exception.h`'s `EXC_TYPES_COUNT` (incl. illegal exception 0) — not exposed by `mach2`.
+const EXC_TYPES_COUNT: usize = 14;
+
 unsafe extern "C" {
     fn pid_for_task(task: mach_port_t, pid: *mut i32) -> kern_return_t;
     fn task_suspend(task: mach_port_t) -> kern_return_t;
     fn task_resume(task: mach_port_t) -> kern_return_t;
+    fn task_get_exception_ports(
+        task: mach_port_t,
+        exception_mask: exception_mask_t,
+        masks: *mut exception_mask_t,
+        masks_cnt: *mut u32,
+        old_handlers: *mut mach_port_t,
+        old_behaviors: *mut exception_behavior_t,
+        old_flavors: *mut thread_state_flavor_t,
+    ) -> kern_return_t;
 }
 
-/// Looks up the crashed process's bootstrap name, receives its task/thread port rights, and reads
-/// its memory via `task_suspend` + `MinidumpWriter` — pure aside from the Mach handshake itself, no
-/// spawn/exec at all. Called directly by `dtb-ke-ui`'s self-relaunched capture path
+/// Retrieves the carrier port the crashed process installed before it ever crashed (`fork`+`execv`
+/// preserves task exception ports for free, no bootstrap namespace involved — see
+/// `crate::macos::CARRIER_MASK`), receives its task/thread port rights over it, and reads its memory
+/// via `task_suspend` + `MinidumpWriter` — pure aside from the Mach handshake itself, no spawn/exec
+/// at all. Called directly by `dtb-ke-ui`'s self-relaunched capture path
 /// (`crash_report::run_macos_capture`). Returns the dump bytes and the crashed process's pid.
-pub unsafe fn capture(bootstrap_name: &str) -> Option<(Vec<u8>, i32)> {
+pub unsafe fn capture() -> Option<(Vec<u8>, i32)> {
     // ── handshake ──
-    let cname = std::ffi::CString::new(bootstrap_name).ok()?;
-    let mut s_send: mach_port_t = MACH_PORT_NULL;
-    // The parent registers the service well before any crash, and we inherit
-    // its bootstrap namespace across fork/exec — but retry in case the lookup
-    // races the registration's propagation.
-    let mut tries = 0;
-    while bootstrap_look_up(bootstrap_port, cname.as_ptr(), &mut s_send) != KERN_SUCCESS {
-        tries += 1;
-        if tries >= 20 {
-            return None;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+    // `S`'s send right is already sitting in our own (inherited via fork()+execv()) exception-port
+    // table — a synchronous, local, sandbox-untouched retrieval, no lookup, no propagation delay, no
+    // retry loop needed.
+    let mut masks = [0 as exception_mask_t; EXC_TYPES_COUNT];
+    let mut ports = [MACH_PORT_NULL; EXC_TYPES_COUNT];
+    let mut behaviors = [0 as exception_behavior_t; EXC_TYPES_COUNT];
+    let mut flavors = [0 as thread_state_flavor_t; EXC_TYPES_COUNT];
+    let mut count: u32 = EXC_TYPES_COUNT as u32;
+    let kr = task_get_exception_ports(
+        mach2::traps::mach_task_self(),
+        crate::macos::CARRIER_MASK,
+        masks.as_mut_ptr(),
+        &mut count,
+        ports.as_mut_ptr(),
+        behaviors.as_mut_ptr(),
+        flavors.as_mut_ptr(),
+    );
+    if kr != KERN_SUCCESS || count == 0 {
+        return None;
+    }
+    let s_send: mach_port_t = ports[0];
+    if s_send == MACH_PORT_NULL {
+        return None;
     }
 
     let me = mach2::traps::mach_task_self();

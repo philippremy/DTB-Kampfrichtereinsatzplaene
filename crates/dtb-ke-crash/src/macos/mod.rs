@@ -1,19 +1,20 @@
 //! macOS crash capture — the *thin* handler.
 //!
-//! `install()` (clean context): allocate a receive port `S`, register it in the
-//! bootstrap namespace under a random name so a `fork`/`exec`'d child can look it
-//! up, point the task exception ports at a second port `E`, and spawn a thread
-//! blocked on `E`.
+//! `install()` (clean context): allocate a receive port `S`, install its send
+//! right as the carrier for an unused task exception-port slot (`CARRIER_MASK`)
+//! so a `fork`/`exec`'d relaunch can retrieve it without the bootstrap
+//! namespace — see `CARRIER_MASK`'s doc comment — point the task exception
+//! ports at a second port `E`, and spawn a thread blocked on `E`.
 //!
 //! On a fault the handler thread (syscalls + `mach_msg` only — no `malloc`, no
 //! `_dyld_*`):
 //! 1. `pipe` + `fork`; the child gets the pipe on stdin and `execv`s **this same
 //!    binary again** (`MAIN_EXE`, resolved at install) with [`crate::RELAUNCH_ARG`]
 //!    as `argv[1]` — no embedded helper to extract any more,
-//! 2. we write the relaunched instance's parameters (dump dir, slug, bootstrap
-//!    name, crash kind, panic message) down the pipe as NUL-separated fields and
-//!    close it,
-//! 3. the child looks up `S`, sends back a reply port `R`,
+//! 2. we write the relaunched instance's parameters (dump dir, slug, crash kind,
+//!    panic message) down the pipe as NUL-separated fields and close it,
+//! 3. the child retrieves `S` (already sitting in its inherited exception-port
+//!    table — no lookup of any kind), sends back a reply port `R`,
 //! 4. we forward the crashed **task + thread send rights** (moved straight out of
 //!    the exception message) plus the exception info to `R`,
 //! 5. we wait (bounded) for the relaunched instance's HELPER_DONE — sent the
@@ -32,24 +33,33 @@
 //! needed — and deletes the dump file only if the user's choice comes back as
 //! "sent".
 //!
-//! **Not yet sandbox-compatible**: `bootstrap_check_in` below requires the
-//! process not be sandboxed (see the crate's module doc comment) — tracked as a
-//! deliberate follow-up, not addressed by this self-relaunch migration.
+//! **Sandbox-compatible.** The old design registered `S` in the bootstrap
+//! namespace (`bootstrap_check_in`) and had the relaunched instance
+//! `bootstrap_look_up` it — both denied outright under App Sandbox
+//! (`mach-register`/`mach-lookup` are deny-default, and a dynamic per-pid name
+//! is never on any static allow list). Proven empirically (a scratch,
+//! deny-default-sandboxed `.app`, `fork`+`execv`, full HELLO/FORWARD/DONE
+//! handshake, including the relaunched instance obtaining a genuine
+//! controlling right to the crashed task) before touching this file: of every
+//! `task_special_port_t` slot, the kernel accepts a caller-supplied port for
+//! exactly two (`TASK_BOOTSTRAP_PORT`, `TASK_DEBUG_CONTROL_PORT`), and neither
+//! is usable (the former breaks XPC for the relaunched GUI reporter; the
+//! latter silently substitutes a different port — confirmed by polling the
+//! parent's receive queue, not just a timeout). `task_set_exception_ports`
+//! (already used for `E` below) does not go through the bootstrap namespace at
+//! all and faithfully delivers whatever port is installed, so `S`'s send right
+//! rides along on `CARRIER_MASK` instead — see that constant's doc comment.
 
 #![allow(clippy::missing_safety_doc, unsafe_op_in_unsafe_fn, static_mut_refs)]
 
-use std::ffi::CString;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use mach2::bootstrap::{
-    BOOTSTRAP_SUCCESS, BOOTSTRAP_UNKNOWN_SERVICE, bootstrap_check_in, bootstrap_port,
-};
 use mach2::exception_types::{
     EXC_MASK_ARITHMETIC, EXC_MASK_BAD_ACCESS, EXC_MASK_BAD_INSTRUCTION, EXC_MASK_BREAKPOINT,
-    EXC_SOFT_SIGNAL, EXC_SOFTWARE, EXCEPTION_DEFAULT, MACH_EXCEPTION_CODES, exception_behavior_t,
-    exception_mask_t,
+    EXC_MASK_RPC_ALERT, EXC_SOFT_SIGNAL, EXC_SOFTWARE, EXCEPTION_DEFAULT, MACH_EXCEPTION_CODES,
+    exception_behavior_t, exception_mask_t,
 };
 use mach2::kern_return::{KERN_SUCCESS, kern_return_t};
 use mach2::mach_port::{mach_port_allocate, mach_port_insert_right};
@@ -86,6 +96,15 @@ const MSG_ID_HELPER_DONE: i32 = 0x6b63_0003; // helper → S: "I have read the t
 const EXC_MASK: u32 =
     EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC | EXC_MASK_BREAKPOINT;
 
+/// The task exception-port slot `S`'s send right rides on, purely as a one-shot carrier — we never
+/// expect (or want) a real exception to be delivered through it. `EXC_MASK_RPC_ALERT` is disjoint
+/// from [`EXC_MASK`] above and from every signal in [`FATAL_SIGNALS`], and is not an exception type
+/// any normal Cocoa/gpui app code raises. Proven empirically to survive `fork`+`execv` faithfully
+/// under a strict (deny-default, app-sandbox-only) profile — see the module doc comment — unlike
+/// `posix_spawnattr_setspecialport_np`'s `task_special_port_t` slots, which either aren't accepted by
+/// the kernel at all or (for the two that are) don't faithfully deliver the supplied port.
+pub(crate) const CARRIER_MASK: exception_mask_t = EXC_MASK_RPC_ALERT;
+
 /// Software-only signals with no Mach exception of their own — see `EXC_MASK`'s doc comment. Every
 /// one of the classic BSD "core-dumping" signals not already covered by a real hardware fault
 /// (`SIGQUIT` deliberately excluded — user/operator-initiated, not a crash), plus `SIGPIPE` (default
@@ -110,8 +129,6 @@ const RECV_TIMEOUT_MS: libc::c_uint = 5000;
 
 static mut RECV_PORT: mach_port_t = MACH_PORT_NULL; // S
 static mut EXC_PORT: mach_port_t = MACH_PORT_NULL; // E
-/// NUL-terminated, built once. `PATH_MAX`-bounded so the crash path never allocs.
-static mut BOOTSTRAP_NAME: [u8; 128] = [0; 128];
 static mut DUMP_DIR: [u8; 1024] = [0; 1024];
 static mut APP_SLUG: [u8; 64] = [0; 64];
 /// This process's own executable path — the relaunch target (`execv`), resolved once at install
@@ -132,11 +149,6 @@ unsafe extern "C" {
         behavior: exception_behavior_t,
         new_flavor: thread_state_flavor_t,
     ) -> kern_return_t;
-    fn bootstrap_create_service(
-        bp: mach_port_t,
-        service_name: *const libc::c_char,
-        sp: *mut mach_port_t,
-    ) -> kern_return_t;
 }
 
 // ── install ────────────────────────────────────────────────────────────
@@ -147,20 +159,15 @@ pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::libr
         put_cstr(&mut APP_SLUG, app_slug.as_bytes());
         put_cstr(&mut RELAUNCH_ARG, crate::RELAUNCH_ARG.as_bytes());
 
-        // A per-process bootstrap name the child can look up.
-        let name = format!(
-            "de.philippremy.DTB-Kampfrichtereinsatzpläne.crashport.{}",
-            std::process::id()
-        );
-        put_cstr(&mut BOOTSTRAP_NAME, name.as_bytes());
-
         if let Ok(exe) = std::env::current_exe() {
             put_cstr(&mut MAIN_EXE, exe.to_string_lossy().as_bytes());
         }
 
         let task = mach_task_self();
 
-        // S — the handshake port, registered in the bootstrap namespace.
+        // S — the handshake port. Its send right is installed as the carrier on `CARRIER_MASK`
+        // (see that constant's doc comment) rather than registered in the bootstrap namespace, so
+        // the relaunched instance can retrieve it with no lookup of any kind.
         let mut s: mach_port_t = MACH_PORT_NULL;
         chk(
             mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &mut s),
@@ -170,22 +177,17 @@ pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::libr
             mach_port_insert_right(task, s, s, MACH_MSG_TYPE_MAKE_SEND),
             "S insert send",
         )?;
-        let cname = CString::new(name).unwrap();
-        let mut registered: mach_port_t = MACH_PORT_NULL;
-        let mut kr = bootstrap_check_in(bootstrap_port, cname.as_ptr(), &mut registered);
-        if kr == BOOTSTRAP_UNKNOWN_SERVICE as kern_return_t {
-            let mut ignore = MACH_PORT_NULL;
-            bootstrap_create_service(bootstrap_port, cname.as_ptr(), &mut ignore);
-            kr = bootstrap_check_in(bootstrap_port, cname.as_ptr(), &mut registered);
-        }
-        if kr != BOOTSTRAP_SUCCESS as kern_return_t {
-            return Err(crate::library::InstallError::Os(format!(
-                "bootstrap registration failed ({kr}) — is the app sandboxed?"
-            )));
-        }
-        // `bootstrap_check_in` hands back the receive right; use it as S.
-        RECV_PORT = registered;
-        let _ = s;
+        chk(
+            task_set_exception_ports(
+                task,
+                CARRIER_MASK,
+                s,
+                EXCEPTION_DEFAULT as exception_behavior_t,
+                0,
+            ),
+            "install S on CARRIER_MASK",
+        )?;
+        RECV_PORT = s;
 
         // E — the task exception port.
         let mut e: mach_port_t = MACH_PORT_NULL;
@@ -738,11 +740,10 @@ unsafe fn handle_exception(
     }
 
     // ── parent: feed the pipe, then close it so the relaunched instance sees EOF ──
-    // Fields: dump_dir \0 slug \0 bootstrap_name \0 panic_msg \0 build_info \0 nsexception.
+    // Fields: dump_dir \0 slug \0 panic_msg \0 build_info \0 nsexception.
     (f.close)(pfd[0]);
     write_cstr(pfd[1], DUMP_DIR.as_ptr());
     write_cstr(pfd[1], APP_SLUG.as_ptr());
-    write_cstr(pfd[1], BOOTSTRAP_NAME.as_ptr());
     // The panic message static is a NUL-filled buffer when not panicking, so this
     // is just an empty field for a hardware fault.
     write_cstr(pfd[1], crate::panic::message_ptr());
@@ -754,7 +755,7 @@ unsafe fn handle_exception(
 
     // ── parent: the mach handoff ──
     // 1. receive the relaunched instance's HELLO carrying its reply port R. Time-bounded: if
-    //    it failed to `execv` or never reached `bootstrap_look_up`, this
+    //    it failed to `execv` or never reached `task_get_exception_ports`, this
     //    must not wedge the handler thread until the `SIGALRM` watchdog.
     let mut rbuf = MsgBuf([0; 1024]);
     if mach_msg(
