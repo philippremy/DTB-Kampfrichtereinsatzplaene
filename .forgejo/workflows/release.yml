@@ -1,11 +1,13 @@
 name: Release
 
-# A tag `vX.Y.Z` pushed (by scripts/release.sh) → a full, signed, notarized
+# A tag `vX.Y.Z` pushed (by scripts/release.py) → a full, signed, notarized
 # release, mirrored to both the version tag and the rolling `latest` tag (the
 # stable channel's stable URL — see UPDATER.md). Always a clean `target/`
 # and the workspace's normal profile (fat LTO) — the opposite of tip.yml's
 # speed-over-everything approach. See RUNNERS.md for what each `runs-on`
-# label actually is.
+# label actually is, and tip.yml for the shared conventions (bundling via
+# `cargo cargo-bundle`, `scripts/*.py`, the split-debug-info dance for
+# Linux/Windows-gnullvm) this file follows without re-explaining them.
 #
 # "on" is quoted — bare `on:` parses as the *boolean* `true` under YAML 1.1
 # (confirmed with PyYAML while writing tip.yml); nothing guarantees Forgejo's
@@ -56,9 +58,9 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch submodules (shallow)
-        # cargo resolves the whole workspace — including the vendored [patch] crates — even to run
-        # `dtb-ke-bundle`. fetch-depth 0 above would clone the submodules with full history, hence
-        # the explicit shallow update.
+        # cargo resolves the whole workspace — including the vendored [patch] crates and
+        # vendor/cargo-bundle itself — even for a plain `cargo build`. fetch-depth 0 above would
+        # clone the submodules with full history, hence the explicit shallow update.
         run: git submodule update --init --depth 1
       - id: version
         name: Parse the release tag
@@ -67,7 +69,7 @@ jobs:
           echo "tag=${tag}" >> "$FORGEJO_OUTPUT"
           echo "version=${tag#v}" >> "$FORGEJO_OUTPUT"
 
-      # release.sh already wrote the release notes into the *tag message* —
+      # release.py already wrote the release notes into the *tag message* —
       # reuse them verbatim rather than re-deriving anything here.
       # `%(contents)` would also drag in the PGP block for a signed tag
       # (`git config tag.gpgsign`), so cut everything from the signature on.
@@ -83,7 +85,7 @@ jobs:
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
-          cargo dtb-ke-bundle codeberg prepare \
+          python3 scripts/codeberg.py prepare \
             --tag "${{ steps.version.outputs.tag }}" \
             --target "${{ steps.version.outputs.tag }}" \
             --title "DTB Kampfrichtereinsatzpläne ${{ steps.version.outputs.version }}" \
@@ -93,7 +95,7 @@ jobs:
       # `latest` is a rolling tag — force-move it to this release's commit
       # before codeberg prepare, which never retargets an existing tag itself
       # (see tip.yml for the same pattern). The version tag needs no such
-      # step: release.sh already placed it exactly where it should be.
+      # step: release.py already placed it exactly where it should be.
       - name: Force-move the latest tag
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
@@ -108,7 +110,7 @@ jobs:
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
-          cargo dtb-ke-bundle codeberg prepare \
+          python3 scripts/codeberg.py prepare \
             --tag latest \
             --target "${{ steps.version.outputs.tag }}" \
             --title "Latest: ${{ steps.version.outputs.version }}" \
@@ -126,31 +128,47 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
-      - name: Build
-        run: cargo dtb-ke-bundle bundle --release --formats deb,rpm,appimage,tar
+      - name: Build unstripped + split debug info
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: off
+        run: |
+          set -euo pipefail
+          cargo build --release -p dtb-ke-ui
+          python3 scripts/symbols.py split "target/release/dtb-ke-ui" \
+            --target x86_64-unknown-linux-gnu --out-dir "target/release/stripped" >/dev/null
+      - name: Bundle (deb + AppImage) from the stripped binary
+        # No -f: the Linux default is exactly deb+appimage (rpm isn't implemented upstream yet).
+        # --binary-path skips cargo-bundle's own (unstripped) build entirely.
+        run: |
+          cargo cargo-bundle -p dtb-ke-ui --release \
+            --binary-path "target/release/stripped/dtb-ke-ui"
       - name: Sign + package + upload
         env:
           ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
-          triple=x86_64-unknown-linux-gnu
-          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
-          tar -C target/bundle/release -czf "$name" --exclude='*.deb' --exclude='*.rpm' --exclude='*.AppImage' .
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz"
+          # Renamed to match what the .deb/.AppImage now install as (linux.executable_name in
+          # dtb-ke-ui/Cargo.toml) -- a manual download should give the same executable name as a
+          # package-manager install.
+          cp "target/release/stripped/dtb-ke-ui" "target/release/stripped/dtb-ke"
+          tar -C "target/release/stripped" -czf "$name" dtb-ke
           echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
           zipsign sign tar "$name" /tmp/release.priv
           shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
-          cargo dtb-ke-bundle codeberg upload \
+          python3 scripts/codeberg.py upload \
             --release-id ${{ needs.prepare.outputs.release_id }} \
             --release-id ${{ needs.prepare.outputs.latest_release_id }} \
-            "$name" target/bundle/release/*.deb target/bundle/release/*.rpm target/bundle/release/*.AppImage
+            "$name" target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage
       - name: Upload debug symbols to the symbol server
-        # The standalone .debug file (objcopy --only-keep-debug, see strip.rs), keyed by its ELF build-id.
+        # The standalone .debug file split() produced, keyed by its ELF build-id.
         # --strict: a release must not ship without its symbols on the server.
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
-        run: cargo dtb-ke-bundle symbols upload --strict
+        run: python3 scripts/symbols.py upload --auto --strict
 
   linux-arm64:
     needs: prepare
@@ -175,31 +193,45 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
-      - name: Cross-build for aarch64
-        run: cargo dtb-ke-bundle bundle --release --formats deb,rpm,appimage,tar --target aarch64-unknown-linux-gnu
+      - name: Cross-build unstripped + split debug info
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: off
+        run: |
+          set -euo pipefail
+          cargo build --release -p dtb-ke-ui --target aarch64-unknown-linux-gnu
+          python3 scripts/symbols.py split "target/aarch64-unknown-linux-gnu/release/dtb-ke-ui" \
+            --target aarch64-unknown-linux-gnu \
+            --out-dir "target/aarch64-unknown-linux-gnu/release/stripped" >/dev/null
+      - name: Bundle (deb + AppImage) from the stripped binary
+        run: |
+          cargo cargo-bundle -p dtb-ke-ui --release --target aarch64-unknown-linux-gnu \
+            --binary-path "target/aarch64-unknown-linux-gnu/release/stripped/dtb-ke-ui"
       - name: Sign + package + upload
         env:
           ZIPSIGN_KEY_B64: ${{ secrets.ZIPSIGN_KEY }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
-          triple=aarch64-unknown-linux-gnu
-          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
-          tar -C target/bundle/release -czf "$name" --exclude='*.deb' --exclude='*.rpm' --exclude='*.AppImage' .
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz"
+          # See the linux-x86_64 job above for why this is renamed to match linux.executable_name.
+          cp "target/aarch64-unknown-linux-gnu/release/stripped/dtb-ke-ui" \
+            "target/aarch64-unknown-linux-gnu/release/stripped/dtb-ke"
+          tar -C "target/aarch64-unknown-linux-gnu/release/stripped" -czf "$name" dtb-ke
           echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
           zipsign sign tar "$name" /tmp/release.priv
           shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
-          cargo dtb-ke-bundle codeberg upload \
+          bundle_dir="target/aarch64-unknown-linux-gnu/release/bundle"
+          python3 scripts/codeberg.py upload \
             --release-id ${{ needs.prepare.outputs.release_id }} \
             --release-id ${{ needs.prepare.outputs.latest_release_id }} \
-            "$name" target/bundle/release/*.deb target/bundle/release/*.rpm target/bundle/release/*.AppImage
+            "$name" "$bundle_dir"/deb/*.deb "$bundle_dir"/appimage/*.AppImage
       - name: Upload debug symbols to the symbol server
-        # The standalone .debug file (objcopy --only-keep-debug, see strip.rs), keyed by its ELF build-id.
         # --strict: a release must not ship without its symbols on the server.
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
-        run: cargo dtb-ke-bundle symbols upload --target aarch64-unknown-linux-gnu --strict
+        run: python3 scripts/symbols.py upload --auto --target aarch64-unknown-linux-gnu --strict
 
   windows-x86_64:
     needs: prepare
@@ -221,9 +253,25 @@ jobs:
         # a defensive measure in case it's ever reset out of band. See
         # RUNNERS.md's Windows-VM section for why this is needed at all.
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
-      - name: Build
+      - name: Build unstripped + split debug info
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: off
         run: |
-          cargo dtb-ke-bundle bundle --release --target x86_64-pc-windows-gnullvm
+          $ErrorActionPreference = "Stop"
+          cargo build --release -p dtb-ke-ui --target x86_64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 scripts\symbols.py split "target\x86_64-pc-windows-gnullvm\release\dtb-ke-ui.exe" `
+            --target x86_64-pc-windows-gnullvm `
+            --out-dir "target\x86_64-pc-windows-gnullvm\release\stripped" | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bundle (wxsmsi) from the stripped binary
+        # -f wxsmsi specifically (not the upstream-default WindowsMsi/WindowsBundle pair) — only the
+        # dtb-ke-patches wix backend knows about our file-association metadata.
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo cargo-bundle -p dtb-ke-ui --release --target x86_64-pc-windows-gnullvm -f wxsmsi `
+            --binary-path "target\x86_64-pc-windows-gnullvm\release\stripped\dtb-ke-ui.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign + package + upload
         # Not shell: bash — no bash on this VM (see the Clean target/ step).
@@ -233,38 +281,16 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $triple = "x86_64-pc-windows-gnullvm"
-          # "ä" is built from its code point, not typed literally — Windows
-          # Server only ships Windows PowerShell 5.1, which (unlike pwsh 7)
-          # reads a script file with no UTF-8 BOM using the system's ANSI
-          # code page: whatever encoding Forgejo's runner actually wrote the
-          # composited step script in, a literal "ä" here previously came out
-          # as raw mis-decoded bytes (confirmed against a real release: the
-          # asset showed up on Codeberg as "...KampfrichtereinsatzplÃ¤ne...").
-          # [char]0x00E4 is plain ASCII in the script source, so it can't be
-          # misread regardless of the file's actual encoding or which
-          # PowerShell reads it.
+          # See tip.yml's windows-x86_64 job for why "ä" is built from its
+          # code point, why the folder is spaced (updater::BIN_NAME), and why
+          # the zip is built with Compress-Archive rather than `tar -a`.
           $ae = [char]0x00E4
-          # Spaced, matching meta::DISPLAY_NAME — self_update's Windows
-          # bundle_path_in_archive (updater::BIN_NAME) has to find this exact
-          # folder name inside the downloaded archive.
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          # The portable folder is the only dir here besides wix/ (its name
-          # carries the arch: x64 or arm64), so match by "not wix" instead.
-          # ASCII only in PowerShell here: PS 5.1 mis-decodes non-ASCII.
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
-          if (-not $srcDir) { throw 'portable folder not found under target/bundle/release' }
-          Copy-Item "$srcDir\*.exe" "$folder"
-          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $stripped = "target\x86_64-pc-windows-gnullvm\release\stripped\dtb-ke-ui.exe"
+          Copy-Item $stripped (Join-Path $folder "$folder.exe")
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
-          # Compress-Archive (.NET's ZipArchive), not `tar -a` (bsdtar):
-          # bsdtar wrote the folder's non-ASCII entry name into the zip
-          # without the UTF-8 language-encoding flag, so *any* extractor that
-          # falls back to a legacy code page for unflagged entries (confirmed
-          # against a real download: the .exe came out named
-          # "...Kampfrichtereinsatzpl„ne.exe") mangled it on extraction.
-          # ZipArchive sets that flag correctly for a non-ASCII entry name.
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
           $keyPath = Join-Path $env:TEMP "release.priv"
           [System.IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:ZIPSIGN_KEY_B64))
@@ -275,21 +301,21 @@ jobs:
           # @(...) forces an array even for 0 or 1 matches, so the splat below
           # never injects a stray empty / backslash arg when there is no .msi
           # (which is what a bare (Get-ChildItem ...).FullName scalar/$null did).
-          $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
-          cargo dtb-ke-bundle codeberg upload `
+          $msiDir = "target\x86_64-pc-windows-gnullvm\release\bundle\wxsmsi"
+          $assets = @("$name") + @(Get-ChildItem "$msiDir\*.msi" -File | ForEach-Object FullName)
+          python3 scripts\codeberg.py upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
             --release-id ${{ needs.prepare.outputs.latest_release_id }} `
             @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload debug symbols to the symbol server
-        # The PDB lld emits (see RUNNERS.md), keyed by its debug id.
         # --strict: a release must not ship without its symbols on the server.
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          cargo dtb-ke-bundle symbols upload --target x86_64-pc-windows-gnullvm --strict
+          python3 scripts\symbols.py upload --auto --target x86_64-pc-windows-gnullvm --strict
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64:
@@ -302,15 +328,26 @@ jobs:
           submodules: true
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
-        # Not shell: bash — a bare Windows Server install has no bash at all
-        # (Git for Windows, which bundles one, is never installed anywhere
-        # in this setup).
         run: Remove-Item -Recurse -Force target -ErrorAction SilentlyContinue
       - name: Disable CET shadow-stack enforcement for wix.exe
         run: Set-ProcessMitigation -Name wix.exe -Disable UserShadowStack
-      - name: Cross-build for aarch64
+      - name: Cross-build unstripped + split debug info
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: off
         run: |
-          cargo dtb-ke-bundle bundle --release --target aarch64-pc-windows-gnullvm
+          $ErrorActionPreference = "Stop"
+          cargo build --release -p dtb-ke-ui --target aarch64-pc-windows-gnullvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 scripts\symbols.py split "target\aarch64-pc-windows-gnullvm\release\dtb-ke-ui.exe" `
+            --target aarch64-pc-windows-gnullvm `
+            --out-dir "target\aarch64-pc-windows-gnullvm\release\stripped" | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bundle (wxsmsi) from the stripped binary
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo cargo-bundle -p dtb-ke-ui --release --target aarch64-pc-windows-gnullvm -f wxsmsi `
+            --binary-path "target\aarch64-pc-windows-gnullvm\release\stripped\dtb-ke-ui.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign + package + upload
         # Not shell: bash — no bash on this VM (see the Clean target/ step).
@@ -327,13 +364,8 @@ jobs:
           $folder = "DTB Kampfrichtereinsatzpl${ae}ne"
           if (Test-Path "$folder") { Remove-Item -Recurse -Force "$folder" }
           New-Item -ItemType Directory -Path "$folder" | Out-Null
-          # The portable folder is the only dir here besides wix/ (its name
-          # carries the arch: x64 or arm64), so match by "not wix" instead.
-          # ASCII only in PowerShell here: PS 5.1 mis-decodes non-ASCII.
-          $srcDir = (Get-ChildItem "target\bundle\release" -Directory | Where-Object { $_.Name -ne 'wix' } | Select-Object -First 1).FullName
-          if (-not $srcDir) { throw 'portable folder not found under target/bundle/release' }
-          Copy-Item "$srcDir\*.exe" "$folder"
-          Copy-Item "$srcDir\LICENSE.txt" "$folder"
+          $stripped = "target\aarch64-pc-windows-gnullvm\release\stripped\dtb-ke-ui.exe"
+          Copy-Item $stripped (Join-Path $folder "$folder.exe")
           $name = "DTB-Kampfrichtereinsatzpl${ae}ne-${{ needs.prepare.outputs.version }}-$triple.zip"
           Compress-Archive -Path "$folder" -DestinationPath "$name" -Force
           $keyPath = Join-Path $env:TEMP "release.priv"
@@ -343,21 +375,21 @@ jobs:
           Remove-Item -Force $keyPath
           if ($zipsignExit -ne 0) { exit $zipsignExit }
           # @(...) forces an array; see the windows-x86_64 job above.
-          $assets = @("$name") + @(Get-ChildItem "target\bundle\release\*.msi" -File | ForEach-Object FullName)
-          cargo dtb-ke-bundle codeberg upload `
+          $msiDir = "target\aarch64-pc-windows-gnullvm\release\bundle\wxsmsi"
+          $assets = @("$name") + @(Get-ChildItem "$msiDir\*.msi" -File | ForEach-Object FullName)
+          python3 scripts\codeberg.py upload `
             --release-id ${{ needs.prepare.outputs.release_id }} `
             --release-id ${{ needs.prepare.outputs.latest_release_id }} `
             @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload debug symbols to the symbol server
-        # The PDB lld emits (see RUNNERS.md), keyed by its debug id.
         # --strict: a release must not ship without its symbols on the server.
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          cargo dtb-ke-bundle symbols upload --target aarch64-pc-windows-gnullvm --strict
+          python3 scripts\symbols.py upload --auto --target aarch64-pc-windows-gnullvm --strict
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   macos-universal:
@@ -375,22 +407,16 @@ jobs:
         # A real Developer ID + notarization is the good path (Gatekeeper
         # trusts the result outright on relaunch — see UPDATER.md), but this
         # app's user base is small enough that ad-hoc is an accepted
-        # fallback: unsigned is the only thing that's actually a no-go. If
-        # MACOS_SIGN_IDENTITY isn't set, build ad-hoc instead of hard-failing
-        # the release (dtb-ke-bundle's own --sign default when the flag is
-        # omitted) and skip notarization below — the in-app updater already
-        # tolerates an ad-hoc macOS build (it just costs a first-run
-        # Gatekeeper prompt, same as the Tip channel).
-        env:
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-        run: |
-          set -euo pipefail
-          if [ -n "$MACOS_SIGN_IDENTITY" ]; then
-            cargo dtb-ke-bundle bundle --release --universal --sign "$MACOS_SIGN_IDENTITY" --formats dmg
-          else
-            echo "::warning::MACOS_SIGN_IDENTITY is not set — building ad-hoc signed instead of Developer-ID signed. Not notarized; Gatekeeper will show an 'unidentified developer' prompt on first launch." >&2
-            cargo dtb-ke-bundle bundle --release --universal --formats dmg
-          fi
+        # fallback: unsigned is the only thing that's actually a no-go. No -f
+        # here (unlike Tip's macos-universal job): the OS default for macOS is
+        # exactly osx+dmg together, which is what a real release wants.
+        # apple_signing_p12/apple_signing_password_env (dtb-ke-ui's own
+        # [package.metadata.bundle.osx], unset today) is how a real
+        # Developer ID cert would be wired in; with neither set,
+        # signing.rs's sign_apple_path falls back to ad-hoc automatically —
+        # the in-app updater already tolerates an ad-hoc macOS build (it just
+        # costs a first-run Gatekeeper prompt, same as the Tip channel).
+        run: cargo cargo-bundle -p dtb-ke-ui --release --target aarch64-apple-darwin --target x86_64-apple-darwin
       - name: Notarize
         if: ${{ secrets.MACOS_SIGN_IDENTITY != '' }}
         env:
@@ -399,7 +425,7 @@ jobs:
           APPLE_API_KEY_P8_B64: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           set -euo pipefail
-          app="target/bundle/release/DTB Kampfrichtereinsatzpläne.app"
+          app="target/universal/release/bundle/osx/DTB Kampfrichtereinsatzpläne.app"
           mkdir -p /tmp/apikey && echo "$APPLE_API_KEY_P8_B64" | base64 -d > "/tmp/apikey/AuthKey_${APPLE_API_KEY_ID}.p8"
           zip -qr /tmp/notarize.zip "$app"
           xcrun notarytool submit /tmp/notarize.zip \
@@ -415,27 +441,27 @@ jobs:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
-          triple=universal-apple-darwin
-          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-${triple}.tar.gz"
+          bundle_dir="target/universal/release/bundle/osx"
+          name="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-universal-apple-darwin.tar.gz"
           # -C rather than staging a renamed copy first — the archive's
-          # top-level entry is the .app exactly as dtb-ke-bundle built it
-          # (meta::DISPLAY_NAME, spaced), matching what updater::BIN_NAME
-          # expects to find inside the downloaded archive.
-          tar -C target/bundle/release -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
+          # top-level entry is the .app exactly as cargo-bundle built it
+          # (updater::BIN_NAME, spaced), matching what the updater expects
+          # to find inside the downloaded archive.
+          tar -C "$bundle_dir" -czf "$name" "DTB Kampfrichtereinsatzpläne.app"
           echo "$ZIPSIGN_KEY_B64" | base64 -d > /tmp/release.priv
           zipsign sign tar "$name" /tmp/release.priv
           shred -u /tmp/release.priv 2>/dev/null || rm -f /tmp/release.priv
-          cargo dtb-ke-bundle codeberg upload \
+          python3 scripts/codeberg.py upload \
             --release-id ${{ needs.prepare.outputs.release_id }} \
             --release-id ${{ needs.prepare.outputs.latest_release_id }} \
-            "$name" target/bundle/release/*.dmg
+            "$name" target/universal/release/bundle/dmg/*.dmg
       - name: Upload debug symbols to the symbol server
         # The merged universal dSYM's DWARF file, once per slice id.
         # --strict: a release must not ship without its symbols on the server.
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
-        run: cargo dtb-ke-bundle symbols upload --universal --strict
+        run: python3 scripts/symbols.py upload --auto --universal --strict
 
   ios:
     needs: prepare
@@ -448,18 +474,15 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Clean target/
         run: rm -rf target
-      - name: Build the iOS app, .ipa and Mac wrapper
-        # Signs when IOS_SIGN_IDENTITY + IOS_PROVISIONING_PROFILE are both set (a codesigning identity
-        # in the runner's keychain + a base64 .mobileprovision); otherwise dtb-ke-bundle falls back to
-        # ad-hoc, which an iPad refuses to install but which keeps the artifacts buildable. The Mac
-        # wrapper additionally needs a profile that allows Apple Silicon Macs. The legacy runner's
-        # old SDK is restamped to iOS 26 by dtb-ke-bundle itself (macos::ensure_min_sdk).
+      - name: Build the iOS app + .ipa
+        # See tip.yml's ios job — same device-signing (keychain identity + embedded provisioning
+        # profile, vendor/cargo-bundle's own, no external Apple binaries) and .ipa packaging.
         env:
           IOS_SIGN_IDENTITY: ${{ secrets.IOS_SIGN_IDENTITY }}
           IOS_PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
-          args=(--release --target aarch64-apple-ios --mac-wrapper)
+          args=(-p dtb-ke-ui --release --target aarch64-apple-ios -f ios)
           if [ -n "$IOS_SIGN_IDENTITY" ] && [ -n "$IOS_PROVISIONING_PROFILE_B64" ]; then
             profile="$(mktemp -t dtbke-profile).mobileprovision"
             echo "$IOS_PROVISIONING_PROFILE_B64" | base64 -d > "$profile"
@@ -467,23 +490,23 @@ jobs:
           else
             echo "::warning::IOS_SIGN_IDENTITY / IOS_PROVISIONING_PROFILE not set — building ad-hoc signed (not installable on a device)." >&2
           fi
-          cargo dtb-ke-bundle bundle "${args[@]}"
+          cargo cargo-bundle "${args[@]}"
       - name: Package + upload
-        # --plain: no manifest fragment, so the in-app updater (which only reads the manifest) never
-        # sees these; they are for manual install / TestFlight / sideloading.
+        # --plain: no manifest fragment, so the in-app updater (which has no iOS channel at all —
+        # updater::supported() is false there) never sees these; they are for manual install /
+        # TestFlight / sideloading.
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
           set -euo pipefail
+          bundle_dir="target/aarch64-apple-ios/release/bundle/ios"
           base="DTB-Kampfrichtereinsatzpläne-${{ needs.prepare.outputs.version }}-aarch64-apple-ios"
-          bundle=target/bundle/release
-          cp "$bundle/DTB Kampfrichtereinsatzpläne.ipa" "$base.ipa"
-          tar -C "$bundle" -czf "$base.app.tar.gz" "DTB Kampfrichtereinsatzpläne.app"
-          tar -C "$bundle/mac-wrapper" -czf "$base-mac-wrapper.tar.gz" "DTB Kampfrichtereinsatzpläne.app"
-          cargo dtb-ke-bundle codeberg upload --plain \
+          cp "$bundle_dir/DTB Kampfrichtereinsatzpläne.ipa" "$base.ipa"
+          tar -C "$bundle_dir" -czf "$base.app.tar.gz" "DTB Kampfrichtereinsatzpläne.app"
+          python3 scripts/codeberg.py upload --plain \
             --release-id ${{ needs.prepare.outputs.release_id }} \
             --release-id ${{ needs.prepare.outputs.latest_release_id }} \
-            "$base.ipa" "$base.app.tar.gz" "$base-mac-wrapper.tar.gz"
+            "$base.ipa" "$base.app.tar.gz"
 
       - name: Upload debug symbols to the symbol server
         # The iOS crash reporter records only image UUIDs + offsets; the dSYM on the server symbolicates them.
@@ -491,7 +514,7 @@ jobs:
         env:
           DTB_KE_SYMBOLS_URL: ${{ secrets.DTB_KE_SYMBOLS_URL }}
           DTB_KE_SYMBOLS_UPLOAD_TOKEN: ${{ secrets.DTB_KE_SYMBOLS_UPLOAD_TOKEN }}
-        run: cargo dtb-ke-bundle symbols upload --target aarch64-apple-ios --strict
+        run: python3 scripts/symbols.py upload --auto --target aarch64-apple-ios --strict
 
   publish:
     needs:
@@ -513,7 +536,7 @@ jobs:
         run: |
           set -euo pipefail
           for id in ${{ needs.prepare.outputs.release_id }} ${{ needs.prepare.outputs.latest_release_id }}; do
-            cargo dtb-ke-bundle codeberg manifest-publish \
+            python3 scripts/codeberg.py manifest-publish \
               --release-id "$id" \
               --version "${{ needs.prepare.outputs.version }}" \
               --date "$(date -u +%Y-%m-%d)" \
