@@ -1,5 +1,8 @@
 [alias]
-dtb-ke-bundle = "run --quiet --package dtb-ke-bundle --"
+# Vendored fork (vendor/cargo-bundle, submodule on the `dtb-ke-patches` branch — see vendor/README.md).
+# A self-contained workspace root on its own, deliberately not a member of ours, so it's invoked by
+# manifest path rather than `--package`, same convention as the other vendored `dtb-ke-patches` forks.
+cargo-bundle = "run --quiet --manifest-path vendor/cargo-bundle/Cargo.toml --"
 
 # This is required for allowing Windows to link a dynamic library on *-gnu(llvm)
 # targets, which otherwise might overflow the count of exported symbols.
@@ -12,8 +15,8 @@ rustflags = [
 rustflags = [
     "-C", "target-feature=+crt-static",
     "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
-    # No debug-info flags here on purpose: `dtb-ke-bundle` builds Windows releases unstripped and splits the debug
-    # file off afterwards (crates/dtb-ke-bundle/src/strip.rs). The executable's debug id (a CodeView GUID + age) is
+    # No debug-info flags here on purpose: CI builds Windows releases unstripped and splits the debug
+    # file off afterwards (scripts/symbols.py split). The executable's debug id (a CodeView GUID + age) is
     # written by lld's MinGW driver by default -- no `--pdb=` needed (verified: same id before/after strip).
 ]
 
@@ -34,8 +37,10 @@ rustflags = [
 ]
 
 # This allows for further optimization by setting a specific CPU baseline
-# [target.aarch64-apple-darwin]
-# Does default to a sane baseline
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-args=-Wl,-platform_version,macos,11.0,27.0",
+]
 
 # ADDED ABOVE
 # [target.aarch64-pc-windows-gnullvm]
@@ -54,6 +59,7 @@ rustflags = [
 [target.x86_64-apple-darwin]
 rustflags = [
     "-C", "target-cpu=x86-64-v3",   # Intel/AMD CPUs since 2013
+    "-C", "link-args=-Wl,-platform_version,macos,11.0,27.0",
 ]
 
 # ADDED ABOVE

@@ -4,7 +4,6 @@ resolver = "3"
 # `[workspace]`), so they must not be pulled in as automatic path-dependency members.
 exclude = ["vendor"]
 members = [
-    "crates/dtb-ke-bundle",
     "crates/dtb-ke-crash",
     "crates/dtb-ke-debugger",
     "crates/dtb-ke-export",
@@ -23,6 +22,9 @@ members = [
 edition = "2024"
 version = "2.1.1-dev.0"
 license = "AGPL-3.0-or-later"
+# Read by `cargo cargo-bundle` (vendor/cargo-bundle) for the .deb Maintainer field and similar —
+# previously unset, so it fell back to "Unknown <unknown@localhost>".
+authors = ["Philipp Remy <philipp@philippremy.net>"]
 
 [workspace.dependencies]
 # Project crates

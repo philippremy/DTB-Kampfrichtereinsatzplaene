@@ -2252,23 +2252,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
-name = "dtb-ke-bundle"
-version = "2.1.1-dev.0"
-dependencies = [
- "axum",
- "chrono",
- "dtb-ke-symbol-server",
- "dtb-ke-symid",
- "image",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "ureq",
-]
-
-[[package]]
 name = "dtb-ke-crash"
 version = "2.1.1-dev.0"
 dependencies = [

@@ -15,3 +15,7 @@
 	path = vendor/gpui-kit
 	url = https://github.com/philippremy/gpui-kit.git
 	branch = dtb-ke-patches
+[submodule "vendor/cargo-bundle"]
+	path = vendor/cargo-bundle
+	url = https://github.com/philippremy/cargo-bundle.git
+	branch = dtb-ke-patches
