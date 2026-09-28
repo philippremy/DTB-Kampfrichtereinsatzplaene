@@ -10,9 +10,9 @@ use dtb_ke_ui::skin::menu::has_window_commands;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem};
 
 use crate::ui::{
-    About, AddSymbols, ClearSymbolCache, CloseWindow, HideApp, HideOthers, Minimize, OpenDump,
-    OpenRepository, Quit, ShowLogs, ToggleFullscreen, ToggleRegisters, ToggleSidebar, ToggleSource,
-    Zoom,
+    About, AddSymbols, ClearSymbolCache, CloseWindow, CopySelection, HideApp, HideOthers, Minimize,
+    OpenDump, OpenRepository, Quit, ShowLogs, ToggleFullscreen, ToggleRegisters, ToggleSidebar,
+    ToggleSource, Zoom,
 };
 
 /// Every binding: (action name, keystroke, constructor). `secondary` is ⌘ on macOS, Ctrl elsewhere.
@@ -48,6 +48,11 @@ fn bindings() -> Vec<(&'static str, String, Box<dyn Fn() -> KeyBinding>)> {
         ),
         b!("debugger::Quit", format!("{secondary}-q"), Quit),
         b!("debugger::ShowLogs", format!("{secondary}-l"), ShowLogs),
+        b!(
+            "debugger::CopySelection",
+            format!("{secondary}-c"),
+            CopySelection
+        ),
         b!(
             "debugger::ToggleSidebar",
             format!("{secondary}-alt-s"),

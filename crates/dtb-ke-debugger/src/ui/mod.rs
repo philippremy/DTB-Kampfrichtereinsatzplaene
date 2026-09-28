@@ -28,12 +28,12 @@ use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::menu_bar::MenuBar;
 use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Segmented};
 use dtb_ke_ui::theme::{ActiveTheme, Appearance, Theme, ThemeMode};
-use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
+use gpui_kit::base::{ResizableState, TextSelection, TextSelectionLayer, h_resizable, resizable_panel};
 use gpui_kit::{
-    App, AppContext, Bounds, Context, ExternalPaths, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, PathPromptOptions, Pixels, Render, SharedString, Size, Styled,
-    Task, TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions, div,
-    prelude::FluentBuilder, px,
+    App, AppContext, Bounds, ClipboardItem, Context, ExternalPaths, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, PathPromptOptions, Pixels, Render,
+    SharedString, Size, Styled, Task, TitlebarOptions, Window, WindowBounds, WindowKind,
+    WindowOptions, div, prelude::FluentBuilder, px,
 };
 
 use crate::tokio_bridge::Tokio;
@@ -44,6 +44,7 @@ gpui_kit::actions!(
         OpenDump,
         AddSymbols,
         ClearSymbolCache,
+        CopySelection,
         Quit,
         ShowLogs,
         ToggleSidebar,
@@ -897,6 +898,12 @@ impl Render for DebuggerWindow {
             .on_action(cx.listener(|this, _: &ClearSymbolCache, window, cx| {
                 this.clear_symbol_cache(window, cx)
             }))
+            .on_action(cx.listener(|_, _: &CopySelection, window, cx| {
+                let text = TextSelection::selected_text(window, cx);
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(cx.listener(|this, _: &ToggleSource, _, cx| this.toggle_code(cx)))
             .on_action(cx.listener(|this, _: &ToggleRegisters, _, cx| this.toggle_registers(cx)))
@@ -911,6 +918,7 @@ impl Render for DebuggerWindow {
             .bg(c.background)
             .text_color(c.foreground)
             .when_some(font, |el, family| el.font_family(family))
+            .child(TextSelectionLayer)
             .when(dtb_ke_ui::skin::menu::in_app(cx), |el| {
                 el.child(
                     div()

@@ -10,7 +10,7 @@ use dtb_ke_debugger::quality::Quality;
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Toggle};
 use dtb_ke_ui::theme::ActiveTheme;
-use gpui_kit::base::Scrollbar;
+use gpui_kit::base::{Scrollbar, SelectableText};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
     UniformListScrollHandle, div, px, uniform_list,
@@ -183,6 +183,7 @@ impl DebuggerWindow {
                 .map(|(ix, r)| {
                     // Left: the module and where its file came from. Right: its address / debug id with the
                     // status pill underneath.
+                    let order_base = ix as u64 * 3;
                     div()
                         .id(("module", ix))
                         .flex()
@@ -206,7 +207,10 @@ impl DebuggerWindow {
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
-                                        .child(SharedString::from(r.name)),
+                                        .child(
+                                            SelectableText::new(("mod-name", ix), r.name)
+                                                .document_order(order_base),
+                                        ),
                                 )
                                 .child(
                                     div()
@@ -216,7 +220,10 @@ impl DebuggerWindow {
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
-                                        .child(SharedString::from(r.detail)),
+                                        .child(
+                                            SelectableText::new(("mod-detail", ix), r.detail)
+                                                .document_order(order_base + 1),
+                                        ),
                                 ),
                         )
                         .child(
@@ -231,7 +238,10 @@ impl DebuggerWindow {
                                         .font_family(mono.clone())
                                         .text_size(px(10.5))
                                         .text_color(c.muted_foreground)
-                                        .child(SharedString::from(r.id)),
+                                        .child(
+                                            SelectableText::new(("mod-id", ix), r.id)
+                                                .document_order(order_base + 2),
+                                        ),
                                 )
                                 .child(Chip::new(r.chip).tone(r.tone)),
                         )

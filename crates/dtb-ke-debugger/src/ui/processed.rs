@@ -10,7 +10,7 @@ use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone};
 use dtb_ke_ui::theme::ActiveTheme;
 use gpui_kit::base::Scrollbar;
-use gpui_kit::base::{ResizableState, h_resizable, resizable_panel, v_resizable};
+use gpui_kit::base::{ResizableState, SelectableText, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::{
     AnyElement, AppContext, Context, DispatchPhase, DragMoveEvent, HighlightStyle,
     InteractiveElement, IntoElement, ListHorizontalSizingBehavior, MouseButton, MouseDownEvent,
@@ -863,7 +863,7 @@ impl DebuggerWindow {
                 .map(|(ix, r)| {
                     let me = me.clone();
                     let is_sel = ix == selected;
-                    let text = |s: String| SharedString::from(s);
+                    let order_base = ix as u64 * 5;
                     div()
                         .id(("bt", ix))
                         .flex()
@@ -889,14 +889,20 @@ impl DebuggerWindow {
                                 .flex_none()
                                 .w(px(COL_FRAME))
                                 .text_color(c.muted_foreground)
-                                .child(text(r.num.clone())),
+                                .child(
+                                    SelectableText::new(("bt-num", ix), r.num.clone())
+                                        .document_order(order_base),
+                                ),
                         )
                         .child(
                             div()
                                 .flex_none()
                                 .w(px(COL_TRUST))
                                 .text_color(c.muted_foreground)
-                                .child(r.trust),
+                                .child(
+                                    SelectableText::new(("bt-trust", ix), r.trust)
+                                        .document_order(order_base + 1),
+                                ),
                         )
                         .child(
                             div()
@@ -905,7 +911,10 @@ impl DebuggerWindow {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .child(text(r.module.clone())),
+                                .child(
+                                    SelectableText::new(("bt-module", ix), r.module.clone())
+                                        .document_order(order_base + 2),
+                                ),
                         )
                         .child(
                             div()
@@ -914,7 +923,10 @@ impl DebuggerWindow {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .child(text(r.signature.clone())),
+                                .child(
+                                    SelectableText::new(("bt-sig", ix), r.signature.clone())
+                                        .document_order(order_base + 3),
+                                ),
                         )
                         .child(
                             div()
@@ -924,7 +936,10 @@ impl DebuggerWindow {
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .text_color(c.primary)
-                                .child(text(r.source.clone())),
+                                .child(
+                                    SelectableText::new(("bt-src", ix), r.source.clone())
+                                        .document_order(order_base + 4),
+                                ),
                         )
                         .on_click(move |_, _, cx| {
                             me.update(cx, |this, cx| this.select_row(ix, cx));

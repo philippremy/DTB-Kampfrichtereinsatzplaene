@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use dtb_ke_ui::theme::{ActiveTheme, PaletteColors};
-use gpui_kit::base::Scrollbar;
+use gpui_kit::base::{Scrollbar, SelectableText};
 use gpui_kit::{
     AnyElement, App, Hsla, InteractiveElement, IntoElement, ListHorizontalSizingBehavior,
     ParentElement, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
@@ -85,12 +85,12 @@ pub fn text_list(
     let (text, lines, widest) = (block.text.clone(), block.lines.clone(), block.widest);
     let list = uniform_list(id, lines.len(), move |range, _w, _cx| {
         range
-            .filter_map(|ix| lines.get(ix).cloned())
-            .map(|span| {
-                div()
-                    .whitespace_nowrap()
-                    .min_h(px(15.))
-                    .child(SharedString::from(text[span].to_string()))
+            .filter_map(|ix| lines.get(ix).cloned().map(|span| (ix, span)))
+            .map(|(ix, span)| {
+                div().whitespace_nowrap().min_h(px(15.)).child(
+                    SelectableText::new((id, ix), text[span].to_string())
+                        .document_order(ix as u64),
+                )
             })
             .collect::<Vec<_>>()
     })
@@ -141,16 +141,17 @@ pub fn listing_rows(rows: Vec<(String, String)>, style: ListStyle, cx: &App) -> 
         } else {
             3.
         }))
-        .children(rows.into_iter().map(|(k, v)| {
+        .children(rows.into_iter().enumerate().map(|(i, (k, v))| {
+            let order = i as u64 * 2;
             let label = div()
                 .flex_none()
                 .text_color(c.muted_foreground)
-                .child(SharedString::from(k));
+                .child(SelectableText::new(("row-label", i), k).document_order(order));
             let value = div()
                 .min_w(px(0.))
                 .overflow_hidden()
                 .font_family(mono.clone())
-                .child(SharedString::from(v));
+                .child(SelectableText::new(("row-value", i), v).document_order(order + 1));
             match style {
                 ListStyle::Stacked => div()
                     .flex()
