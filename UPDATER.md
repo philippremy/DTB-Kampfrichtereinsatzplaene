@@ -7,10 +7,10 @@ anyway). Artifacts are signed with **zipsign** (ed25519); the app embeds the pub
 key and refuses an unsigned or mis-signed download.
 
 App side lives in `crates/dtb-ke-ui/src/updater/`. CI side is
-`.forgejo/workflows/{tip,release}.yml` + `dtb-ke-bundle`'s `codeberg`/`manifest`
-subcommands — see **`RUNNERS.md`** for the runner architecture and secrets those
-workflows need. This file covers the manifest schema, the two update channels,
-and what the app does with them.
+`.forgejo/workflows/{tip,release}.yml` + `scripts/codeberg.py`'s `prepare`/`upload`/
+`manifest-publish` and `scripts/manifest.py` — see **`RUNNERS.md`** for the runner
+architecture and secrets those workflows need. This file covers the manifest schema,
+the two update channels, and what the app does with them.
 
 ---
 
@@ -39,12 +39,12 @@ URL the app polls:
 
 | channel | manifest URL | produced by | when |
 |---|---|---|---|
-| Stable (default) | `.../releases/download/latest/manifest.json` | `release.yml` | a `vX.Y.Z` tag pushed by `scripts/release.sh` |
+| Stable (default) | `.../releases/download/latest/manifest.json` | `release.yml` | a `vX.Y.Z` tag pushed by `scripts/release.py` |
 | Tip / Nightly | `.../releases/download/tip/manifest.json` | `tip.yml` | every push to `main` |
 
 Both `latest` and `tip` are **rolling tags** — each workflow force-moves its
 tag to the new commit and replaces its release object every run
-(`cargo dtb-ke-bundle codeberg prepare`; see `RUNNERS.md` for why the release
+(`scripts/codeberg.py prepare`; see `RUNNERS.md` for why the release
 API can't retarget a tag itself and the workaround). A version tag like
 `v0.2.0` also gets its own, permanent, non-rolling release — `latest` is a
 second copy of the same assets under a stable URL the app can always poll
@@ -117,14 +117,14 @@ Codeberg release:
 | `DTB-Kampfrichtereinsatzpläne-<version>-aarch64-pc-windows-gnullvm.zip` | Windows arm64 — same layout |
 | `manifest.json` | the update manifest (below) |
 | `DTB-Kampfrichtereinsatzpläne-<version>-{x86_64,aarch64}-unknown-linux-gnu.tar.gz` | Linux archives — **the updater never installs these**, only offers the download link |
-| (release builds only) `.dmg` / `.msi` / `.deb` / `.rpm` / `.AppImage` | first-install artifacts — **the updater never touches these** either |
+| (release builds only) `.dmg` / `.msi` / `.deb` / `.AppImage` | first-install artifacts — **the updater never touches these** either |
 
 **Naming matters:** each updatable archive's file name must contain the Rust
 target triple — that is how the asset is matched to the running platform. The
 `.app` / folder name *inside* the archive must be exactly
 `DTB Kampfrichtereinsatzpläne` (spaced — `updater::BIN_NAME`, matching
-`dtb-ke-bundle::meta::DISPLAY_NAME`; **not** the kebab-case `RAW_BIN_NAME`
-cargo itself builds — see CLAUDE.md's Bundling section).
+`[package.metadata.bundle] name` in `dtb-ke-ui/Cargo.toml`; **not** the
+kebab-case `dtb-ke-ui` cargo itself builds — see CLAUDE.md's Bundling section).
 
 **macOS asset matching** (`updater::asset_priority`, wired into both
 `fetch_newest` and `run_install`'s `self_update` `asset_matcher`): the CI
@@ -162,7 +162,7 @@ separate axis (§ 2 / `RUNNERS.md`): Tip and a secret-less Release stay ad-hoc.
 ### Manifest
 
 ```sh
-cargo dtb-ke-bundle manifest \
+python3 scripts/manifest.py \
     --version X.Y.Z \
     --date "$(date -u +%Y-%m-%d)" \
     --notes-url "https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene/releases/tag/vX.Y.Z" \
@@ -171,7 +171,7 @@ cargo dtb-ke-bundle manifest \
     dist/DTB-Kampfrichtereinsatzpläne-X.Y.Z-*.zip
 ```
 
-In CI this whole step is folded into `cargo dtb-ke-bundle codeberg
+In CI this whole step is folded into `scripts/codeberg.py
 manifest-publish`, which merges the per-arch `<name>.fragment.json` sidecars
 each upload step dropped on the release (rather than needing every archive
 downloaded onto one runner to build the manifest directly) — see `RUNNERS.md`

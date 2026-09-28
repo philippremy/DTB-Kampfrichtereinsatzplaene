@@ -81,9 +81,9 @@ On **Linux** the updater only opens the download page; please replace the packag
 - **CPU**: because the Intel build is `x86-64-v3`, the practical floor is a **2013-or-newer Mac**
   (Haswell — AVX2/BMI2/FMA).
 - **As shipped**, `Info.plist`'s `LSMinimumSystemVersion` is `11.0`
-  (`dtb-ke-bundle::meta::MACOS_MIN_VERSION`), so Gatekeeper refuses to launch the bundle on
-  10.15 even though the code would run. Lower that constant (and rebuild) to support Catalina on
-  Intel, you probably won't have a good time, however.
+  (`minimum_system_version` in `dtb-ke-ui/Cargo.toml`'s `[package.metadata.bundle.osx]`), so
+  Gatekeeper refuses to launch the bundle on 10.15 even though the code would run. Lower that
+  value (and rebuild) to support Catalina on Intel, you probably won't have a good time, however.
 
 ### Windows
 
@@ -128,19 +128,20 @@ On **Linux** the updater only opens the download page; please replace the packag
 git clone https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene.git
 cd DTB-Kampfrichtereinsatzplaene
 
-# Run the GUI (debug; out-of-process crash capture is DISABLED here)
+# Run the GUI (debug build; out-of-process crash capture works the same as release here)
 cargo run -p dtb-ke-ui
 
-# Build the app with the crash helper staged (what you want for a real build)
-cargo dtb-ke-bundle build            # add --release for an optimised build
+# Just build it
+cargo build -p dtb-ke-ui             # add --release for an optimised build
 
-# Build + package for the host OS (.app / portable folder + .msi / .deb / .rpm / .AppImage / tar)
-cargo dtb-ke-bundle bundle --release
-cargo dtb-ke-bundle bundle --release --formats dmg          # pick specific formats
+# Build + package for the host OS (.app+.dmg / .msi / .deb+.AppImage, via vendor/cargo-bundle)
+cargo cargo-bundle -p dtb-ke-ui --release
+cargo cargo-bundle -p dtb-ke-ui --release -f dmg             # pick a specific format
 ```
 
-`cargo dtb-ke-bundle` is a workspace alias (`.cargo/config.toml`) for the `dtb-ke-bundle`
-packaging crate. Other useful commands:
+`cargo cargo-bundle` is a workspace alias (`.cargo/config.toml`) for `vendor/cargo-bundle`, a
+vendored fork of the `cargo-bundle` packaging tool (a git submodule — see `vendor/README.md`).
+Other useful commands:
 
 ```sh
 cargo check --workspace                     # fast feedback
@@ -165,15 +166,16 @@ crates/
   dtb-ke-export    Typst-backed PDF export + an independent DOCX exporter
   dtb-ke-resource  compile-time-embedded fonts, logos, org emblems
   dtb-ke-log       the logging sink
-  dtb-ke-crash     out-of-process crash capture (library + minidump helper + offline symbolizer)
+  dtb-ke-crash     out-of-process crash capture (library, no separate helper binary any more)
   dtb-ke-util      small shared utilities
-  dtb-ke-bundle    build orchestration + platform packaging + release helpers
+vendor/cargo-bundle  vendored fork of the platform-packaging tool (git submodule)
+scripts/             debug-info splitting, symbol upload, the updater manifest, Codeberg release management, icons (Python)
 ```
 
 - [`RUNNERS.md`](RUNNERS.md) — the self-hosted CI runner architecture and the release workflow.
 - [`UPDATER.md`](UPDATER.md) — the update manifest schema, channels, and signing.
-- [`crates/dtb-ke-bundle/README.md`](crates/dtb-ke-bundle/README.md) — the packaging tool's
-  commands and per-platform output.
+- [`CLAUDE.md`](CLAUDE.md)'s "Bundling" section — the packaging tool's commands, patches, and
+  per-platform output.
 
 ## License
 

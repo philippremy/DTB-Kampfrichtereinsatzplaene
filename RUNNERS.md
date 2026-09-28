@@ -7,8 +7,8 @@ aarch64 cross-compilation, none of which a shared runner offers. This file is
 the map: what each machine does, *why* it's built the way it is, and how to
 stand one up from scratch. `.forgejo/workflows/tip.yml` and `release.yml` are
 the two workflows; `UPDATER.md` covers what the app does with what they
-produce; `CLAUDE.md`'s `dtb-ke-bundle` section covers the packaging tool they
-both shell out to.
+produce; `CLAUDE.md`'s "Bundling" section covers the packaging tools (`cargo
+cargo-bundle` + `scripts/*.py`) they both shell out to.
 
 ## The machines
 
@@ -91,15 +91,18 @@ a VM rebuilt without re-running the full setup script).
 wix` with no version pin now pulls WiX v7, which refuses to run *any*
 subcommand — `build`, `extension add`, `extension list` — with `error WIX7015:
 You must accept the Open Source Maintenance Fee (OSMF) EULA` until it's
-accepted. Two independent acceptances, because the CI `wix build` runs as
-LocalSystem (the runner service) while setup runs as the interactive user, and
-`wix eula accept` records acceptance *per profile*: (1) `runner-setup-windows.ps1`
-runs `wix eula accept wix<major>` right after install so the setup script's own
-`wix extension add -g` works; (2) `dtb-ke-bundle`'s `windows.rs` passes
-`-acceptEula wix<major>` inline on its `wix build` invocation (`wix_major()`
-reads `wix --version`, only adds the flag for v6+) — a one-off, profile-independent
-acceptance that covers the LocalSystem CI run. The `.wxs` we emit is still v4
-schema (`schemas/v4/wxs`), which v7 reads fine.
+accepted. `runner-setup-windows.ps1` runs `wix eula accept wix<major>` right
+after install so the setup script's own `wix extension add -g` works, and
+records acceptance *per profile* for the interactive setup user.
+
+**Open question since the packaging tool moved to `vendor/cargo-bundle`:** the old in-tree
+`dtb-ke-bundle` shelled `wix build` directly and passed `-acceptEula wix<major>` inline for a v6+
+`wix` (a one-off, profile-independent acceptance covering the LocalSystem CI run regardless of the
+interactive setup above). The fork's `wxsmsi_bundle.rs` instead runs `dotnet build` on a generated
+`.wixproj` (`WixToolset.Sdk/6.0.2`, SDK-style) — there is no `-acceptEula` flag on that invocation at
+all, and it's **unverified** whether the SDK-style build hits the same WIX7015 gate under the CI
+service account, or needs a different MSBuild-property-based acceptance. Check this on the first real
+Windows CI run before trusting the release job.
 
 ### Linux aarch64: cross-compiled, no QEMU
 
@@ -181,51 +184,50 @@ assumed clean:
   binary-arm64/Packages.xz`, parsed in `awk` paragraph mode) rather than
   hardcoding version strings that go stale — verified in this project's setup
   session by actually fetching the index and downloading all 13 real `.deb`s.
-- **Packaging the arm64 leg.** `cargo dtb-ke-bundle bundle --target
-  aarch64-unknown-linux-gnu` threads that triple into `bundle::Context`;
-  `linux::arch_labels` maps its arch token to the Debian (`arm64`) and
-  RPM/AppImage/tar (`aarch64`) spellings so the `.deb`/`.rpm`/`.AppImage`/tarball
-  are all correctly labelled around the arm64 binary — an unmapped arch is a
-  hard error rather than a silent `amd64`-labelled arm64 package. `rpmbuild` is
-  invoked with **`--target <arch>`** (bare CPU — `rpm-common(8)` says PLATFORM
-  is `arch[-os]`, os optional) — without it rpm fails the aarch64 leg with `No
-  compatible architectures found for build` because the build host is x86_64;
-  `--target` makes rpm use that arch's config instead of autodetecting, and is
-  the *only* thing setting the package arch (the generated spec has **no
-  `BuildArch`** — `rpmbuild(1)` BUGS: mixing `--target` with a spec `BuildArch`
-  is undefined behavior). No foreign code runs — it's just an archive +
-  scriptlets.
+- **Packaging the arm64 leg.** `cargo cargo-bundle -p dtb-ke-ui --release --target
+  aarch64-unknown-linux-gnu` threads that triple through `Settings::binary_arch()`
+  (from the `--target` triple's `TargetInfo`); `linux/deb_bundle.rs` and
+  `linux/appimage/arch.rs` each map it to their own format's spelling inline
+  (`deb`: `arm64`/`amd64`/…, falling through unmapped arches unchanged rather
+  than hard-erroring; `appimage`: `aarch64`/`x86_64`/…, hard-erroring via
+  `determine_appimage_architecture` on anything it doesn't recognise) so the
+  `.deb`/`.AppImage` are correctly labelled around the arm64 binary. No `.rpm`
+  any more — dropped along with the old in-tree bundler (upstream `cargo-bundle`
+  doesn't implement it yet either) — so the whole `rpmbuild --target <arch>`
+  story below is gone too; packaging the arm64 leg is now just an archive +
+  scriptlets, no foreign code runs either way.
 
 ### macOS: universal binary via two sequential `lipo` slices
 
-`cargo dtb-ke-bundle bundle --release --universal` builds
-`x86_64-apple-darwin` and `aarch64-apple-darwin` **sequentially, never in
-parallel** — each slice needs its own architecture-matched embedded crash
-helper staged first (`dtb-ke-crash`'s build script stages whatever was most
-recently built; a mismatched-arch helper fails to `execve` at all), so the
-two builds can't share a `target/` at the same time. The two `.o`/binary
-slices are then merged with `lipo -create`. Release builds are **Developer-ID
-signed and notarized** when `MACOS_SIGN_IDENTITY` is set (below); Tip builds,
-and a Release build cut without that secret, stay ad-hoc signed.
+`cargo cargo-bundle -p dtb-ke-ui --release --target x86_64-apple-darwin
+--target aarch64-apple-darwin` builds the two slices **sequentially, never in
+parallel** (`vendor/cargo-bundle`'s own `build_project_if_unbuilt` just loops
+over the requested `--target`s one at a time) then merges them with
+`lipo -create`. Release builds are **Developer-ID signed and notarized** when
+`MACOS_SIGN_IDENTITY` is set (below); Tip builds, and a Release build cut
+without that secret, stay ad-hoc signed (`vendor/cargo-bundle`'s
+`signing.rs` signs unconditionally, ad-hoc without a p12 — see CLAUDE.md's
+Bundling section).
 
-**The macOS bundle's main executable is named `meta::MACOS_EXECUTABLE_NAME`
-(`DTB-Kampfrichtereinsatzplaene`, an ASCII transliteration), not the branded
-`meta::DISPLAY_NAME`.** `codesign` on macOS 26 cannot ad-hoc-sign an
-app bundle whose main executable's *filename* contains a non-ASCII character
-(the "ä" in "Kampfrichtereinsatzpläne"): `codesign --sign` fails outright
-with `code object is not signed at all / In subcomponent: …/MacOS/<name>`,
-and even a bundle that does get signed fails `codesign --verify --strict`
-with `a sealed resource is missing or invalid`. Reproduced and narrowed
-locally against this exact binary — `DTB App` (ASCII + space) signs and
-verifies fine, `DTB Kampfrichtereinsatzpläne` does not; an ASCII executable
-name fixes both. The bundle *directory* keeps the branded name (an "ä" there
-is fine), and so do `CFBundleName` / `CFBundleDisplayName` — Finder, the menu
-bar, the Dock and Force-Quit all read those, so the only user-visible change
-is the process name in Activity Monitor / `ps`. (The per-slice signature
-state — the native `aarch64-apple-darwin` slice comes out linker-signed
-ad-hoc, the cross-linked `x86_64-apple-darwin` one unsigned — is *not* the
-problem: signing tolerates that mismatch fine once the executable name is
-ASCII.)
+**The macOS bundle's main executable is just the plain Cargo binary name
+(`dtb-ke-ui`, already ASCII) — not the branded, spaced, "ä"-carrying display
+name (`DTB Kampfrichtereinsatzpläne`, `[package.metadata.bundle] name`).**
+This sidesteps a real constraint the old in-tree bundler had to work around
+by hand (an explicit ASCII transliteration, `MACOS_EXECUTABLE_NAME`):
+`codesign` on macOS 26 cannot ad-hoc-sign an app bundle whose main
+executable's *filename* contains a non-ASCII character (the "ä" in
+"Kampfrichtereinsatzpläne") — `codesign --sign` fails outright with
+`code object is not signed at all / In subcomponent: …/MacOS/<name>`, and
+even a bundle that does get signed fails `codesign --verify --strict` with
+`a sealed resource is missing or invalid`; reproduced and narrowed locally
+against this exact binary at the time. `cargo-bundle` was never going to hit
+this in the first place, since `Contents/MacOS/<name>` is always the
+Cargo-level binary name, which is ASCII by construction (Rust bin/package
+names are restricted to that anyway). The bundle *directory* still carries
+the branded name (an "ä" there is fine), and so do `CFBundleName` /
+`CFBundleDisplayName` — Finder, the menu bar, the Dock and Force-Quit all
+read those, so the only user-visible difference from the old executable name
+is what Activity Monitor / `ps` shows.
 
 ### macOS SDK restamp (Tahoe interface)
 
@@ -242,32 +244,23 @@ supported macOS, so its linker can only stamp the **13.x** SDK, and Xcode 26
 to the new look from an old SDK (`UIDesignRequiresCompatibility` only forces
 the *old* look with a *new* SDK).
 
-So `dtb-ke-bundle`'s macOS packaging (`macos::ensure_min_sdk`) restamps the
-field with **`vtool`** right after copying the binary into the `.app` and
-before `codesign` (so the change is inside the signed bundle):
+This used to be fixed up *after* linking, by having the old in-tree bundler
+(`macos::ensure_min_sdk`) restamp the field with `vtool -set-build-version`
+right after copying the binary into the `.app` and before `codesign`. That
+whole post-processing step is gone: `.cargo/config.toml` now passes
+`-Wl,-platform_version,macos,11.0,27.0` as a linker arg for both
+`aarch64-apple-darwin`/`x86_64-apple-darwin` (deployment target `11.0`, SDK
+`27.0`) — `ld` writes exactly the `LC_BUILD_VERSION` load command a real
+27.0-SDK link would, at link time, whether or not that SDK is actually
+present on the build host. No `vtool` invocation, no post-processing step in
+the bundler at all; the binary is correctly stamped the moment it's linked,
+and `cargo cargo-bundle` just packages it as-is.
 
-```sh
-vtool -show-build <exe>                                  # read current sdk
-vtool -set-build-version macos 11.0 26.0 -replace -output <exe> <exe>
-```
-
-- Floor is `meta::MACOS_SDK_FLOOR` (`"26.0"`); deployment target
-  (`minos` / `LSMinimumSystemVersion`) stays `meta::MACOS_MIN_VERSION`
-  (`"11.0"`).
-- Never lowers: a build *on* macOS 26 (SDK ≥ floor, e.g. a local
-  `cargo dtb-ke-bundle bundle`) is left untouched.
-- `vtool` handles a universal binary directly — every slice is rewritten.
-  It drops the `LC_BUILD_VERSION` tool sub-entries (`ntools 0`), which are
-  informational only.
-- `vtool` ships with the Command Line Tools (`/usr/bin/vtool`, same shim as
-  `lipo`) — no extra runner setup.
-
-**Faking the SDK means AppKit enables *every* 26-SDK-gated behavior** on a
-binary compiled without the 26 headers — for this app that surface is small
-(gpui draws its own UI; the exceptions are `NSSavePanel` in `src/save/` and
-the native menu bar), but a real smoke test on both Ventura and Tahoe is
-warranted after the first CI-built release. If the newer Mac ever becomes
-the `macos-host` runner, this step becomes a no-op and can be dropped.
+**Faking the SDK still means AppKit enables *every* SDK-gated behavior** on a
+binary compiled without the matching headers — for this app that surface is
+small (gpui draws its own UI; the exceptions are `NSSavePanel` in `src/save/`
+and the native menu bar), but a real smoke test on both an older macOS and
+the newest one is warranted after the first CI-built release.
 
 ## The two workflows
 
@@ -302,15 +295,15 @@ release and a rolling `latest` release (force-moved the same way `tip` is) —
 (`MANIFEST_URL_STABLE` in `crates/dtb-ke-ui/src/updater/mod.rs`).
 
 Both workflows follow the same job shape: a `prepare` job creates the
-Codeberg release(s) via `cargo dtb-ke-bundle codeberg prepare` and outputs
+Codeberg release(s) via `scripts/codeberg.py prepare` and outputs
 the `release_id`(s); the per-arch build jobs run **in parallel**, each
 independently uploading its own archive straight to those release(s) via
-`cargo dtb-ke-bundle codeberg upload` — there's no shared filesystem or
+`scripts/codeberg.py upload` — there's no shared filesystem or
 artifact-passing action between runners, the release's own asset list *is*
 the synchronization point. Each upload also drops a small `<name>.fragment.json`
 sidecar (name/url/size/digest) alongside the real archive; a final `publish`
 job downloads every fragment, merges them into the real `manifest.json`
-(`cargo dtb-ke-bundle codeberg manifest-publish`), uploads that, deletes the
+(`scripts/codeberg.py manifest-publish`), uploads that, deletes the
 fragments, and un-drafts the release.
 
 Note that `codeberg prepare` **never deletes or retargets a git tag** — only
@@ -412,16 +405,15 @@ checkout from Forgejo regardless, there is no staleness for a fixed cache
 path to solve there; adding one would only add cache-directory bookkeeping
 release builds get no benefit from.
 
-`dtb-ke-bundle` itself has to agree with cargo about where the build landed:
-`util::target_dir`/`target_dir_for` (used to locate the just-built binary
-and to stage the crash helper) read `$CARGO_TARGET_DIR` the same way cargo
-does — absolute as given, a relative value resolved against the workspace
-root — falling back to the workspace's own `target/` when unset (every local
-dev build). The *packaging* output (`target/bundle/<profile>/`, what the
-workflow `tar`s up and uploads) deliberately does **not** follow
-`CARGO_TARGET_DIR` — it stays checkout-local and disposable, which is
-correct: it's cheap to regenerate and uploading it is the whole point of the
-job, so there's nothing worth caching there.
+`cargo cargo-bundle` itself has to agree with cargo about where the build
+landed: its `project_out_directory()` reads `$CARGO_TARGET_DIR` the same way
+cargo does — absolute as given, a relative value resolved against the
+workspace root — falling back to the workspace's own `target/` when unset
+(every local dev build, and now every `release.yml` job too). Packaging
+output nests right under that: `…/bundle/<format>/…`. Since `release.yml`
+never sets `CARGO_TARGET_DIR`, its jobs just reference plain `target/…`
+paths throughout — cheap to regenerate, and uploading the result is the
+whole point of the job, so there's nothing worth a fixed cache path for.
 
 ## Update channels
 
@@ -552,16 +544,18 @@ the script's registration step with a fresh UUID+token pair.
 
 ## Portability: no arbitrary CLI tool dependencies
 
-`dtb-ke-bundle` runs unattended on all three CI hosts — Linux, Windows,
-*and* macOS — so it must never shell out to a tool whose presence is merely
-assumed rather than guaranteed. This was violated twice, both caught by
-real CI failures rather than review:
+The release-management scripts (`scripts/codeberg.py`, `scripts/manifest.py`) run unattended on all
+three CI hosts — Linux, Windows, *and* macOS — so they must never shell out to a tool whose presence
+is merely assumed rather than guaranteed. This was violated twice in the original (Rust, pre-Python)
+version of this logic, both caught by real CI failures rather than review — the lessons carried
+straight over into `scripts/`:
 
-- **`manifest::sha256`** shelled to `sha256sum` (Linux) or `shasum -a 256`
+- **The manifest's SHA-256** originally shelled to `sha256sum` (Linux) or `shasum -a 256`
   (macOS) to hash a release archive for the manifest/upload fragment —
   failed outright on Windows (`program not found`), since neither exists
-  there. Replaced with the `sha2` crate, computed in pure Rust.
-- **`codeberg::Client::upload_raw`** shells to `curl -F` for the
+  there. `scripts/manifest.py::sha256` streams it through `hashlib` instead — stdlib, no
+  external tool at all.
+- **The Codeberg asset upload** shells to `curl -F` for the
   multipart-form-data asset upload — **tried and reverted a pure-Rust
   replacement here, twice.** A hand-rolled one-part `multipart/form-data`
   body sent via `ureq` was tried first (avoiding the same category of
@@ -604,29 +598,27 @@ real CI failures rather than review:
   before it becomes a `curl` argument at all: pure ASCII text can't be
   reinterpreted by any code page on either platform, and it's also simply
   the standards-correct way to put arbitrary text in a URL query parameter.
-  See `url_encode` in `codeberg.rs`.
+  See `_url_encode` in `scripts/codeberg.py`.
 
-**The standing rule going forward**: a shelled external command in
-`dtb-ke-bundle` is only acceptable when it is a genuinely platform-native
-tool with no practical portable alternative (`codesign`, `wix`, `iconutil`,
-`actool`, `lipo`, `rpmbuild`, `appimagetool`) **and** the call site only ever
-executes on that tool's own platform (gated by a `cfg!(target_os = …)` check,
-the same way `icon.rs::generate` refuses to run `actool`/`iconutil` outright
-on non-macOS hosts — the `icons` command is macOS-only full stop; see its
-module doc). Anything invoked from code that can run on *any* of the three CI
-hosts — which includes all of `codeberg.rs` and `manifest.rs`, since every
-job in every workflow calls into them — gets a real Rust dependency
-instead, even when the shelled-out tool would probably have been present.
-`cargo` itself is the one standing exception, for the obvious reason.
+**The standing rule going forward**: a shelled external command in `scripts/` is only acceptable
+when it is a genuinely platform-native tool with no practical portable alternative (`codesign`,
+`wix`, `iconutil`, `actool`, `lipo`, `rpmbuild`, `appimagetool`) **and** the call site only ever
+executes on that tool's own platform (`scripts/icons.py` is the example — macOS-only, full stop,
+never even attempts to run on Linux/Windows; see its own module docstring). Anything invoked from a
+script that can run on *any* of the three CI hosts — `codeberg.py` and `manifest.py`, since every job
+in every workflow calls into them — sticks to the Python standard library instead, even when the
+shelled-out tool would probably have been present. `cargo`/`python3` themselves are the standing
+exceptions, for the obvious reason.
 
-`codeberg::Client::upload_raw`'s `curl` call is a **second, deliberate**
+`codeberg.py`'s `curl` call for the asset upload is a **second, deliberate**
 exception, not a gap in this rule: it isn't an unexamined assumption like
-`sha256sum`/`bash` were, it's the result of trying the portable Rust
-replacement twice, watching it fail two different ways against the real
-service, and reverting on explicit instruction. Don't re-attempt a pure-Rust
-multipart upload here without a way to actually test it against Codeberg
-first — a third silent regression on a real release is worse than the
-`curl` dependency.
+`sha256sum`/`bash` were. The original Rust version tried a hand-rolled multipart body over `ureq`
+and failed it twice against the real service (above); `urllib.request` would face the identical
+problem (a hand-rolled `multipart/form-data` body, same category of risk), so the Python port never
+re-ran that experiment — it went straight to `curl`, which has since uploaded real archives
+successfully many times over this project's CI work. Don't attempt a pure-`urllib` multipart upload
+here without a way to actually test it against Codeberg first — a real regression on a release is
+worse than the `curl` dependency.
 
 **PowerShell string-splat trap.** The Windows jobs build the upload arg list
 in PowerShell. `$x = (Get-ChildItem …).FullName` is a *scalar string* when the
@@ -728,23 +720,25 @@ built zip specifically.
 ## Debug info: how each platform's debug file is produced and where it goes
 
 **Current state (supersedes the `.dwp` / `.pdb` history below).** Debug files go to the **symbol server**
-(`cargo dtb-ke-bundle symbols upload`, keyed by debug id), not to a Codeberg archive:
+(`scripts/symbols.py upload`, keyed by debug id), not to a Codeberg archive:
 
 | Platform | Debug file | How |
 |---|---|---|
 | macOS / iOS | the DWARF file in the `.dSYM` | `split-debuginfo = "packed"` |
-| Linux | standalone `<name>.debug` | `dtb-ke-bundle/src/strip.rs`: cargo builds the release **unstripped** (`CARGO_PROFILE_RELEASE_STRIP=none`, `…SPLIT_DEBUGINFO=off`, set for these builds only), then `objcopy --only-keep-debug`, `--strip-debug --strip-unneeded` on a *copy* (which ships), `--add-gnu-debuglink`. Needs `objcopy` (`aarch64-linux-gnu-objcopy` from the runner's cross binutils, or `llvm-objcopy`). |
+| Linux | standalone `<name>.debug` | `scripts/symbols.py split`: CI builds the release **unstripped** (`CARGO_PROFILE_RELEASE_STRIP=none`, `…SPLIT_DEBUGINFO=off`, set for that build step only), then `objcopy --only-keep-debug`, `--strip-debug --strip-unneeded` on a *copy* (which ships), `--add-gnu-debuglink`. Needs `objcopy` (`aarch64-linux-gnu-objcopy` from the runner's cross binutils, or `llvm-objcopy`). |
 | Windows (gnullvm) | standalone `<name>.debug` (the unstripped `.exe` if that split cannot be verified) | same build; `llvm-strip --strip-all` on the shipped copy, `llvm-objcopy --only-keep-debug` for the debug file. No `--pdb=` flag any more: lld's MinGW driver writes the CodeView GUID + age (the debug id) into the `.exe` by default, and a PDB would have no line numbers anyway. |
 
-`strip.rs` verifies that the shipped binary and the debug file carry the same debug id(s) as the build, and that the
-debug file kept all the DWARF bytes; a mismatch fails the build. Checked by hand against a real lld-linked PE and ELF
-(same id before/after, all DWARF kept). The `.dwp` / `.pdb` text below is the history of why `packed` alone was not enough.
+`symbols.py split` verifies that the shipped binary and the debug file carry the same debug id(s) as the build, and
+that the debug file kept all the DWARF bytes; a mismatch fails the build. Checked by hand against a real lld-linked PE
+and ELF (same id before/after, all DWARF kept). The `.dwp` / `.pdb` text below is the history of why `packed` alone
+was not enough; CI now runs the split step explicitly (`tip.yml`/`release.yml`'s "Build unstripped + split debug
+info" steps) — the old in-tree bundler used to do this transparently as part of packaging.
 
 ### History
 
 CI uploads each platform's separate debug-info file — macOS's `.dSYM`,
 Linux's `.dwp`, Windows' `.pdb` — so a real crash minidump can be symbolised
-offline (`dtb-ke-symbolize`, `minidump-stackwalk`, `lldb`, WinDbg) without
+offline (`dtb-ke-debugger`, `minidump-stackwalk`, `lldb`, WinDbg) without
 redistributing full debuginfo in the shipped binary. macOS/Linux get theirs
 from `[profile.release] split-debuginfo = "packed"` (workspace `Cargo.toml`,
 `debug = "line-tables-only"`) exactly as the rustc book describes; Windows
@@ -754,12 +748,12 @@ book's summary table at face value:
 
 - **macOS / Linux**: `packed` is genuinely, stably supported (per the rustc
   book, confirmed for macOS by an actual local build — `target/release/
-  <bin>.dSYM` appears exactly as documented). `cargo dtb-ke-bundle debug-info`
-  (new subcommand, `crates/dtb-ke-bundle/src/debug_info.rs`) locates it (`.dSYM` on
+  <bin>.dSYM` appears exactly as documented). `scripts/debug_info.py`
+  locates it (`.dSYM` on
   macOS, `.dwp` on Linux — unverified on Linux specifically, no linker for
   that target on the dev machine, but it's the platform the rustc book is
   most confident about) and `tar -czf`s it into its own archive, entirely
-  separate from `bundle`'s own packaging so it can never leak into an
+  separate from `cargo cargo-bundle`'s own packaging so it can never leak into an
   installed `.deb`/`.rpm`/`.AppImage` (those all share `linux::stage_prefix`,
   which `debug_info.rs` never touches). `--universal` merges the two
   `apple-darwin` slices' `.dSYM`s with `lipo` on the inner DWARF binary,
@@ -806,26 +800,24 @@ book's summary table at face value:
   file" split macOS and Linux get from `packed` — Windows just reaches it by
   a different route, since `packed` itself is a dead end here.
 
-  Wired up via `.cargo/config.toml`'s `[target.x86_64-pc-windows-gnullvm]`/
-  `[target.aarch64-pc-windows-gnullvm]` `rustflags`, one fixed
+  **This whole `--pdb=` mechanism is now retired** (superseded by the DWARF-split approach in the
+  "Current state" table above, which gets both symbols *and* line info — see the closing note below).
+  At the time, it was wired up via `.cargo/config.toml`'s
+  `[target.x86_64-pc-windows-gnullvm]`/`[target.aarch64-pc-windows-gnullvm]` `rustflags`, one fixed
   `-Wl,--pdb=<literal filename>.pdb` each (`dtb-ke-ui-x86_64.pdb` /
   `dtb-ke-ui-aarch64.pdb` — distinct names so a local dev machine building
-  both sequentially can't clobber one with the other). The path can't be
+  both sequentially can't clobber one with the other). The path couldn't be
   `$CARGO_TARGET_DIR`-aware — rustflags in a config file can't be templated,
   and CI always overrides that env var to an absolute path elsewhere anyway
-  (see "Target-dir caching" above) — so it's a plain relative filename
-  instead, which resolves against whatever the *linker's* actual working
-  directory is. Confirmed that's the **workspace root**: every cargo
-  invocation this project makes goes through `dtb-ke-bundle`'s own
-  `util::run`, which always sets `current_dir(workspace_root())` — a real
-  test with a relative `--pdb=./x.pdb` landed exactly there, not inside
-  `target/`. `util::debug_info_path` (`dtb-ke-bundle`) knows this fixed
-  location for these two triples; `.gitignore`'s `*.pdb` covers the loose
-  file this leaves at the repo root for a local build. `cargo dtb-ke-bundle
-  debug-info --target <triple>` picks it up as a plain file (no special
-  casing needed vs. Linux's `.dwp` — `tar_entry` archives a file or a
-  directory tree alike) and `codeberg upload --plain` ships it, same as the
-  other two platforms.
+  (see "Target-dir caching" above) — so it was a plain relative filename
+  instead, resolving against whatever the *linker's* actual working
+  directory was. Confirmed that's the **workspace root**: every cargo
+  invocation this project made went through the old, now-retired
+  `dtb-ke-bundle` crate's own `util::run`, which always set
+  `current_dir(workspace_root())` — a real test with a relative
+  `--pdb=./x.pdb` landed exactly there, not inside `target/` — `.gitignore`'s
+  `*.pdb` entry covers the loose file this left at the repo root for a
+  local build.
 
   *(Switching the Windows target from `gnullvm` to `msvc` was considered —
   there, `packed` → a real `.pdb` is one of the officially stable
@@ -868,9 +860,15 @@ book's summary table at face value:
   useful; file/line does not and structurally can't, without either switching to MSVC (real CodeView
   from the ground up) or converting DWARF to Breakpad `.sym` with a dedicated tool like Mozilla's
   `dump_syms` (built for exactly this MinGW+DWARF scenario) instead of using the PDB path at all —
-  neither pursued, both left as a known, deliberate limitation of the current setup.
+  neither pursued, both left as a known, deliberate limitation of the current setup at the time.
 
-**`codeberg upload --plain`** (new flag, `dtb-ke-bundle`): every upload
+  **This is exactly the gap the DWARF-split approach in the "Current state" table above closes.**
+  Extracting the DWARF `objcopy`/`llvm-objcopy` already produces on this target (rather than asking
+  LLD's COFF backend to write CodeView line info it structurally cannot) gets full file/line
+  symbolication on Windows the same way Linux always had it — the `--pdb=` path is kept here only as
+  the record of why that was tried first and what it couldn't do.
+
+**`codeberg.py upload --plain`**: every upload
 normally also generates a small `<name>.fragment.json` sidecar that
 `publish_manifest` later folds into the self-update `manifest.json` — correct
 for real app archives, wrong for a debug-info archive, which must never look
@@ -880,21 +878,32 @@ fragment entirely (`Client::upload_plain`, vs. the fragment-generating
 
 ## iOS job (`ios` in `tip.yml` / `release.yml`)
 
-Also uploads the app's dSYM (`…-aarch64-apple-ios.debuginfo.tar.gz`, `--plain`): iOS crash reports carry only image UUIDs + offsets, and the dSYM is what symbolicates them (see CLAUDE.md, Crash capture → iOS).
+Also uploads the app's dSYM to the symbol server (`scripts/symbols.py upload --auto --target
+aarch64-apple-ios`, `--strict` on `release.yml`) — same mechanism as every other platform now (see
+"Debug info" above); iOS crash reports carry only image UUIDs + offsets, and the dSYM is what
+symbolicates them (see CLAUDE.md, Crash capture → iOS).
 
-Runs on `macos-host` and calls `cargo dtb-ke-bundle bundle --release --target aarch64-apple-ios --mac-wrapper`,
-producing `DTB Kampfrichtereinsatzpläne.app`, `.ipa` (zip of `Payload/<app>`), and
-`mac-wrapper/<app>.app` (the "Designed for iPad" wrapper macOS launches iOS apps from, not a real
-Catalyst build). Uploaded with `--plain` as `…-aarch64-apple-ios{.ipa,.app.tar.gz,-mac-wrapper.tar.gz}`
+Runs on `macos-host` and calls `cargo cargo-bundle -p dtb-ke-ui --release --target aarch64-apple-ios
+-f ios`, producing `DTB Kampfrichtereinsatzpläne.app` and a real `.ipa` (`Payload/<app>.app/` zipped,
+`vendor/cargo-bundle`'s own `write_ipa` — see CLAUDE.md's Bundling section). No Mac-wrapper any more —
+dropped as unneeded. Uploaded to Codeberg with `--plain` as `…-aarch64-apple-ios{.ipa,.app.tar.gz}`
 so the in-app updater's manifest never lists them. `publish` deliberately does **not** `need` this job —
 an iOS failure must not block the desktop release.
 
-- **Signing**: `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (see Secrets); otherwise ad-hoc.
-- **SDK**: like the macOS leg, `dtb-ke-bundle` restamps the binary's `LC_BUILD_VERSION` SDK up to
-  `meta::IOS_SDK_FLOOR` (26.0) with `vtool`, because Liquid Glass is gated on the *linked* SDK.
+- **Signing**: `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (see Secrets) — `vendor/cargo-bundle`'s
+  own keychain-identity + embedded-provisioning-profile signing (`signing.rs`, dtb-ke-patches; no
+  external Apple binaries shelled to); otherwise ad-hoc. Real device-signed builds are code-complete
+  and type-checked but **untested on hardware** — no Apple Developer identity is available in the dev
+  environment this was written in.
+- **SDK: currently unaddressed.** The macOS legs get their SDK floor from a `-Wl,-platform_version`
+  linker rustflag in `.cargo/config.toml` (see "macOS SDK restamp" above) — there is no equivalent
+  entry for `aarch64-apple-ios` yet, so an iOS build here still links against whatever SDK the host's
+  Xcode reports, with nothing forcing it up to a Liquid-Glass-capable floor the way the old `vtool`
+  step (or the new macOS rustflag) does. Worth fixing the same way before relying on this job for a
+  real iOS 26 release.
 - **Toolchain on the legacy Mac**: iOS needs a **full Xcode** (Command Line Tools have no iPhoneOS SDK) —
   the newest one macOS 13 runs is Xcode 15.2. The app icon is *not* compiled on the runner: `Assets.car`, the fallback PNGs and the icon
-  keys are committed under `assets/icons/generated/ios/` (`cargo dtb-ke-bundle icons` on a Mac with Xcode 26).
+  keys are committed under `assets/icons/generated/ios/` (`python3 scripts/icons.py` on a Mac with Xcode 26).
   Remaining risk: the Metal 4 shader path in `gpui_apple` may not compile against the old Metal toolchain. `runner-setup-macos.sh` installs the
   `aarch64-apple-ios` Rust target; installing Xcode is manual. Not yet run for real.
 
@@ -909,7 +918,7 @@ Set these under Codeberg → this repo → **Settings → Actions → Secrets**:
 | `IOS_SIGN_IDENTITY` + `IOS_PROVISIONING_PROFILE` (optional, both needed) | `tip.yml` / `release.yml`'s `ios` job | the `Apple Development: …` / `Apple Distribution: …` identity present in the macOS runner's keychain, and the base64 of a `.mobileprovision` for `de.philippremy.DTB-Kampfrichtereinsatzplaene`. Unset → ad-hoc signing (artifacts build but an iPad won't install them). The Mac wrapper only launches on a Mac if the profile allows Apple Silicon Macs |
 | `MACOS_SIGN_IDENTITY` (optional) | `release.yml`'s `macos-universal` job | the `Developer ID Application: …` identity string; unset falls back to ad-hoc signing and skips notarization (see above) rather than failing the job |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8` (optional, only matter with `MACOS_SIGN_IDENTITY` set) | same job, notarization | an App Store Connect API key (developer.apple.com → Users and Access → Integrations → Keys); `APPLE_API_KEY_P8` is the base64 of the downloaded `.p8` file |
-| `DTB_KE_SYMBOLS_URL`, `DTB_KE_SYMBOLS_UPLOAD_TOKEN` | the Windows, macOS and iOS jobs' "Upload debug symbols" step (both workflows) | the symbol server (`dtb-ke-symbol-server`, on the home Pi) — URL like `https://symbols.<domain>` and the **upload** token from the Pi's `/etc/dtb-ke-symbol-server.env`. `cargo dtb-ke-bundle symbols upload` PUTs each build's dSYM / PDB keyed by debug id. Unset = skipped with a note on Tip; `release.yml` passes `--strict`, so a release fails without them. The URL is a secret only to keep the home domain out of a public repo. **The runners must resolve that name to the Pi from inside the LAN** (router NAT loopback, or a hosts / local-DNS override to the Pi's LAN address). Linux and Windows upload the standalone `.debug` file that `strip.rs` splits off the unstripped build (see "Debug info" below) |
+| `DTB_KE_SYMBOLS_URL`, `DTB_KE_SYMBOLS_UPLOAD_TOKEN` | every job's "Upload debug symbols" step (both workflows) | the symbol server (`dtb-ke-symbol-server`, on the home Pi) — URL like `https://symbols.<domain>` and the **upload** token from the Pi's `/etc/dtb-ke-symbol-server.env`. `scripts/symbols.py upload --auto` PUTs each build's dSYM / debug file keyed by debug id. Unset = skipped with a note on Tip; `release.yml` passes `--strict`, so a release fails without them. The URL is a secret only to keep the home domain out of a public repo. **The runners must resolve that name to the Pi from inside the LAN** (router NAT loopback, or a hosts / local-DNS override to the Pi's LAN address). Linux and Windows upload the standalone `.debug` file that `scripts/symbols.py split` splits off the unstripped build (see "Debug info" above) |
 | `DTB_KE_SMTP_HOST`, `DTB_KE_SMTP_PORT`, `DTB_KE_SMTP_USER`, `DTB_KE_SMTP_PASS`, `DTB_KE_SMTP_FROM`, `DTB_KE_SMTP_TO` (optional) | both workflows, every build job (top-level `env:`) | the crash-reporter/feedback-window mail transport's credentials, baked in at compile time by `dtb-ke-ui/build.rs::emit_smtp_secret` (see `mail.rs`) — unset leaves the feature compiled in but disabled (`mail::available()` false), never a build failure |
 
 `CODEBERG_TOKEN` is also what `scripts/release.sh` needs *not* have —

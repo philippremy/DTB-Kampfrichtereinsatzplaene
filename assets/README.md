@@ -11,7 +11,7 @@ icon's layers, materials and translucency, and can only be compiled by Apple's
 own `actool`/`iconutil` (Xcode 26+, macOS only — there's no portable renderer
 for it).
 
-Everything else is **derived** by `cargo dtb-ke-bundle icons` and committed
+Everything else is **derived** by `python3 scripts/icons.py` and committed
 as regular, git-tracked files under `icons/generated/` (there is no way to
 regenerate them on Windows/Linux, so — unlike the old flat SVG/PNG master —
 they can't just be rebuilt from source on every host at bundle time):
@@ -27,11 +27,11 @@ they can't just be rebuilt from source on every host at bundle time):
 
 - **`dtb-ke-ui`** `include_bytes!`s `icons/generated/AppIcon.png` and shows it
   in the About window (`about.rs`).
-- **`dtb-ke-bundle`** just consumes `icons/generated/` as-is on every host
-  (`bundle.rs`'s `icon::available()`); it never tries to regenerate it.
+- **`cargo cargo-bundle`** (`vendor/cargo-bundle`) just consumes `icons/generated/` as-is on every
+  host, via the `icon = […]` list in `[package.metadata.bundle]`; it never tries to regenerate it.
 
-**Whenever `AppIcon.icon` changes**, run `cargo dtb-ke-bundle icons` on a Mac
+**Whenever `AppIcon.icon` changes**, run `python3 scripts/icons.py` on a Mac
 with Xcode 26+ installed and commit the regenerated `icons/generated/` — see
-`crates/dtb-ke-bundle/src/icon.rs`'s module doc for the full pipeline
+`scripts/icons.py`'s own module docstring for the full pipeline
 (`actool --compile` → icns + Assets.car, `iconutil --convert iconset` → the
-flat PNG, then pure-Rust resizing for the `.ico`/hicolor sets).
+flat PNG, then Pillow resizing for the `.ico`/hicolor sets).
