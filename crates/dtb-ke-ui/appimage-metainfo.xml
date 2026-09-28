@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+	<id>de.philippremy.DTB-Kampfrichtereinsatzplaene</id>
+	<name>DTB Kampfrichtereinsatzpläne</name>
+	<summary>Kampfrichtereinsatzpläne für Rhönrad- und Cyr-Wheel-Wettkämpfe des DTB erstellen</summary>
+	<metadata_license>CC0-1.0</metadata_license>
+	<project_license>AGPL-3.0-or-later</project_license>
+	<description>
+		<p>
+			DTB Kampfrichtereinsatzpläne ist eine native Anwendung zum Erstellen von
+			Kampfrichtereinsatzplänen für Rhönrad- und Cyr-Wheel-Wettkämpfe im Deutschen
+			Turner-Bund. Kampfgerichte werden mit Namen besetzt, in Qualifikation und Finale
+			gegliedert und als PDF oder Word-Dokument exportiert.
+		</p>
+	</description>
+	<launchable type="desktop-id">dtb-ke-ui.desktop</launchable>
+	<provides>
+		<binary>dtb-ke-ui</binary>
+		<mediatype>application/x-dtbke</mediatype>
+	</provides>
+	<url type="homepage">https://codeberg.org/philippremy/DTB-Kampfrichtereinsatzplaene</url>
+	<developer id="de.philippremy">
+		<name>Philipp Remy</name>
+	</developer>
+	<content_rating type="oars-1.1"/>
+	<releases>
+		<release version="2.1.1-dev.0" date="2026-09-28"/>
+	</releases>
+</component>

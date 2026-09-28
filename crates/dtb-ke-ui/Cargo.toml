@@ -3,16 +3,9 @@ name = "dtb-ke-ui"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+authors.workspace = true
 build = "build.rs"
 
-# Kebab-case on purpose (satisfies cargo's non_kebab_case_bins lint with no
-# unstable-flag juggling — see the `bundling` memory / RUNNERS.md for the
-# saga). This is purely the raw cargo build artifact's name
-# (dtb-ke-bundle::meta::RAW_BIN_NAME must match it exactly, to find what
-# cargo built); the actual *shipped* product name — what ends up inside the
-# .app/portable folder, in Task Manager, etc. — is meta::DISPLAY_NAME
-# ("DTB Kampfrichtereinsatzpläne"), applied by dtb-ke-bundle's packagers at
-# package time, not by cargo at build time.
 [lib]
 path = "src/lib.rs"
 
@@ -79,3 +72,121 @@ raw-window-handle.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 windows-core.workspace = true
+
+# `cargo cargo-bundle` (vendor/cargo-bundle, a fork of https://github.com/burtonageo/cargo-bundle
+# pinned on the `dtb-ke-patches` branch — see .gitmodules) reads this. Paths are resolved relative to
+# wherever `cargo cargo-bundle` is invoked from (the workspace root via the `.cargo/config.toml`
+# alias), not relative to this manifest, since cargo-bundle globs them against the process's cwd.
+[package.metadata.bundle]
+name = "DTB Kampfrichtereinsatzpläne"
+# Carries the non-ASCII `ä` because it is the macOS data-directory / preferences-domain key (must
+# match `filesystem::APPLICATION_IDENTIFIER`); changing it would strand existing installs' databases.
+identifier = "de.philippremy.DTB-Kampfrichtereinsatzpläne"
+icon = [
+    "assets/icons/generated/AppIcon.icns",
+    "assets/icons/generated/AppIcon.png",
+    "assets/icons/generated/AppIcon.ico",
+]
+copyright = "© 2026 Philipp Remy. Freie Software, lizenziert unter der GNU Affero General Public License v3."
+category = "productivity"
+short_description = "Kampfrichtereinsatzpläne für Rhönrad- und Cyr-Wheel-Wettkämpfe des DTB erstellen"
+long_description = """
+DTB Kampfrichtereinsatzpläne ist eine native Anwendung zum Erstellen von \
+Kampfrichtereinsatzplänen für Rhönrad- und Cyr-Wheel-Wettkämpfe im Deutschen \
+Turner-Bund. Kampfgerichte werden mit Namen besetzt, in Qualifikation und Finale \
+gegliedert und als PDF oder Word-Dokument exportiert.
+"""
+# AppStream metainfo for the AppImage — cargo-bundle warns without it ("recommended for
+# discoverability in software centers"); the field already existed upstream, just unset.
+appimage_metainfo_path = "crates/dtb-ke-ui/appimage-metainfo.xml"
+
+[package.metadata.bundle.osx]
+minimum_system_version = "11.0"
+# The Mach-O executable inside Contents/MacOS/ — distinct from `name` above (the .app folder /
+# CFBundleName, unaffected). ASCII/short by explicit request; the bundle stays branded.
+executable_name = "DTB-KE"
+# App Sandbox + the network/file-picker entitlements it needs (mail via lettre/ureq, the native
+# save/open panels). No `apple_signing_p12`/`apple_signing_password_env` yet, so this signs ad-hoc
+# (dtb-ke-patches: osx/ios entitlements now apply even without a p12 — see signing.rs) — matching the
+# previous ad-hoc `codesign -s -` default; a real Developer ID cert for distribution builds is a
+# `apple_signing_p12`/`apple_signing_password_env` addition here later, nothing else changes. macOS
+# only (dtb-ke-patches: entitlements/hardened_runtime are now per-platform — see
+# OsxSettings::entitlements's doc comment) — iOS ships none of its own right now.
+entitlements = "crates/dtb-ke-ui/entitlements.plist"
+hardened_runtime = true
+# CFBundleIconName (→ the "AppIcon" set inside Assets.car) + the .dtbke document-type declaration
+# (CFBundleDocumentTypes/UTExportedTypeDeclarations) — upstream has no dedicated fields for either, so
+# this is spliced verbatim into Info.plist's <dict> (see osx_bundle.rs::create_info_plist).
+info_plist_exts = ["crates/dtb-ke-ui/Info.macOS.plist"]
+# Assets.car (the compiled Liquid Glass icon asset catalog) and DocumentIcon.icns (the .dtbke file
+# icon, referenced by bare name from info_plist_exts above) must sit flat at the Resources root —
+# dtb-ke-patches' `additional_resources` field (vendor/cargo-bundle), see its own doc comment.
+additional_resources = [
+    "assets/icons/generated/Assets.car",
+    "assets/icons/generated/DocumentIcon.icns",
+    "assets/AGPL-3.0.txt",
+]
+
+[package.metadata.bundle.linux]
+mime_types = ["application/x-dtbke"]
+use_terminal = false
+# The Debian control file's Package: field only ever gets `.to_ascii_lowercase()`'d from `name` above
+# (a no-op on "ä") — Debian policy restricts this to lowercase ASCII + digits/+/-/. — so this is
+# required, not cosmetic (dtb-ke-patches: LinuxSettings::package_name, see its own doc comment).
+package_name = "dtb-ke"
+# The installed executable (`/usr/bin/`, the AppImage's `AppRun` target, the .desktop file's Exec=/
+# Icon= keys) — as opposed to `binary_name()`, the raw Cargo `[[bin]] name` ("dtb-ke-ui"), which is
+# what the old dtb-ke-bundle's RAW_BIN_NAME was always careful to keep separate from any branding.
+executable_name = "dtb-ke"
+# Registers application/x-dtbke (glob *.dtbke) with the system's shared MIME database — without this,
+# `mime_types` above / the .desktop file's MimeType= line declare that this app opens the type, but
+# nothing ever defines the type in the first place (dtb-ke-patches: LinuxSettings::mime_info_path).
+mime_info_path = "crates/dtb-ke-ui/mime-dtbke.xml"
+# AppStream requires the AppImage metainfo filename to exactly match the <id> inside it; `identifier`
+# above carries the "ä" (needed for macOS, see its own comment), so this ASCII form is what the
+# metainfo's own <id> below must match too (dtb-ke-patches: LinuxSettings::appstream_id).
+appstream_id = "de.philippremy.DTB-Kampfrichtereinsatzplaene"
+# deb_depends deliberately left unset for now: cargo-bundle's .deb backend (deb_bundle.rs) has no
+# ldd-style auto-detection, so a real list needs verifying against an actual Linux build's linked
+# libraries first, not guessed here.
+
+# dtb-ke-patches: the installed .exe's file name (no extension — always appended). Otherwise the
+# raw Cargo `[[bin]] name`, "dtb-ke-ui.exe" — this is the branded name the in-app updater's
+# `bin_path_in_archive` (updater::BIN_NAME) already expects inside a downloaded archive, now also
+# what the .msi actually installs under Program Files.
+[package.metadata.bundle.windows]
+executable_name = "DTB Kampfrichtereinsatzpläne"
+
+# dtb-ke-patches: upstream's WiX backend (wxsmsi_bundle.rs) had no file-association support at all.
+# Matches the macOS/Linux `.dtbke` wiring (doc_progid/doc_uti/doc_type_name in the old dtb-ke-bundle).
+[package.metadata.bundle.windows.file_association]
+extension = "dtbke"
+prog_id = "DTBKE.Document"
+description = "DTB Kampfrichtereinsatzplan"
+content_type = "application/x-dtbke"
+icon = "assets/icons/generated/DocumentIcon.ico"
+
+# dtb-ke-patches: ios_bundle.rs had none of osx_bundle.rs's capabilities — no info_plist_exts splice,
+# no flat-basename resource placement, no separate home-screen-label override. Assets.car + the two
+# actool-generated fallback PNGs (assets/icons/generated/ios/) and the four DocumentIcon-{64,320}[@2x]
+# PNGs (fit_in_square'd from assets/icons/FileIcon.png, same algorithm the old dtb-ke-bundle used) land
+# flat at the bundle root via additional_resources; CFBundleIcons(~ipad)/CFBundleIconName (what actool
+# reported for Assets.car — same content the old pipeline merged via PlistBuddy) and the
+# CFBundleDocumentTypes/UTExportedTypeDeclarations pair are spliced via info_plist_exts.
+[package.metadata.bundle.ios]
+# Truncates under the icon after ~13 characters — "DTB Kampfrichtereinsatzpläne" doesn't fit; KE is
+# how the sport itself shortens Kampfrichtereinsatzpläne.
+display_name = "DTB KE-Pläne"
+# The Mach-O executable at the bundle root — same identity as macOS's `osx.executable_name` (the
+# home-screen label above is unaffected either way).
+executable_name = "DTB-KE"
+info_plist_exts = ["crates/dtb-ke-ui/Info.iOS.plist"]
+additional_resources = [
+    "assets/icons/generated/ios/Assets.car",
+    "assets/icons/generated/ios/AppIcon60x60@2x.png",
+    "assets/icons/generated/ios/AppIcon76x76@2x~ipad.png",
+    "assets/icons/generated/ios/DocumentIcon-64.png",
+    "assets/icons/generated/ios/DocumentIcon-64@2x.png",
+    "assets/icons/generated/ios/DocumentIcon-320.png",
+    "assets/icons/generated/ios/DocumentIcon-320@2x.png",
+]
