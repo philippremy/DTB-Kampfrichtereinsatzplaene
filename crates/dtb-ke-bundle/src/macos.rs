@@ -103,13 +103,26 @@ pub fn bundle(cx: &Context) -> Result<(), String> {
     )
     .ok();
 
+    // Entitlements (empty for an unsandboxed product, e.g. the debugger — see
+    // `meta::Product::macos_entitlements`). Written next to the bundle, not inside it: entitlements
+    // live in the code signature itself once `codesign` runs, not as a loose bundle resource.
+    let entitlements = if meta::p().macos_entitlements.is_empty() {
+        None
+    } else {
+        let path = cx
+            .out_dir
+            .join(format!("{}-entitlements.plist", meta::p().slug));
+        std::fs::write(&path, entitlements_plist(meta::p().macos_entitlements)).map_err(io)?;
+        Some(path)
+    };
+
     // Sign. Ad-hoc by default; a real identity via `--sign` (or $DTB_KE_SIGN_ID).
     let identity = cx
         .sign
         .clone()
         .or_else(|| std::env::var("DTB_KE_SIGN_ID").ok())
         .unwrap_or_else(|| "-".to_string());
-    codesign(&app, &identity)?;
+    codesign(&app, &identity, entitlements.as_deref())?;
 
     report(&app);
     if identity == "-" {
@@ -341,7 +354,25 @@ fn parse_version(s: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-fn codesign(app: &Path, identity: &str) -> Result<(), String> {
+/// One `<key>…</key><true/>` pair per entitlement — every entitlement this bundler ever grants is
+/// plain boolean (see `meta::Product::macos_entitlements`'s doc comment); a value-carrying one (a
+/// `temporary-exception.*` string list, say) would need its own case here if one is ever added.
+fn entitlements_plist(keys: &[&str]) -> String {
+    let entries: String = keys
+        .iter()
+        .map(|k| format!("\t<key>{k}</key>\n\t<true/>\n"))
+        .collect();
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         {entries}</dict>\n\
+         </plist>\n"
+    )
+}
+
+fn codesign(app: &Path, identity: &str, entitlements: Option<&Path>) -> Result<(), String> {
     // `--options runtime` only makes sense with a real identity (hardened
     // runtime + notarisation); ad-hoc stays plain so a local run isn't blocked.
     let app = app.to_string_lossy().into_owned();
@@ -349,6 +380,12 @@ fn codesign(app: &Path, identity: &str) -> Result<(), String> {
     if identity != "-" {
         args.push("--options");
         args.push("runtime");
+    }
+    let ent_path;
+    if let Some(path) = entitlements {
+        ent_path = path.to_string_lossy().into_owned();
+        args.push("--entitlements");
+        args.push(&ent_path);
     }
     args.push(&app);
     try_run("codesign", &args, &workspace_root())
@@ -404,7 +441,28 @@ fn io(e: std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::info_plist;
+    use super::{entitlements_plist, info_plist};
+
+    #[test]
+    fn entitlements_plist_declares_every_key_as_a_bare_boolean() {
+        let xml = entitlements_plist(&[
+            "com.apple.security.app-sandbox",
+            "com.apple.security.network.client",
+        ]);
+        assert_eq!(
+            xml.matches('<').count(),
+            xml.matches('>').count(),
+            "unbalanced tags"
+        );
+        assert!(xml.contains("<key>com.apple.security.app-sandbox</key>\n\t<true/>"));
+        assert!(xml.contains("<key>com.apple.security.network.client</key>\n\t<true/>"));
+    }
+
+    #[test]
+    fn entitlements_plist_with_no_keys_is_an_empty_dict() {
+        let xml = entitlements_plist(&[]);
+        assert!(xml.contains("<dict>\n</dict>"));
+    }
 
     #[test]
     fn plist_declares_the_dtbke_document_type() {

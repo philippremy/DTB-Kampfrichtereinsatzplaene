@@ -67,6 +67,10 @@ pub struct Product {
     pub ios: bool,
     /// The AGPL text shipped in the bundle, workspace-relative.
     pub license_file: &'static str,
+    /// macOS entitlement keys (each written as `<key>…</key><true/>`) — empty means the `.app` ships
+    /// with no entitlements at all (unsandboxed, `macos::codesign` passes no `--entitlements`). Every
+    /// key here must be justified by something the product actually does; see `APP`'s own comment.
+    pub macos_entitlements: &'static [&'static str],
 }
 
 pub static APP: Product = Product {
@@ -107,6 +111,21 @@ gegliedert und als PDF oder Word-Dokument exportiert.",
     doc_icon_master: "assets/icons/FileIcon.png",
     ios: true,
     license_file: "crates/dtb-ke-ui/assets/AGPL-3.0.txt",
+    // App Sandbox. The crash handler no longer needs anything beyond the base entitlement (see
+    // `dtb-ke-crash`'s macOS module doc comment — the bootstrap-namespace handoff was replaced with
+    // a task-exception-port carrier that survives `fork`+`execv` on its own); DB/log/backup paths
+    // need nothing either (they're `$HOME`-relative, which the sandbox transparently redirects into
+    // the app's container — verified empirically). Two things actually reach outside the container
+    // and need their own entitlement: `network.client` (outbound TCP/TLS — crash-report/feedback
+    // mail via `lettre`, and the updater's manifest/asset fetches via `ureq`, both real sockets this
+    // process opens itself) and `files.user-selected.read-write` (the native save/open panels in
+    // `save/macos.rs` — export/import/backup all hand the user a panel and then read or write
+    // exactly the path they picked, outside the container by definition).
+    macos_entitlements: &[
+        "com.apple.security.app-sandbox",
+        "com.apple.security.network.client",
+        "com.apple.security.files.user-selected.read-write",
+    ],
 };
 
 pub static DEBUGGER: Product = Product {
@@ -144,6 +163,9 @@ Ein reines Entwicklerwerkzeug.",
     doc_icon_master: "assets/icons/CrashDumpIcon.png",
     ios: false,
     license_file: "crates/dtb-ke-ui/assets/AGPL-3.0.txt",
+    // Dev-only diagnostic tool: reads arbitrary dumps/symbol files/source trees the developer points
+    // it at, from anywhere on disk. Sandboxing it would fight its entire purpose, so it ships plain.
+    macos_entitlements: &[],
 };
 
 static SELECTED: std::sync::OnceLock<&'static Product> = std::sync::OnceLock::new();
