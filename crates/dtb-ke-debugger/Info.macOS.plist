@@ -1,0 +1,49 @@
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
+  <key>CFBundleAlternateNames</key>
+  <array>
+    <string>DTB KE Debugger</string>
+    <string>DTB-KE-Debugger</string>
+    <string>Kampfrichtereinsatzpläne Debugger</string>
+  </array>
+  <key>NSSupportsAutomaticGraphicsSwitching</key>
+  <true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>DTB Kampfrichtereinsatzpläne Absturzbericht</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>de.philippremy.DTB-Kampfrichtereinsatzplaene.Absturzbericht</string>
+      </array>
+      <key>CFBundleTypeIconFile</key>
+      <string>DocumentIcon</string>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>de.philippremy.DTB-Kampfrichtereinsatzplaene.Absturzbericht</string>
+      <key>UTTypeDescription</key>
+      <string>DTB Kampfrichtereinsatzpläne Absturzbericht</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>dtbkedmp</string>
+        </array>
+      </dict>
+      <key>UTTypeIconFile</key>
+      <string>DocumentIcon</string>
+    </dict>
+  </array>

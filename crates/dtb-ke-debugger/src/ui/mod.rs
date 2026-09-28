@@ -17,12 +17,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dtb_ke_debugger::code::SourceRoots;
-use dtb_ke_debugger::process::{Analysis, OpenedDump, analyze};
-use dtb_ke_debugger::progress::Progress;
-use dtb_ke_debugger::remote::{CacheSource, SymbolServerSource};
-use dtb_ke_debugger::{
-    DebugFileSource, DirectorySource, DyldSharedCacheSource, ExecutableSource, Resolver,
+use crate::code::SourceRoots;
+use crate::dyld::DyldSharedCacheSource;
+use crate::process::{Analysis, OpenedDump, analyze};
+use crate::progress::Progress;
+use crate::remote::{CacheSource, SymbolServerSource};
+use crate::resolve::Resolver;
+use crate::source::{
+    DebugFileSource, DirectorySource, ExecutableSource,
 };
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::menu_bar::MenuBar;
@@ -157,7 +159,7 @@ pub fn open(cx: &mut App, dump: Option<PathBuf>, symbol_paths: Vec<PathBuf>) {
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some(dtb_ke_debugger::NAME.into()),
+            title: Some(crate::NAME.into()),
             appears_transparent: dtb_ke_ui::skin::window::secondary_window_appears_transparent(),
             ..Default::default()
         }),
@@ -221,7 +223,7 @@ impl DebuggerWindow {
         // the symbol server (set in the Symbols tab; `DTB_KE_SYMBOL_SERVER` / `DTB_KE_SYMBOL_TOKEN` are the default).
         // A real cache belongs in the OS cache directory, not in the app's data folder nor the (temporary) data root
         // this process runs with (see `main`).
-        let cache = Arc::new(CacheSource::new(dtb_ke_debugger::remote::cache_dir()));
+        let cache = Arc::new(CacheSource::new(crate::remote::cache_dir()));
         let mut resolver = Resolver::new().with(ExecutableSource);
         resolver.push(dir_source.clone() as Arc<dyn DebugFileSource>);
         // Debug aid: `DTB_KE_NO_DYLD=1` leaves this Mac's cache out, to see the "unlocated system libraries" hint.
@@ -286,7 +288,7 @@ impl DebuggerWindow {
 
     fn open_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         log::info!("opening {}", path.display());
-        if !dtb_ke_debugger::is_dump(&path) {
+        if !crate::is_dump(&path) {
             log::error!(
                 "{} is not a .{} file",
                 path.display(),
@@ -313,7 +315,7 @@ impl DebuggerWindow {
                     .and_then(|b| b.workspace_root())
                     .map(str::to_owned);
                 // The OS build names per-build system symbols (Xcode's DeviceSupport, simulator caches).
-                let found = dtb_ke_debugger::discover(&opened.system);
+                let found = crate::discover::discover(&opened.system);
                 for root in &found.symbol_roots {
                     log::info!(
                         "using Xcode's system symbols for {}: {}",
@@ -323,7 +325,7 @@ impl DebuggerWindow {
                     self.dir_source.add_root(root.clone());
                 }
                 if !found.cache_dirs.is_empty() {
-                    let opened_caches = dtb_ke_debugger::add_caches_from(&found.cache_dirs);
+                    let opened_caches = crate::dyld::add_caches_from(&found.cache_dirs);
                     log::info!(
                         "simulator cache dir(s) for {}: {} new cache(s)",
                         opened.system,
@@ -426,7 +428,7 @@ impl DebuggerWindow {
     /// Names of OS libraries that some stack frame sits in but that no source could locate.
     fn unlocated_system_libraries(&self, analysis: &Analysis) -> Vec<String> {
         use dtb_ke_crash::syshints::Quality;
-        use dtb_ke_debugger::Outcome;
+        use crate::resolve::Outcome;
         use minidump::Module;
         let Some(session) = &self.session else {
             return Vec::new();
@@ -502,7 +504,7 @@ impl DebuggerWindow {
     fn add_symbol_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         // Anything supplied may be a folder of images / dSYMs / PDBs, or a dyld shared cache (a simulator
         // runtime's, one from an IPSW) — try both readings.
-        let caches = dtb_ke_debugger::add_caches_from(&paths);
+        let caches = crate::dyld::add_caches_from(&paths);
         if caches > 0 {
             log::info!("{caches} dyld cache(s) added");
         }
@@ -516,7 +518,7 @@ impl DebuggerWindow {
     fn dropped(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
         let mut paths = paths.paths().to_vec();
         // A dropped `.dtbkedmp` opens; anything else (dSYM bundle, PDB, directory) is a symbol source.
-        if let Some(i) = paths.iter().position(|p| dtb_ke_debugger::is_dump(p)) {
+        if let Some(i) = paths.iter().position(|p| crate::is_dump(p)) {
             let dump = paths.remove(i);
             for p in paths {
                 self.dir_source.add_root(p);
@@ -877,8 +879,8 @@ impl Render for DebuggerWindow {
 
         // "<name> (<file>)" — in the OS title bar and in our own title strip.
         let title = match self.session.as_ref().and_then(|s| s.path.file_name()) {
-            Some(name) => format!("{} ({})", dtb_ke_debugger::NAME, name.to_string_lossy()),
-            None => dtb_ke_debugger::NAME.to_owned(),
+            Some(name) => format!("{} ({})", crate::NAME, name.to_string_lossy()),
+            None => crate::NAME.to_owned(),
         };
         if self.window_title != title {
             window.set_window_title(&title);

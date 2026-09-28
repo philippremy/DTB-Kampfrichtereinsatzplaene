@@ -202,7 +202,6 @@ mod tests {
     fn module() -> ModuleRef {
         ModuleRef {
             base: 0,
-            size: 0,
             code_file: "/x/app".into(),
             debug_file: None,
             debug_id: Some(samply_symbols::debugid::DebugId::nil()),

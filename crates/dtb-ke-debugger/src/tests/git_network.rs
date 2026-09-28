@@ -1,7 +1,7 @@
 //! The fine-grained git client against real servers. Needs the network, so it only runs when asked:
 //! `DTB_KE_NETWORK_TESTS=1 cargo test -p dtb-ke-debugger --test git_network -- --nocapture`.
 
-use dtb_ke_debugger::git::{Lookup, RemoteRepo};
+use crate::git::{Lookup, RemoteRepo};
 use gix::ObjectId;
 
 fn enabled() -> bool {
@@ -183,7 +183,8 @@ fn plans_fetch_our_files_submodule_files_std_files_and_crates() {
     if !enabled() {
         return;
     }
-    use dtb_ke_debugger::{BuildInfo, sources};
+    use crate::build::BuildInfo;
+    use crate::sources;
     let cache = scratch("plans");
     let root = "/Users/x/proj";
     let build = BuildInfo::from_text(&format!("workspace_root={root}\ncommit_full={COMMIT}\n"));
@@ -265,7 +266,7 @@ fn plans_fetch_our_files_submodule_files_std_files_and_crates() {
     .unwrap();
     let err = sources::fetch_blocking(&never_seen, &cache, false).unwrap_err();
     assert!(
-        err.downcast_ref::<dtb_ke_debugger::git::NeedsNetwork>()
+        err.downcast_ref::<crate::git::NeedsNetwork>()
             .is_some(),
         "{err:#}"
     );

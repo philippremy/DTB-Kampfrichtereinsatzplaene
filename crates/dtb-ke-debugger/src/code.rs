@@ -25,6 +25,11 @@ pub struct SourceText {
 
 impl SourceText {
     /// 1-based `line`, with `radius` lines of context on each side: `(first_line_number, lines)`.
+    ///
+    /// The live source pane shows the whole file and scrolls to the line instead of a trimmed
+    /// snippet, so this is test-only for now — kept because it's the natural unit to test the
+    /// clamping behaviour against, not because anything calls it.
+    #[cfg(test)]
     pub fn window(&self, line: u32, radius: u32) -> (u32, Vec<&str>) {
         let all: Vec<&str> = self.text.lines().collect();
         let first = line.saturating_sub(radius).max(1);

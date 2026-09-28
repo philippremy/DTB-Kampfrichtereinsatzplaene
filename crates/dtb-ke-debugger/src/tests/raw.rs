@@ -3,7 +3,8 @@
 use dtb_ke_crash::snapshot::{
     CrashSnapshotDTO, ExceptionDTO, ModuleDTO, SessionDTO, ThreadDTO, to_minidump,
 };
-use dtb_ke_debugger::{BuildInfo, rawdump};
+use crate::build::BuildInfo;
+use crate::rawdump;
 use minidump::Minidump;
 
 fn dump() -> Minidump<'static, Vec<u8>> {
@@ -108,7 +109,7 @@ fn a_relative_main_module_path_is_replaced_by_the_build_infos_absolute_exe_path(
     };
     let path = std::env::temp_dir().join(format!("dtbke-rel-{}.dtbkedmp", std::process::id()));
     std::fs::write(&path, to_minidump(&snap)).unwrap();
-    let opened = dtb_ke_debugger::process::OpenedDump::open(&path).unwrap();
+    let opened = crate::process::OpenedDump::open(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     assert_eq!(opened.modules[0].code_file, "/abs/target/debug/app");
 }

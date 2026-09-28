@@ -2,7 +2,7 @@
 //! inside it) and the source pane while a file is fetched. Everything here is drawn from a [`Snapshot`], so a bar
 //! only fills as far as the numbers behind it say.
 
-use dtb_ke_debugger::progress::{Snapshot, TransferSnapshot};
+use crate::progress::{Snapshot, TransferSnapshot};
 use dtb_ke_ui::components::ProgressBar;
 use dtb_ke_ui::theme::ActiveTheme;
 use gpui_kit::{

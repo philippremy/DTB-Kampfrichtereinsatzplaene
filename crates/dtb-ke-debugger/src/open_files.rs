@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use dtb_ke_debugger::is_dump;
+use crate::is_dump;
 use dtb_ke_ui::open_files::file_url_to_path;
 use gpui_kit::{App, AsyncApp};
 

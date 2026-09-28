@@ -1,6 +1,6 @@
 //! "Raw dump": every stream of the dump on the left, the selected one as text on the right.
 
-use dtb_ke_debugger::rawdump::{self, StreamEntry};
+use crate::rawdump::{self, StreamEntry};
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone};
 use dtb_ke_ui::theme::ActiveTheme;

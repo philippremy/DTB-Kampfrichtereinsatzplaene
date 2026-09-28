@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use dtb_ke_debugger::Outcome;
-use dtb_ke_debugger::quality::Quality;
+use crate::resolve::Outcome;
+use crate::quality::Quality;
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone, Chip, ChipTone, Toggle};
 use dtb_ke_ui::theme::ActiveTheme;

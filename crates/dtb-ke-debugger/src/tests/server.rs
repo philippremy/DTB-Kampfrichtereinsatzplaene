@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use dtb_ke_debugger::identity::identify;
-use dtb_ke_debugger::remote::{CacheSource, SymbolServerSource};
-use dtb_ke_debugger::{ModuleRef, Outcome, Resolver};
+use crate::identity::{ModuleRef, identify};
+use crate::remote::{CacheSource, SymbolServerSource};
+use crate::resolve::{Outcome, Resolver};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -51,7 +51,6 @@ fn module_for(exe: &std::path::Path) -> ModuleRef {
     let id = identify(exe).into_iter().next().expect("identity").debug_id;
     ModuleRef {
         base: 0x1000,
-        size: 0x1000,
         // Not a path that exists here: the file must come from the server, never the local disk.
         code_file: "/no/such/place/app".into(),
         debug_file: Some("app".into()),

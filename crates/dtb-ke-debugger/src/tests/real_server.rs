@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use dtb_ke_debugger::identity::identify;
-use dtb_ke_debugger::remote::{
+use crate::identity::{ModuleRef, identify};
+use crate::remote::{
     CacheSource, ServerConfig, ServerHandle, SymbolServerSource, check_server,
 };
-use dtb_ke_debugger::{ModuleRef, Outcome, Resolver};
+use crate::resolve::{Outcome, Resolver};
 use dtb_ke_symbol_server::config::Config;
 use dtb_ke_symbol_server::{AppState, router};
 
@@ -33,7 +33,6 @@ fn module_for(exe: &std::path::Path) -> ModuleRef {
     let id = identify(exe).into_iter().next().expect("identity").debug_id;
     ModuleRef {
         base: 0x1000,
-        size: 0x1000,
         code_file: "/no/such/place/app".into(),
         debug_file: Some("app".into()),
         debug_id: Some(id),

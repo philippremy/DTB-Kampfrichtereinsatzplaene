@@ -4,7 +4,7 @@
 //! `MenuBar` (see `DebuggerWindow::render`). The debugger's UI is English, so the labels are too — only the
 //! About window follows the user's language, as it is shared with the main app.
 
-use dtb_ke_debugger::NAME;
+use crate::NAME;
 use dtb_ke_ui::actions::REPOSITORY_URL;
 use dtb_ke_ui::skin::menu::has_window_commands;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem};

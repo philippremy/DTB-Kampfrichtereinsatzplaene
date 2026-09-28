@@ -37,6 +37,10 @@ pub struct NativeSymbolProvider {
 impl NativeSymbolProvider {
     /// Load a symbol map for every resolved module. A file wholesym cannot read is logged and skipped —
     /// that module simply stays unsymbolicated.
+    ///
+    /// The live UI always reports progress, so it calls [`Self::load_with`] directly; this no-progress
+    /// form is test-only for now.
+    #[cfg(test)]
     pub async fn load(resolution: &Resolution, hints: Option<Arc<Hints>>) -> Self {
         Self::load_with(resolution, hints, None).await
     }
@@ -96,6 +100,7 @@ impl NativeSymbolProvider {
         }
     }
 
+    #[cfg(test)]
     pub fn symbolicated_modules(&self) -> usize {
         self.maps.len() + self.cached.len()
     }

@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use dtb_ke_debugger::code::{self, SourceText};
-use dtb_ke_debugger::progress::Progress;
-use dtb_ke_debugger::sources::{self, Plan};
+use crate::code::{self, SourceText};
+use crate::progress::Progress;
+use crate::sources::{self, Plan};
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone};
 use dtb_ke_ui::theme::ActiveTheme;
@@ -27,7 +27,7 @@ use super::widgets::{
     self, ListStyle, TextBlock, listing, listing_rows, section_title, selectable, tint,
 };
 use crate::tokio_bridge::Tokio;
-use dtb_ke_debugger::highlight::{Highlighted, Token, highlight};
+use crate::highlight::{Highlighted, Token, highlight};
 
 /// One line of the backtrace: a real frame, or an inlined frame beneath it.
 #[derive(Clone)]

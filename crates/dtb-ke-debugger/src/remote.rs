@@ -97,6 +97,10 @@ impl CacheSource {
     }
 
     /// Atomically add a file (temp + rename), so a crash mid-write never leaves a torn cache entry.
+    ///
+    /// Real downloads always go through [`Self::scratch_path`] + [`Self::adopt`] (verify-before-commit);
+    /// this one-shot form is only used to seed a fixture directly, so it's test-only for now.
+    #[cfg(test)]
     pub fn store(&self, id: &str, bytes: &[u8]) -> anyhow::Result<PathBuf> {
         let target = self.path_for(id);
         std::fs::create_dir_all(target.parent().expect("has parent"))?;
@@ -197,6 +201,10 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
 }
 
 impl SymbolServerSource {
+    /// A source pinned to a fixed server for its whole life. The live UI always goes through
+    /// [`Self::with_handle`] instead (so re-pointing the server never rebuilds the resolver), so this
+    /// simpler constructor is test-only for now.
+    #[cfg(test)]
     pub fn new(
         base: &str,
         token: Option<String>,

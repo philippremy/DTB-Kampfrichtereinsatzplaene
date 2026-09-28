@@ -6,10 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use dtb_ke_debugger::process::Analysis;
-use dtb_ke_debugger::quality::Quality;
-use dtb_ke_debugger::remote::{ServerConfig, ServerHandle, check_server};
-use dtb_ke_debugger::server_settings::{self, Stored};
+use crate::process::Analysis;
+use crate::quality::Quality;
+use crate::remote::{ServerConfig, ServerHandle, check_server};
+use crate::server_settings::{self, Stored};
 use dtb_ke_ui::components::icon::Icon;
 use dtb_ke_ui::components::{Button, ButtonTone, Field};
 use dtb_ke_ui::theme::ActiveTheme;

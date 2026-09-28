@@ -6,13 +6,12 @@ use std::path::PathBuf;
 use minidump::{Minidump, MinidumpModuleList, Module};
 use samply_symbols::debugid::DebugId;
 
-pub use dtb_ke_symid::{FileIdentity, FileType, identify};
+pub use dtb_ke_symid::{FileIdentity, identify};
 
 /// A module as the dump recorded it — the query every debug-file source answers.
 #[derive(Clone, Debug)]
 pub struct ModuleRef {
     pub base: u64,
-    pub size: u64,
     /// The module's code file path on the crashed machine.
     pub code_file: String,
     /// The debug file's name (`X.pdb`, or the binary's name for Mach-O / ELF).
@@ -24,7 +23,6 @@ impl ModuleRef {
     pub fn from_module(m: &impl Module) -> Self {
         Self {
             base: m.base_address(),
-            size: m.size(),
             code_file: m.code_file().into_owned(),
             debug_file: m.debug_file().map(|d| d.into_owned()),
             debug_id: m.debug_identifier(),
@@ -89,7 +87,6 @@ mod tests {
     fn module(path: &str) -> ModuleRef {
         ModuleRef {
             base: 0,
-            size: 0,
             code_file: path.into(),
             debug_file: None,
             debug_id: None,

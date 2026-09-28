@@ -9,12 +9,12 @@ use async_trait::async_trait;
 use dtb_ke_crash::snapshot::{
     Arm64RegsDTO, CrashSnapshotDTO, ModuleDTO, SessionDTO, ThreadDTO, to_minidump,
 };
-use dtb_ke_debugger::identity::identify;
-use dtb_ke_debugger::process::{OpenedDump, analyze};
-use dtb_ke_debugger::progress::Progress;
-use dtb_ke_debugger::remote::{CacheSource, SymbolServerSource};
-use dtb_ke_debugger::symbolize::NoSymbols;
-use dtb_ke_debugger::{ModuleRef, Outcome, Resolver};
+use crate::identity::{ModuleRef, identify};
+use crate::process::{OpenedDump, analyze};
+use crate::progress::Progress;
+use crate::remote::{CacheSource, SymbolServerSource};
+use crate::resolve::{Outcome, Resolver};
+use crate::symbolize::NoSymbols;
 use minidump_unwind::{
     FileError, FileKind, FillSymbolError, FrameSymbolizer, FrameWalker, SymbolProvider,
 };
@@ -163,7 +163,6 @@ async fn a_download_reports_its_bytes_while_it_runs_and_leaves_no_scratch_file()
         .debug_id;
     let module = ModuleRef {
         base: 0x1000,
-        size: 0x1000,
         code_file: "/no/such/place/app".into(),
         debug_file: Some("app".into()),
         debug_id: Some(id),

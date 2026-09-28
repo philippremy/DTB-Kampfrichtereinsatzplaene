@@ -3,14 +3,8 @@ name = "dtb-ke-debugger"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Developer-only minidump debugger: resolves native debug files (dSYM / PDB / DWARF) for a crash dump's exact build and symbolicates it. Packaged locally with `cargo dtb-ke-bundle bundle --product debugger` (not built by CI)."
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "dtb-ke-debugger"
-path = "src/main.rs"
+authors.workspace = true
+description = "Developer-only minidump debugger: resolves native debug files (dSYM / PDB / DWARF) for a crash dump's exact build and symbolicates it. Packaged locally with `cargo cargo-bundle` (not built by CI)."
 
 [dependencies]
 # The build-info user stream's format + parser, and `syshints` (feature-free std code — the whole
@@ -57,3 +51,58 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 dtb-ke-symbol-server = { path = "../dtb-ke-symbol-server" }
 tempfile = "3"
 libc.workspace = true
+
+# `cargo cargo-bundle` (vendor/cargo-bundle) reads this — an analogous port of dtb-ke-ui's own
+# [package.metadata.bundle] (see its Cargo.toml for the shared conventions). No `[package.metadata.
+# bundle.ios]` here: the debugger is desktop-only (macOS / Linux / Windows), and no debug-info step
+# (`debug-info`/`symbols` in the old dtb-ke-bundle, `scripts/debug_info.py`/`symbols.py` now) applies
+# to it either — it consumes debug files, it doesn't ship its own for later symbolication.
+[package.metadata.bundle]
+name = "DTB Kampfrichtereinsatzpläne Debugger"
+identifier = "de.philippremy.DTB-Kampfrichtereinsatzplaene.Debugger"
+icon = [
+    "assets/icons/debugger/generated/AppIcon.icns",
+    "assets/icons/debugger/generated/AppIcon.png",
+    "assets/icons/debugger/generated/AppIcon.ico",
+]
+copyright = "© 2026 Philipp Remy. Freie Software, lizenziert unter der GNU Affero General Public License v3."
+category = "developer-tool"
+short_description = "Absturzberichte (.dtbkedmp) der DTB Kampfrichtereinsatzpläne untersuchen und symbolisieren"
+long_description = """
+Der Debugger der DTB Kampfrichtereinsatzpläne öffnet die Absturzberichte der \
+Hauptanwendung, sucht die passenden Debug-Dateien für genau diesen Build und \
+zeigt Stapelspuren, Register und den zugehörigen Quelltext an. Ein reines \
+Entwicklerwerkzeug.
+"""
+appimage_metainfo_path = "crates/dtb-ke-debugger/appimage-metainfo.xml"
+
+[package.metadata.bundle.osx]
+minimum_system_version = "11.0"
+# Dev-only diagnostic tool: reads arbitrary dumps/symbol files/source trees the developer points it
+# at, from anywhere on disk. Sandboxing it would fight its entire purpose, so — unlike dtb-ke-ui, and
+# unlike the old dtb-ke-bundle's own DEBUGGER product (`macos_entitlements: &[]`) — it ships with no
+# entitlements at all and no hardened runtime; ad-hoc signed like everything else without a real
+# Developer ID cert.
+info_plist_exts = ["crates/dtb-ke-debugger/Info.macOS.plist"]
+# Assets.car (the compiled Liquid Glass icon asset catalog) and DocumentIcon.icns (the .dtbkedmp file
+# icon, referenced by bare name from info_plist_exts above) must sit flat at the Resources root — see
+# dtb-ke-ui's own additional_resources comment for why.
+additional_resources = [
+    "assets/icons/debugger/generated/Assets.car",
+    "assets/icons/debugger/generated/DocumentIcon.icns",
+    "assets/AGPL-3.0.txt",
+]
+
+[package.metadata.bundle.linux]
+mime_types = ["application/x-dtbkedmp"]
+use_terminal = false
+package_name = "dtb-ke-debugger"
+mime_info_path = "crates/dtb-ke-debugger/mime-dtbkedmp.xml"
+appstream_id = "de.philippremy.DTB-Kampfrichtereinsatzplaene-Debugger"
+
+[package.metadata.bundle.windows.file_association]
+extension = "dtbkedmp"
+prog_id = "DTBKEDebugger.CrashReport"
+description = "DTB Kampfrichtereinsatzpläne Absturzbericht"
+content_type = "application/x-dtbkedmp"
+icon = "assets/icons/debugger/generated/DocumentIcon.ico"

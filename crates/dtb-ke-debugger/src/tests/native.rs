@@ -1,8 +1,9 @@
 //! The resolve → symbolicate chain against real files: this test binary is its own fixture.
 
-use dtb_ke_debugger::identity::identify;
-use dtb_ke_debugger::symbolize::NativeSymbolProvider;
-use dtb_ke_debugger::{ExecutableSource, ModuleRef, Resolver};
+use crate::identity::{ModuleRef, identify};
+use crate::resolve::Resolver;
+use crate::source::ExecutableSource;
+use crate::symbolize::NativeSymbolProvider;
 use minidump::MinidumpModule;
 use minidump_unwind::{FrameSymbolizer, SymbolProvider};
 
@@ -105,9 +106,9 @@ async fn a_local_debug_build_is_debug_info_in_the_analysis() {
     use dtb_ke_crash::snapshot::{
         Arm64RegsDTO, CrashSnapshotDTO, ModuleDTO, SessionDTO, ThreadDTO, to_minidump,
     };
-    use dtb_ke_debugger::process::{OpenedDump, analyze};
-    use dtb_ke_debugger::progress::Progress;
-    use dtb_ke_debugger::quality::Quality;
+    use crate::process::{OpenedDump, analyze};
+    use crate::progress::Progress;
+    use crate::quality::Quality;
 
     let addr = dtb_ke_debugger_test_marker as *const () as usize;
     let (base, path) = image_of(addr);

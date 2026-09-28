@@ -6,9 +6,9 @@ use dtb_ke_crash::snapshot::{
     Arm64RegsDTO, CrashSnapshotDTO, ModuleDTO, SessionDTO, ThreadDTO, to_minidump,
 };
 use dtb_ke_crash::syshints::{Entry, Hints, Quality, STREAM_TYPE};
-use dtb_ke_debugger::Resolver;
-use dtb_ke_debugger::process::{OpenedDump, analyze};
-use dtb_ke_debugger::progress::Progress;
+use crate::process::{OpenedDump, analyze};
+use crate::progress::Progress;
+use crate::resolve::Resolver;
 
 const LIB_UUID: [u8; 16] = [0x42; 16];
 const BASE: u64 = 0x1_8000_0000;
@@ -128,7 +128,7 @@ async fn without_hints_the_frame_stays_unnamed() {
 #[tokio::test]
 async fn a_module_no_file_was_found_for_is_from_the_crash_report_only_if_its_frames_got_names_from_it()
  {
-    use dtb_ke_debugger::quality::Quality as Status;
+    use crate::quality::Quality as Status;
 
     // With the dump's own hints the frame is named, so the module reads "from crash report".
     let path = dump_with(Some(&hints(Quality::Exact, true)));

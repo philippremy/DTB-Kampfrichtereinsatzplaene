@@ -5,7 +5,26 @@
 #![recursion_limit = "256"]
 
 mod app_menu;
+mod build;
+mod code;
+mod discover;
+mod dyld;
+mod git;
+mod highlight;
+mod process;
+mod identity;
 mod open_files;
+mod progress;
+mod quality;
+mod rawdump;
+mod remote;
+mod resolve;
+mod server_settings;
+mod source;
+mod sources;
+mod symbolize;
+#[cfg(test)]
+mod tests;
 mod tokio_bridge;
 mod ui;
 
@@ -17,6 +36,11 @@ use dtb_ke_ui::i18n;
 use dtb_ke_ui::settings::Settings;
 use dtb_ke_ui::theme::{Appearance, Theme};
 
+/// The product name — window titles, the About window, the menu bar.
+const NAME: &str = "DTB Kampfrichtereinsatzpläne Debugger";
+/// Reverse-DNS identifier (ASCII; matches `dtb-ke-bundle`'s `meta::DEBUGGER`).
+const IDENTIFIER: &str = "de.philippremy.DTB-Kampfrichtereinsatzplaene.Debugger";
+
 /// The flat icon for the About window on Windows / Linux (macOS reads the live bundle icon). Embedded only once
 /// `cargo dtb-ke-bundle icons --product debugger` has generated it.
 #[cfg(has_app_icon)]
@@ -25,6 +49,12 @@ const ICON_PNG: Option<&[u8]> = Some(include_bytes!(
 ));
 #[cfg(not(has_app_icon))]
 const ICON_PNG: Option<&[u8]> = None;
+
+/// Whether `path` is a crash report this tool opens: a `.dtbkedmp` (case-insensitive).
+fn is_dump(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(dtb_ke_crash::DUMP_EXTENSION))
+}
 
 /// Where this process keeps its data root: a **temporary directory of its own**, so the debugger never writes logs,
 /// settings or backups into the regular app's folders. Everything the shared `FilesystemHelper` resolves (the log
@@ -80,7 +110,7 @@ fn main() {
     let mut dump = None;
     let mut symbol_paths = Vec::new();
     for arg in std::env::args_os().skip(1).map(PathBuf::from) {
-        if dump.is_none() && dtb_ke_debugger::is_dump(&arg) {
+        if dump.is_none() && is_dump(&arg) {
             dump = Some(arg);
         } else {
             symbol_paths.push(arg);
@@ -121,10 +151,10 @@ fn main() {
         about::install_identity(
             cx,
             Identity {
-                name: dtb_ke_debugger::NAME,
+                name: NAME,
                 // The long name would wrap at the app's headline size.
                 name_size: 18.,
-                identifier: dtb_ke_debugger::IDENTIFIER,
+                identifier: IDENTIFIER,
                 icon_png: ICON_PNG,
             },
         );
