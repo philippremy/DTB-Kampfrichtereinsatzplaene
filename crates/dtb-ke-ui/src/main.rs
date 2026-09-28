@@ -7,19 +7,33 @@ use dtb_ke_ui::menu::MenuState;
 use dtb_ke_ui::settings::Settings;
 use dtb_ke_ui::theme::{Appearance, Theme};
 use dtb_ke_ui::{
-    about, actions, app, build_info, components, crash_report, debug, feedback_window, filesystem, i18n,
-    keymap, logs_window, open_files, preview, save, settings, settings_window, sheet, skin, stress,
+    about, actions, app, build_info, components, debug, feedback_window, filesystem, i18n, keymap,
+    logs_window, open_files, preview, save, settings, settings_window, sheet, skin, stress,
 };
+// Only referenced by the self-relaunch dispatch below, which is `#[cfg]`'d out on iOS (no separate
+// process to relaunch into — see `dtb-ke-crash`'s module doc comment).
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use dtb_ke_ui::crash_report;
 
 fn main() {
-    // A re-launched instance in crash-reporter mode — spawned by the crash
-    // helper, which we recognise as our parent process (no flag, no env var).
-    // Show the crash dialog, return its verdict as the exit code, and nothing
-    // else. This MUST run before logging + crash-handler install so that a fault
-    // *in the reporter* can never spawn a second reporter.
-    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-    if crash_report::launched_by_crash_helper() {
-        std::process::exit(crash_report::run());
+    // A re-launched instance in crash-reporter mode. This MUST run before logging + crash-handler
+    // install so that a fault *in the reporter* can never spawn a second reporter.
+    //
+    // Every platform self-relaunches (see `dtb-ke-crash`'s module doc comment): the crashed process
+    // `execve`/`CreateProcessW`s this same binary with `dtb_ke_crash::RELAUNCH_ARG` as its first
+    // argument, so recognising it is just checking that flag — no separate helper process exists any
+    // more for a parent-process check to make sense against.
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some(dtb_ke_crash::RELAUNCH_ARG) {
+        std::process::exit(crash_report::run_linux_capture());
+    }
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some(dtb_ke_crash::RELAUNCH_ARG) {
+        std::process::exit(crash_report::run_macos_capture());
+    }
+    #[cfg(target_os = "windows")]
+    if std::env::args().nth(1).as_deref() == Some(dtb_ke_crash::RELAUNCH_ARG) {
+        std::process::exit(crash_report::run_windows_capture());
     }
 
     // Developer options that are only read from the environment (see `debug`) must be exported before

@@ -122,7 +122,6 @@ mod tests {
     }
 }
 
-#[cfg(feature = "as-library")]
 mod global {
     use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
@@ -150,5 +149,4 @@ mod global {
     }
 }
 
-#[cfg(feature = "as-library")]
 pub(crate) use global::*;

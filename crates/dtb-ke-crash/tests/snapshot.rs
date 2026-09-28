@@ -1,6 +1,6 @@
 //! The snapshot format and its minidump assembler, exercised with a synthetic crash: a frame-pointer
 //! chain over a hand-built stack, read back through the real `minidump` reader and unwound with
-//! `minidump-unwind` — the same stack the desktop `dtb-ke-symbolize` tool uses.
+//! `minidump-unwind` — the same stack `dtb-ke-debugger` uses.
 
 use dtb_ke_crash::snapshot::{self, *};
 use minidump::{

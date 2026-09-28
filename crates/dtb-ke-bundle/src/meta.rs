@@ -63,8 +63,6 @@ pub struct Product {
     /// Workspace-relative Icon Composer master (`*.icon`). `actool` compiles it under the fixed asset name
     /// `AppIcon` for every product (see `icon::generate_app_icon`).
     pub icon_master: &'static str,
-    /// Whether the product embeds the out-of-process crash helper (staged before the build).
-    pub crash_helper: bool,
     /// Whether an iPadOS bundle exists for it.
     pub ios: bool,
     /// The AGPL text shipped in the bundle, workspace-relative.
@@ -107,7 +105,6 @@ gegliedert und als PDF oder Word-Dokument exportiert.",
     icon_dir: "assets/icons",
     icon_master: "assets/icons/AppIcon.icon",
     doc_icon_master: "assets/icons/FileIcon.png",
-    crash_helper: true,
     ios: true,
     license_file: "crates/dtb-ke-ui/assets/AGPL-3.0.txt",
 };
@@ -145,7 +142,6 @@ Ein reines Entwicklerwerkzeug.",
     icon_dir: "assets/icons/debugger",
     icon_master: "assets/icons/DebuggerIcon.icon",
     doc_icon_master: "assets/icons/CrashDumpIcon.png",
-    crash_helper: false,
     ios: false,
     license_file: "crates/dtb-ke-ui/assets/AGPL-3.0.txt",
 };

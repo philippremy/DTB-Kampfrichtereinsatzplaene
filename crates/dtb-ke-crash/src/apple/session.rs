@@ -103,9 +103,9 @@ pub fn current(launch_id: [u8; 16], app_version: &str) -> SessionDTO {
         machine: sysctl_string(c"hw.machine"),
         ncpu: sysctl_u32(c"hw.ncpu"),
         exe_path: std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
-        #[cfg(all(feature = "as-library", target_os = "ios"))]
+        #[cfg(target_os = "ios")]
         build_info: crate::buildinfo::text().to_string(),
-        #[cfg(not(all(feature = "as-library", target_os = "ios")))]
+        #[cfg(not(target_os = "ios"))]
         build_info: String::new(),
         modules: modules(),
     }

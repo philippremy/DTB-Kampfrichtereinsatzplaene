@@ -3,25 +3,34 @@
 //! `install()` (clean context): resolve `syscall(2)` via `dlsym`, create the
 //! three pipes the crash path needs (params, "done", watchdog — the process can
 //! only crash once, so one set each), ask Yama to let a non-descendant ptrace us
-//! (`PR_SET_PTRACER_ANY`), install an alternate signal stack, spawn a watchdog
-//! thread, and point `sigaction` for every fatal signal at [`handler`].
+//! (`PR_SET_PTRACER_ANY` — still needed: the *reporter*, once forked, is a
+//! direct child of the crashed process regardless of which binary it execs into,
+//! but it needs to ptrace its own *parent*, which Yama's default "descendants
+//! only" rule doesn't cover on its own), install an alternate signal stack,
+//! spawn a watchdog thread, and point `sigaction` for every fatal signal at
+//! [`handler`].
 //!
 //! On a fault [`handler`] (signal context — only `syscall` through the resolved
 //! pointer, no libc, no `malloc`):
 //! 1. arm the watchdog,
-//! 2. extract the embedded helper to `$TMPDIR` (`openat`/`write`/`fchmod`),
-//! 3. raw `clone` (a bare `fork`, no `pthread_atfork` handlers); the child
+//! 2. raw `clone` (a bare `fork`, no `pthread_atfork` handlers); the child
 //!    `dup3`s the param pipe onto stdin, clears `CLOEXEC` on the "done" pipe,
-//!    and `execve`s the helper with a bare argv,
-//! 4. write the helper's parameters — dump dir, slug, main exe, pid, tid, signo,
-//!    `si_code`, `si_addr`, the "done" fd, the panic message, then the raw
-//!    `ucontext_t` bytes — down the param pipe and close it,
-//! 5. `read` the "done" pipe (the helper writes one byte the moment its dump is
-//!    captured; EOF if it died early), then `die(134)` — a raw `exit_group`, so
-//!    the crashed process and its frozen windows don't linger.
+//!    and `execve`s **`/proc/self/exe`** — this same binary, relaunched — with
+//!    [`crate::RELAUNCH_ARG`] as `argv[1]` (a bare argv otherwise: no embedded
+//!    helper to extract any more, nothing shows in `ps` beyond that one flag),
+//! 3. write the relaunched instance's parameters — dump dir, slug, pid, tid,
+//!    signo, `si_code`, `si_addr`, the "done" fd, the panic message, then the
+//!    raw `ucontext_t` bytes — down the param pipe and close it,
+//! 4. `read` the "done" pipe (the relaunched instance writes one byte the
+//!    moment its dump is captured; EOF if it died early), then `die(134)` — a
+//!    raw `exit_group`, so the crashed process and its frozen windows don't
+//!    linger.
 //!
-//! `minidump-writer` (`ptrace`), the reporter relaunch, and everything
-//! analytical run in the helper. A 12 s watchdog thread is the absolute backstop.
+//! `minidump-writer` (`ptrace`) and everything analytical run in the relaunched
+//! instance (`dtb-ke-ui`'s own `crash_report::run_linux_capture`, via
+//! `dtb_ke_crash::writer::linux::capture` + `writer::build_report`) — it *is*
+//! the crash reporter too, no further relaunch needed. A 12 s watchdog thread
+//! is the absolute backstop.
 
 #![allow(clippy::missing_safety_doc, unsafe_op_in_unsafe_fn, static_mut_refs)]
 
@@ -53,26 +62,29 @@ const FATAL_SIGNALS: [c_int; 10] = [
     libc::SIGPIPE,
 ];
 
-/// How many bytes at `uctx` we forward to the helper: exactly one
+/// How many bytes at `uctx` we forward to the relaunched instance: exactly one
 /// `ucontext_t`. The kernel wrote a `struct ucontext` into the signal frame, so
 /// this stays inside the frame (and the alt stack). The integer register save
 /// area — all `minidump-writer` reads — is at the front; the FP area is not
-/// forwarded (the helper zero-fills `float_state`).
+/// forwarded (`writer::linux::capture` zero-fills `float_state`).
 const UCONTEXT_BYTES: usize = core::mem::size_of::<libc::ucontext_t>();
 
 /// Watchdog grace period after a fault before it force-exits.
 const WATCHDOG_SECS: u64 = 12;
 
-static HELPER_BYTES: &[u8] = include_bytes!(env!("DTB_KE_CRASH_HELPER"));
+/// The relaunch target: this same running binary, whatever its own path — immune to the binary
+/// having moved since launch, unlike a path resolved once at `install()` time.
+const EXEC_SELF: &[u8] = b"/proc/self/exe\0";
 
 static HANDLED: AtomicBool = AtomicBool::new(false);
 
 // ── module state, all set in install() ─────────────────────────────────
 
-static mut HELPER_PATH: [u8; 1024] = [0; 1024];
 static mut DUMP_DIR: [u8; 1024] = [0; 1024];
 static mut APP_SLUG: [u8; 64] = [0; 64];
-static mut MAIN_EXE: [u8; 1024] = [0; 1024];
+/// `crate::RELAUNCH_ARG`, NUL-terminated — the `argv[1]` that tells the relaunched instance it is
+/// the crash-time capture + report process, not a normal launch.
+static mut RELAUNCH_ARG: [u8; 64] = [0; 64];
 static mut PARAM_FDS: [c_int; 2] = [-1, -1];
 static mut DONE_FDS: [c_int; 2] = [-1, -1];
 static mut WATCHDOG_FDS: [c_int; 2] = [-1, -1];
@@ -99,18 +111,10 @@ macro_rules! sys {
 pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::library::InstallError> {
     use crate::library::InstallError;
 
-    if HELPER_BYTES.is_empty() {
-        return Err(InstallError::NoHelper);
-    }
-
     unsafe {
         put_cstr(&mut DUMP_DIR, dump_dir.to_string_lossy().as_bytes());
         put_cstr(&mut APP_SLUG, app_slug.as_bytes());
-        let tmp = std::env::temp_dir().join(crate::HELPER_FILE_NAME);
-        put_cstr(&mut HELPER_PATH, tmp.to_string_lossy().as_bytes());
-        if let Ok(exe) = std::env::current_exe() {
-            put_cstr(&mut MAIN_EXE, exe.to_string_lossy().as_bytes());
-        }
+        put_cstr(&mut RELAUNCH_ARG, crate::RELAUNCH_ARG.as_bytes());
 
         // Resolve syscall(2) once, now.
         let p = libc::dlsym(libc::RTLD_DEFAULT, c"syscall".as_ptr());
@@ -131,8 +135,9 @@ pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::libr
             return Err(InstallError::Os("pipe2 failed".into()));
         }
 
-        // Let the on-demand helper (not a descendant of ours) ptrace us.
-        // Best-effort: harmless on kernels without Yama.
+        // Let the relaunched instance (once forked, our own child — but ptracing its own *parent*,
+        // which Yama's default rule doesn't cover) ptrace us. Best-effort: harmless on kernels
+        // without Yama.
         libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0);
 
         // Alt stack so a stack-overflow SIGSEGV still runs the handler.
@@ -209,8 +214,6 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
             );
         }
 
-        extract_helper();
-
         // Bare fork — no pthread_atfork handlers (they can take locks the
         // crashed thread may hold).
         let child = sys!(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) as libc::pid_t;
@@ -219,19 +222,20 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
             sys!(libc::SYS_dup3, PARAM_FDS[0], 0, 0); // params on stdin
             sys!(libc::SYS_fcntl, DONE_FDS[1], libc::F_SETFD, 0); // survive execve
             let argv = [
-                HELPER_PATH.as_ptr().cast::<libc::c_char>(),
+                EXEC_SELF.as_ptr().cast::<libc::c_char>(),
+                RELAUNCH_ARG.as_ptr().cast::<libc::c_char>(),
                 core::ptr::null(),
             ];
             sys!(
                 libc::SYS_execve,
-                HELPER_PATH.as_ptr(),
+                EXEC_SELF.as_ptr(),
                 argv.as_ptr(),
                 environ
             );
             die(127);
         }
         if child < 0 {
-            dtb_ke_log::fault!("Could not fork the crash helper, no minidump");
+            dtb_ke_log::fault!("Could not fork/relaunch for capture, no minidump");
             dtb_ke_log::fault!(" ---[ end trace {si_addr:#x} ]---");
             die(134);
         }
@@ -240,12 +244,11 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
         sys!(libc::SYS_close, PARAM_FDS[0]);
         sys!(libc::SYS_close, DONE_FDS[1]);
 
-        // params: dump_dir \0 slug \0 main_exe \0 pid \0 tid \0 signo \0
+        // params: dump_dir \0 slug \0 pid \0 tid \0 signo \0
         //         si_code \0 si_addr \0 done_fd \0 panic_msg \0 build_info \0 <ucontext bytes>
         let w = PARAM_FDS[1];
         write_cstr(w, DUMP_DIR.as_ptr());
         write_cstr(w, APP_SLUG.as_ptr());
-        write_cstr(w, MAIN_EXE.as_ptr());
         write_uint(w, sys!(libc::SYS_getpid) as u64);
         write_uint(w, sys!(libc::SYS_gettid) as u64);
         write_uint(w, sig as u64);
@@ -257,7 +260,7 @@ extern "C" fn handler(sig: c_int, info: *mut libc::siginfo_t, uctx: *mut c_void)
         write_all(w, uctx.cast::<u8>(), UCONTEXT_BYTES);
         sys!(libc::SYS_close, w);
 
-        // Wait (watchdog-bounded) for the helper's "done" byte / EOF.
+        // Wait (watchdog-bounded) for the relaunched instance's "done" byte / EOF.
         let mut b = [0u8; 1];
         sys!(libc::SYS_read, DONE_FDS[0], b.as_mut_ptr(), 1usize);
 
@@ -283,35 +286,6 @@ pub(crate) fn die(code: i32) -> ! {
 }
 
 // ── crash-path helpers (syscall only) ──────────────────────────────────
-
-unsafe fn extract_helper() {
-    // openat(AT_FDCWD, path, O_CREAT|O_TRUNC|O_WRONLY, 0700)
-    let fd = sys!(
-        libc::SYS_openat,
-        libc::AT_FDCWD,
-        HELPER_PATH.as_ptr(),
-        libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
-        0o700
-    ) as c_int;
-    if fd < 0 {
-        return;
-    }
-    let mut off = 0usize;
-    while off < HELPER_BYTES.len() {
-        let n = sys!(
-            libc::SYS_write,
-            fd,
-            HELPER_BYTES.as_ptr().add(off),
-            HELPER_BYTES.len() - off
-        );
-        if n <= 0 {
-            break;
-        }
-        off += n as usize;
-    }
-    sys!(libc::SYS_fchmod, fd, 0o700);
-    sys!(libc::SYS_close, fd);
-}
 
 unsafe fn write_all(fd: c_int, p: *const u8, len: usize) {
     let mut off = 0usize;

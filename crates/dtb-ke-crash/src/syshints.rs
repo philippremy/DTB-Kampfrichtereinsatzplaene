@@ -169,29 +169,6 @@ impl Hints {
     }
 }
 
-/// Frames as the helper hands them to the reporter: one per line, `thread \t uuid \t offset \t path`.
-pub fn encode_frames(frames: &[FrameRef]) -> String {
-    let mut s = String::new();
-    for f in frames {
-        let _ = writeln!(s, "{:x}\t{}\t{:x}\t{}", f.thread, uuid_hex(&f.uuid), f.offset, f.path.replace(['\n', '\t'], " "));
-    }
-    s
-}
-
-pub fn parse_frames(text: &str) -> Vec<FrameRef> {
-    text.lines()
-        .filter_map(|l| {
-            let mut p = l.splitn(4, '\t');
-            Some(FrameRef {
-                thread: u64::from_str_radix(p.next()?, 16).ok()?,
-                uuid: parse_uuid(p.next()?)?,
-                offset: u64::from_str_radix(p.next()?, 16).ok()?,
-                path: p.next()?.to_owned(),
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,11 +214,5 @@ mod tests {
         assert_eq!(h.entries.len(), 2);
         assert_eq!(h.frames_total, 9);
         assert!(!h.complete);
-    }
-
-    #[test]
-    fn frames_round_trip() {
-        let f = vec![FrameRef { thread: 0x103, uuid: [7; 16], offset: 0x1234, path: "/usr/lib/libSystem.B.dylib".into() }];
-        assert_eq!(parse_frames(&encode_frames(&f)), f);
     }
 }

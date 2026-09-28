@@ -1,16 +1,10 @@
 //! `cargo dtb-ke-bundle <command>` — build orchestration + platform packaging.
 //!
-//! `dtb-ke-crash` embeds the crash helper with `include_bytes!`, but cargo won't
-//! build a sibling `[[bin]]` unless something depends on it (and artifact deps
-//! need `-Z bindeps`). So: build the helper first, stage it where the
-//! `dtb-ke-crash` build script reads it, then build the app.
-//!
-//! On top of that, `bundle` turns the built binary into a distributable package
+//! `bundle` turns the built binary into a distributable package
 //! for the host OS — a `.app` on macOS, an `.msi` (via WiX) on Windows, and
 //! `.deb` / `.rpm` / `.AppImage` / `.tar.gz` on Linux.
 //!
 //!   cargo dtb-ke-bundle build   [--release] [-- <extra cargo args>]
-//!   cargo dtb-ke-bundle helper  [--release]        just (re)stage the helper
 //!   cargo dtb-ke-bundle icons                      regenerate icon variants (macOS only,
 //!                                                   see icon.rs; writes + commits to
 //!                                                   assets/icons/generated/)
@@ -20,7 +14,7 @@
 //!     `--sign <identity> --provisioning-profile <file>`.
 //!   Every build/bundle/icons/debug-info command takes `--product app|debugger` (default `app`): the debugger
 //!   (`dtb-ke-debugger`) gets its own `.app`/`.msi`/Linux packages, icons (`assets/icons/debugger/`) and the
-//!   `.dtbkedmp` file association, and has no crash helper and no iOS bundle.
+//!   `.dtbkedmp` file association, and has no iOS bundle.
 //!   cargo dtb-ke-bundle debug-info [--universal | --target <t>] <out.tar.gz>
 //!     package `[profile.release] split-debuginfo = "packed"`'s sidecar —
 //!     macOS's `.dSYM`, Linux's `.dwp` — kept entirely separate from `bundle`
@@ -34,7 +28,6 @@ mod archive;
 mod bundle;
 mod codeberg;
 mod debug_info;
-mod helper;
 mod icon;
 mod ios;
 mod linux;
@@ -65,12 +58,8 @@ fn main() {
     }
 
     match cmd.as_str() {
-        "helper" => helper::stage(has("--release"), None),
         "build" => {
             let release = has("--release");
-            if meta::p().crash_helper {
-                helper::stage(release, None);
-            }
             let mut args = vec!["build".to_string(), "-p".into(), meta::p().package.into()];
             if release {
                 args.push("--release".into());
@@ -317,8 +306,7 @@ fn usage() {
     eprintln!(
         "usage:
   (every command below also takes --product app|debugger; default app)
-  cargo dtb-ke-bundle build  [--release]     stage the crash helper, then build the app
-  cargo dtb-ke-bundle helper [--release]     just (re)stage the crash helper
+  cargo dtb-ke-bundle build  [--release]     build the app
   cargo dtb-ke-bundle icons                  regenerate .icns / .ico / PNG icons from the master
   cargo dtb-ke-bundle bundle [options]       build + package for the host OS
   cargo dtb-ke-bundle debug-info [options] <out.tar.gz>  package the split-debuginfo sidecar

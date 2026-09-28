@@ -1,19 +1,22 @@
 //! The crash reporter — a second, minimal mode of this same binary.
 //!
-//! When the app faults, the out-of-process crash helper (`dtb-ke-crash`) writes
-//! a minidump, then **relaunches this executable** and streams us, on stdin, a
-//! small digest followed by the raw dump —
-//! `reason \0 address \0 crashing_tid \0 panic_msg \0 stack \0 <minidump bytes>`.
-//! We recognise that we are the reporter by our *parent process*: the helper
-//! (`getppid()` → a binary named [`dtb_ke_crash::HELPER_FILE_NAME`]). No CLI
-//! flag, no environment variable. "Bericht senden" mails the digest + stack (and
-//! optionally the `.dtbkedmp`) via [`crate::mail`]; the `.dtbkedmp` is attached only if the
-//! user ticks the box.
+//! Every platform self-relaunches (see `dtb-ke-crash`'s module doc comment): when the app faults, it
+//! `execv`/`CreateProcessW`s **this same executable** with [`dtb_ke_crash::RELAUNCH_ARG`] on argv —
+//! recognised in [`main`](crate) by that flag, not by parent-process identity (there is no separate
+//! helper process any more for a parent-process check to make sense against). The relaunched
+//! instance reads the crash parameters the original process wrote to our inherited stdin pipe
+//! (`capture_macos`/`capture_windows`/`capture_linux`), captures the dump itself
+//! (`dtb_ke_crash::writer::{macos,windows,linux}::capture`, no separate process involved), and shows
+//! the dialog below with the result — one relaunch, not the old chain of a separate helper binary
+//! *and* a second relaunch for the reporter.
+//!
+//! "Bericht senden" mails the digest + stack (and optionally the `.dtbkedmp`) via [`crate::mail`];
+//! the `.dtbkedmp` is attached only if the user ticks the box.
 //!
 //! [`main`](crate) branches here **before** logging, settings, and — crucially —
 //! the crash-handler install, so a fault in the reporter can never spawn another
-//! reporter. The process exits with a [`dtb_ke_crash::report`] code that is the
-//! helper's verdict: only `SENT` lets it delete the dump.
+//! reporter. The process exits with a [`dtb_ke_crash::report`] code — on `SENT`, this process (which
+//! captured the dump itself and owns its whole lifecycle) deletes it itself (`exit_verdict`).
 
 #![cfg_attr(
     not(any(target_os = "macos", target_os = "windows", target_os = "linux")),
@@ -39,164 +42,233 @@ use crate::components::{Button, ButtonTone, Icon, Spinner};
 use crate::mail;
 use crate::theme::{ActiveTheme, Appearance, Theme, ThemeMode};
 
-/// Are we a crash-reporter relaunch? True iff our parent process is the crash
-/// helper (a binary called [`dtb_ke_crash::HELPER_FILE_NAME`]).
-#[cfg(target_os = "macos")]
-pub fn launched_by_crash_helper() -> bool {
-    let ppid = unsafe { libc::getppid() };
-    if ppid <= 1 {
-        return false;
-    }
-    let mut buf = [0u8; 4096]; // PROC_PIDPATHINFO_MAXSIZE
-    let n = unsafe {
-        libc::proc_pidpath(
-            ppid,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            buf.len() as u32,
-        )
-    };
-    if n <= 0 {
-        return false;
-    }
-    let path = String::from_utf8_lossy(&buf[..n as usize]);
-    let base = path.rsplit('/').next().unwrap_or("");
-    base.eq_ignore_ascii_case(dtb_ke_crash::HELPER_FILE_NAME)
-        || base.eq_ignore_ascii_case("dtb-ke-crashhandler")
-}
-
-/// Windows: our parent process (Toolhelp snapshot → `th32ParentProcessID` → that
-/// entry's `szExeFile`) is a binary named [`dtb_ke_crash::HELPER_FILE_NAME`].
-#[cfg(target_os = "windows")]
-pub fn launched_by_crash_helper() -> bool {
-    type Handle = *mut core::ffi::c_void;
-    const INVALID_HANDLE_VALUE: Handle = usize::MAX as Handle;
-    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
-
-    #[repr(C)]
-    struct ProcessEntry32W {
-        dw_size: u32,
-        cnt_usage: u32,
-        th32_process_id: u32,
-        th32_default_heap_id: usize,
-        th32_module_id: u32,
-        cnt_threads: u32,
-        th32_parent_process_id: u32,
-        pc_pri_class_base: i32,
-        dw_flags: u32,
-        sz_exe_file: [u16; 260],
-    }
-
-    unsafe extern "system" {
-        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
-        fn Process32FirstW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
-        fn Process32NextW(snap: Handle, entry: *mut ProcessEntry32W) -> i32;
-        fn CloseHandle(h: Handle) -> i32;
-        fn GetCurrentProcessId() -> u32;
-    }
-
-    unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snap == INVALID_HANDLE_VALUE {
-            return false;
-        }
-        let me = GetCurrentProcessId();
-        let mut entry: ProcessEntry32W = core::mem::zeroed();
-        entry.dw_size = size_of::<ProcessEntry32W>() as u32;
-
-        // pass 1: our parent pid
-        let mut ppid = 0u32;
-        if Process32FirstW(snap, &mut entry) != 0 {
-            loop {
-                if entry.th32_process_id == me {
-                    ppid = entry.th32_parent_process_id;
-                    break;
-                }
-                if Process32NextW(snap, &mut entry) == 0 {
-                    break;
-                }
-            }
-        }
-
-        // pass 2: the parent's exe name
-        let mut hit = false;
-        if ppid != 0 && Process32FirstW(snap, &mut entry) != 0 {
-            loop {
-                if entry.th32_process_id == ppid {
-                    let n = entry
-                        .sz_exe_file
-                        .iter()
-                        .position(|&c| c == 0)
-                        .unwrap_or(entry.sz_exe_file.len());
-                    let name = String::from_utf16_lossy(&entry.sz_exe_file[..n]);
-                    hit = name.eq_ignore_ascii_case(dtb_ke_crash::HELPER_FILE_NAME);
-                    break;
-                }
-                if Process32NextW(snap, &mut entry) == 0 {
-                    break;
-                }
-            }
-        }
-        CloseHandle(snap);
-        hit
-    }
-}
-
-/// Linux: our parent process (`/proc/self/status` → `PPid`) is a binary whose
-/// `/proc/<ppid>/exe` basename is [`dtb_ke_crash::HELPER_FILE_NAME`].
+/// Linux only: this process is a self-relaunch of the crashed app in capture-and-report mode
+/// (`dtb_ke_crash::RELAUNCH_ARG` on argv — `main()` checks for it before calling this). Reads the
+/// crash parameters + raw `ucontext_t` the crashed process wrote to our inherited stdin pipe,
+/// captures the dump directly (`dtb_ke_crash::writer::linux::capture`, no separate helper process
+/// involved at all), then shows the same dialog `run()` does — this process *is* the reporter, so
+/// unlike the legacy path above, deleting the dump on `SENT` is our own job.
 #[cfg(target_os = "linux")]
-pub fn launched_by_crash_helper() -> bool {
-    let Some(ppid) = std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|status| {
-            status.lines().find_map(|line| {
-                line.strip_prefix("PPid:")
-                    .and_then(|v| v.trim().parse::<i32>().ok())
-            })
-        })
-    else {
-        return false;
-    };
-    if ppid <= 1 {
-        return false;
-    }
-
-    let exe_matches = std::fs::read_link(format!("/proc/{ppid}/exe"))
-        .ok()
-        .as_deref()
-        .and_then(|p| p.file_name())
-        .map(|name| {
-            name.to_string_lossy()
-                .eq_ignore_ascii_case(dtb_ke_crash::HELPER_FILE_NAME)
-        })
-        .unwrap_or(false);
-    if exe_matches {
-        return true;
-    }
-
-    // Fallback: `/proc/<ppid>/comm` (truncated to 15 chars by the kernel).
-    std::fs::read_to_string(format!("/proc/{ppid}/comm"))
-        .map(|comm| {
-            let comm = comm.trim();
-            !comm.is_empty()
-                && dtb_ke_crash::HELPER_FILE_NAME
-                    .as_bytes()
-                    .starts_with(comm.as_bytes())
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-pub fn launched_by_crash_helper() -> bool {
-    false
-}
-
-/// Read the digest from stdin, show the dialog, and return the `report::*` exit
-/// code. Blocks until the user answers (or closes the window).
-pub fn run() -> i32 {
-    let Some(digest) = read_digest_from_stdin() else {
+pub fn run_linux_capture() -> i32 {
+    let Some((digest, dump_path)) = capture_linux() else {
         return report::ERROR;
     };
+    run_with_digest(digest, dump_path)
+}
 
+/// Reads the Linux crash pipe (dump_dir, slug, pid, tid, signo, si_code, si_addr, done_fd, panic_msg,
+/// build_info, then the raw `ucontext_t` bytes — written by `dtb-ke-crash`'s Linux handler, see its
+/// module doc comment), captures the dump, releases the crashed process (it is blocked on
+/// `read(done_fd)`), and digests the result into a [`Digest`] + its persisted path.
+#[cfg(target_os = "linux")]
+fn capture_linux() -> Option<(Digest, String)> {
+    use std::io::Read;
+    let mut blob = Vec::with_capacity(8192);
+    std::io::stdin().read_to_end(&mut blob).ok()?;
+    if blob.is_empty() {
+        return None;
+    }
+    let mut fields = blob.splitn(11, |&b| b == 0);
+    let mut txt = || fields.next().map(|f| String::from_utf8_lossy(f).into_owned()).unwrap_or_default();
+    let dump_dir = txt();
+    let slug = txt();
+    let pid: i32 = txt().parse().unwrap_or(0);
+    let tid: i32 = txt().parse().unwrap_or(0);
+    let signo: u32 = txt().parse().unwrap_or(0);
+    let si_code: i32 = txt().parse().unwrap_or(0);
+    let si_addr: u64 = txt().parse().unwrap_or(0);
+    let done_fd: i32 = txt().parse().unwrap_or(-1);
+    let panic_msg = txt();
+    let build_info = txt();
+    let uctx = fields.next().unwrap_or(&[]).to_vec();
+
+    // Release the crashed process the moment we're done reading it — it is blocked on
+    // `read(done_fd)`. Do this on every exit path.
+    let release = || {
+        if done_fd >= 0 {
+            unsafe { libc::write(done_fd, [1u8].as_ptr().cast(), 1) };
+        }
+    };
+
+    if dump_dir.is_empty() || pid == 0 {
+        release();
+        return None;
+    }
+
+    let dmp = dtb_ke_crash::writer::linux::capture(pid, tid, signo, si_code, si_addr, &uctx);
+    release();
+    let dmp = dmp?;
+
+    let report = dtb_ke_crash::writer::build_report(&dump_dir, &slug, pid as i64, dmp, &build_info, "");
+    let dump_path = report.dump_path.clone();
+    Some((
+        Digest {
+            reason: report.reason,
+            address: report.address,
+            crashing_tid: report.thread,
+            panic_msg,
+            stack: report.stack,
+            frames: report.frames,
+            dump_path: report.dump_path,
+            os_build: report.os_build,
+            minidump: report.minidump,
+        },
+        dump_path,
+    ))
+}
+
+/// macOS only: this process is a self-relaunch of the crashed app in capture-and-report mode
+/// (`dtb_ke_crash::RELAUNCH_ARG` on argv — `main()` checks for it before calling this). Reads the
+/// crash parameters the original process wrote to our inherited stdin pipe, looks up its bootstrap
+/// port and captures the dump directly (`dtb_ke_crash::writer::macos::capture`, no separate helper
+/// process involved at all), then shows the same dialog `run()` does — this process *is* the
+/// reporter, so deleting the dump on `SENT` is our own job.
+#[cfg(target_os = "macos")]
+pub fn run_macos_capture() -> i32 {
+    let Some((digest, dump_path)) = capture_macos() else {
+        return report::ERROR;
+    };
+    run_with_digest(digest, dump_path)
+}
+
+/// Reads the macOS crash pipe (dump_dir, slug, bootstrap_name, panic_msg, build_info, nsexception —
+/// written by `dtb-ke-crash`'s macOS handler, see its module doc comment), performs the Mach
+/// handshake + capture, and digests the result into a [`Digest`] + its persisted path.
+#[cfg(target_os = "macos")]
+fn capture_macos() -> Option<(Digest, String)> {
+    use std::io::Read;
+    let mut blob = Vec::with_capacity(1024);
+    std::io::stdin().read_to_end(&mut blob).ok()?;
+    if blob.is_empty() {
+        return None;
+    }
+    let mut fields = blob.split(|&b| b == 0);
+    let mut next = || fields.next().map(|f| String::from_utf8_lossy(f).into_owned()).unwrap_or_default();
+    let dump_dir = next();
+    let slug = next();
+    let bootstrap_name = next();
+    let panic_msg = next();
+    let build_info = next();
+    let nsexception = next();
+    if dump_dir.is_empty() || bootstrap_name.is_empty() {
+        return None;
+    }
+
+    let (dmp, pid) = unsafe { dtb_ke_crash::writer::macos::capture(&bootstrap_name) }?;
+
+    let report = dtb_ke_crash::writer::build_report(&dump_dir, &slug, pid as i64, dmp, &build_info, &nsexception);
+    let dump_path = report.dump_path.clone();
+    Some((
+        Digest {
+            reason: report.reason,
+            address: report.address,
+            crashing_tid: report.thread,
+            panic_msg,
+            stack: report.stack,
+            frames: report.frames,
+            dump_path: report.dump_path,
+            os_build: report.os_build,
+            minidump: report.minidump,
+        },
+        dump_path,
+    ))
+}
+
+/// Windows only: this process is a self-relaunch of the crashed app in capture-and-report mode
+/// (`dtb_ke_crash::RELAUNCH_ARG` on argv — `main()` checks for it before calling this). Reads the
+/// crash parameters the original process wrote to our inherited stdin pipe, captures the dump
+/// directly (`dtb_ke_crash::writer::windows::capture`, no separate helper process involved at all),
+/// then shows the same dialog `run()` does — this process *is* the reporter, so deleting the dump on
+/// `SENT` is our own job.
+#[cfg(target_os = "windows")]
+pub fn run_windows_capture() -> i32 {
+    let Some((digest, dump_path)) = capture_windows() else {
+        return report::ERROR;
+    };
+    run_with_digest(digest, dump_path)
+}
+
+/// Reads the Windows crash pipe (dump_dir, slug, done_event, pid, tid, exc_ptr, exc_code, panic_msg,
+/// build_info — written by `dtb-ke-crash`'s Windows handler, see its module doc comment), captures
+/// the dump, releases the crashed process (`SetEvent` on the named done-event it's blocked on), and
+/// digests the result into a [`Digest`] + its persisted path.
+#[cfg(target_os = "windows")]
+fn capture_windows() -> Option<(Digest, String)> {
+    use std::io::Read;
+    use std::os::windows::ffi::OsStrExt;
+
+    type Handle = *mut core::ffi::c_void;
+    const EVENT_MODIFY_STATE: u32 = 0x0002;
+    unsafe extern "system" {
+        fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> Handle;
+        fn SetEvent(h: Handle) -> i32;
+        fn CloseHandle(h: Handle) -> i32;
+    }
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let mut blob = Vec::with_capacity(1024);
+    std::io::stdin().read_to_end(&mut blob).ok()?;
+    if blob.is_empty() {
+        return None;
+    }
+    let mut fields = blob.split(|&b| b == 0);
+    let mut next = || fields.next().map(|f| String::from_utf8_lossy(f).into_owned()).unwrap_or_default();
+    let dump_dir = next();
+    let slug = next();
+    let done_event = next();
+    let pid: u32 = next().parse().unwrap_or(0);
+    let tid: u32 = next().parse().unwrap_or(0);
+    let exc_ptr: usize = next().parse().unwrap_or(0);
+    let exc_code: i32 = next().parse().unwrap_or(0);
+    let panic_msg = next();
+    let build_info = next();
+    if dump_dir.is_empty() || pid == 0 {
+        return None;
+    }
+
+    // The named event the crashed process's exception filter is blocked on — `SetEvent` releases it
+    // the moment the dump is captured. Do this on every exit path.
+    let done: Handle = if done_event.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, wide(&done_event).as_ptr()) }
+    };
+    let release = || {
+        if !done.is_null() {
+            unsafe {
+                SetEvent(done);
+                CloseHandle(done);
+            }
+        }
+    };
+
+    let dmp = dtb_ke_crash::writer::windows::capture(pid, tid, exc_ptr, exc_code, &slug);
+    release();
+    let dmp = dmp?;
+
+    let report = dtb_ke_crash::writer::build_report(&dump_dir, &slug, pid as i64, dmp, &build_info, "");
+    let dump_path = report.dump_path.clone();
+    Some((
+        Digest {
+            reason: report.reason,
+            address: report.address,
+            crashing_tid: report.thread,
+            panic_msg,
+            stack: report.stack,
+            frames: report.frames,
+            dump_path: report.dump_path,
+            os_build: report.os_build,
+            minidump: report.minidump,
+        },
+        dump_path,
+    ))
+}
+
+/// Shared by every platform's capture path once it has a [`Digest`] in hand. `dump_path` is removed
+/// on a `SENT` verdict — this process owns the dump's whole lifecycle (it captured it itself).
+fn run_with_digest(digest: Digest, dump_path: String) -> i32 {
     // Debug hook: print the composed report body (no GUI, no send) so the
     // transmission path can be inspected without a live SMTP server.
     if std::env::var_os("DTB_KE_CRASH_REPORT_DUMP").is_some() {
@@ -306,7 +378,7 @@ pub fn run() -> i32 {
                     dmp,
                     log,
                     autosend,
-                    exit_verdict(hints.clone()),
+                    exit_verdict(hints.clone(), dump_path.clone()),
                     hints.clone(),
                     false,
                     window,
@@ -371,8 +443,8 @@ fn newest_log_before(cutoff: Option<std::time::SystemTime>) -> Vec<u8> {
     tail
 }
 
-/// The helper's digest — `reason` `\0` `address` `\0` `crashing_tid` `\0`
-/// `panic_msg` `\0` `stack` `\0` `frames` `\0` `dump_path` `\0` `os_build` `\0` `<minidump bytes>`.
+/// Everything the reporter dialog needs about one crash — built directly from
+/// `dtb_ke_crash::writer::Report` (+ the panic message) by each platform's `capture_*` function.
 struct Digest {
     /// Human-readable crash reason from the minidump (`minidump::CrashReason`
     /// Display), e.g. `EXC_BAD_ACCESS / KERN_INVALID_ADDRESS`. Empty if unknown.
@@ -388,45 +460,12 @@ struct Digest {
     stack: String,
     /// Every thread's frames as (image UUID, offset) — what the system-symbol hints are computed from.
     frames: Vec<dtb_ke_crash::syshints::FrameRef>,
-    /// Where the helper kept the dump (the reporter rewrites it with the hints), or empty.
+    /// Where the dump is persisted (this process rewrites it with the hints), or empty.
     dump_path: String,
     /// The OS build the dump ran on (`26A428`), or empty.
     os_build: String,
     /// The raw minidump — attached to the report only if the user opts in.
     minidump: Vec<u8>,
-}
-
-fn read_digest_from_stdin() -> Option<Digest> {
-    use std::io::Read;
-    let mut buf = Vec::new();
-    std::io::stdin().read_to_end(&mut buf).ok()?;
-
-    let mut fields = buf.splitn(9, |&b| b == 0);
-    let mut next = || {
-        fields
-            .next()
-            .map(|f| String::from_utf8_lossy(f).into_owned())
-    };
-    let reason = next()?;
-    let address = next()?;
-    let crashing_tid = next()?;
-    let panic_msg = next()?;
-    let stack = next()?;
-    let frames = dtb_ke_crash::syshints::parse_frames(&next()?);
-    let dump_path = next()?;
-    let os_build = next()?;
-    let minidump = fields.next().map(<[u8]>::to_vec).unwrap_or_default();
-    Some(Digest {
-        reason,
-        address,
-        crashing_tid,
-        panic_msg,
-        stack,
-        frames,
-        dump_path,
-        os_build,
-        minidump,
-    })
 }
 
 fn window_options(cx: &mut App) -> WindowOptions {
@@ -609,9 +648,14 @@ impl SendState {
 /// with it (the helper acts on the code); on iOS it is a sheet in the running app and just closes.
 type Verdict = std::rc::Rc<dyn Fn(i32, &mut App)>;
 
-fn exit_verdict(hints: Option<std::sync::Arc<HintsRun>>) -> Verdict {
+/// `dump_path`: this process's own dump — deleted on a `SENT` verdict, since this process captured
+/// it itself and owns its whole lifecycle (see `run_with_digest`).
+fn exit_verdict(hints: Option<std::sync::Arc<HintsRun>>, dump_path: String) -> Verdict {
     std::rc::Rc::new(move |code, _| {
         finish_hints(&hints, code);
+        if code == report::SENT {
+            let _ = std::fs::remove_file(&dump_path);
+        }
         std::process::exit(code)
     })
 }

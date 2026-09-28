@@ -13,8 +13,9 @@ name = "dtb-ke-debugger"
 path = "src/main.rs"
 
 [dependencies]
-# The build-info user stream's format + parser (`buildinfo` is feature-free std code).
-dtb-ke-crash = { workspace = true }
+# The build-info user stream's format + parser, and `syshints` (feature-free std code — the whole
+# crate is now, see its Cargo.toml).
+dtb-ke-crash.workspace = true
 dtb-ke-syms.workspace = true
 dtb-ke-symid.workspace = true
 dirs.workspace = true
@@ -55,6 +56,4 @@ gix = { version = "=0.87.0", default-features = false, features = ["blocking-net
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 dtb-ke-symbol-server = { path = "../dtb-ke-symbol-server" }
 tempfile = "3"
-# A tiny synthetic dump (the snapshot assembler) as a fixture.
-dtb-ke-crash = { workspace = true, features = ["snapshot"] }
 libc.workspace = true

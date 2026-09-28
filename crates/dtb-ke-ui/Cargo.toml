@@ -22,7 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Project crates
-dtb-ke-crash = { workspace = true, features = ["as-library"] }
+dtb-ke-crash.workspace = true
 dtb-ke-export.workspace = true
 dtb-ke-log.workspace = true
 dtb-ke-syms.workspace = true

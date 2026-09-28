@@ -6,8 +6,8 @@ license.workspace = true
 description = "System-library symbolication on the machine that crashed: the dyld shared cache reader (macOS) and a dladdr fallback (iOS), as cancellable background jobs. Shared by the crash reporter and dtb-ke-debugger."
 
 [dependencies]
-# The hints stream format (feature-free std code).
-dtb-ke-crash = { workspace = true }
+# The hints stream format (feature-free std code — the whole crate is now, see its Cargo.toml).
+dtb-ke-crash.workspace = true
 
 log.workspace = true
 memmap2 = "0.9"

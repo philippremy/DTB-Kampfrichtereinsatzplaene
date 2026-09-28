@@ -7,27 +7,34 @@
 //!
 //! On a fault the handler thread (syscalls + `mach_msg` only — no `malloc`, no
 //! `_dyld_*`):
-//! 1. extract the embedded helper to `$TMPDIR` (`open`/`write`/`fchmod`),
-//! 2. `pipe` + `fork`; the child gets the pipe on stdin and `execv`s the helper
-//!    with a bare argv (argv[0] only — nothing shows in `ps`),
-//! 3. we write the helper's parameters (dump dir, slug, bootstrap name, crash
-//!    kind, panic message) down the pipe as NUL-separated fields and close it,
-//! 4. the child looks up `S`, sends back a reply port `R`,
-//! 5. we forward the crashed **task + thread send rights** (moved straight out of
+//! 1. `pipe` + `fork`; the child gets the pipe on stdin and `execv`s **this same
+//!    binary again** (`MAIN_EXE`, resolved at install) with [`crate::RELAUNCH_ARG`]
+//!    as `argv[1]` — no embedded helper to extract any more,
+//! 2. we write the relaunched instance's parameters (dump dir, slug, bootstrap
+//!    name, crash kind, panic message) down the pipe as NUL-separated fields and
+//!    close it,
+//! 3. the child looks up `S`, sends back a reply port `R`,
+//! 4. we forward the crashed **task + thread send rights** (moved straight out of
 //!    the exception message) plus the exception info to `R`,
-//! 6. we wait (bounded) for the helper's HELPER_DONE — sent the moment its
-//!    `mach_vm_read`s are done — then terminate at once (`die()`, a raw `svc`
-//!    exit — never `libc::_exit`, whose lazy stub deadlocks in `dyld_stub_binder`
-//!    against a thread holding dyld's lock), so the crashed process and its
-//!    frozen windows don't linger. Both mach receives are time-bounded so a
-//!    helper that never starts can't wedge us; a 12 s `SIGALRM` watchdog
-//!    (`on_sigalrm` → `die()`) is the absolute backstop.
+//! 5. we wait (bounded) for the relaunched instance's HELPER_DONE — sent the
+//!    moment its `mach_vm_read`s are done — then terminate at once (`die()`, a
+//!    raw `svc` exit — never `libc::_exit`, whose lazy stub deadlocks in
+//!    `dyld_stub_binder` against a thread holding dyld's lock), so the crashed
+//!    process and its frozen windows don't linger. Both mach receives are
+//!    time-bounded so a relaunch that never starts can't wedge us; a 12 s
+//!    `SIGALRM` watchdog (`on_sigalrm` → `die()`) is the absolute backstop.
 //!
 //! Everything analytical — thread state, stacks, the image list, building and
-//! writing the dump — runs in the helper against the crashed task's memory. The
-//! helper (now an orphan) then relaunches the *main binary* as a minimal crash
-//! reporter, streams it the dump, and deletes the file only if the user's
-//! choice comes back as "sent".
+//! writing the dump — runs in the relaunched instance
+//! (`dtb-ke-ui`'s own `crash_report::run_macos_capture`, via
+//! `dtb_ke_crash::writer::macos::capture` + `writer::build_report`) against the
+//! crashed task's memory. It *is* the crash reporter too — no further relaunch
+//! needed — and deletes the dump file only if the user's choice comes back as
+//! "sent".
+//!
+//! **Not yet sandbox-compatible**: `bootstrap_check_in` below requires the
+//! process not be sandboxed (see the crate's module doc comment) — tracked as a
+//! deliberate follow-up, not addressed by this self-relaunch migration.
 
 #![allow(clippy::missing_safety_doc, unsafe_op_in_unsafe_fn, static_mut_refs)]
 
@@ -92,14 +99,12 @@ const FATAL_SIGNALS: [libc::c_int; 6] = [
     libc::SIGPIPE,
 ];
 
-/// Absolute backstop: if the helper handoff wedges (helper failed to start /
+/// Absolute backstop: if the handoff wedges (the relaunched instance failed to start /
 /// connect and every fallback below still somehow blocked), `SIGALRM` fires and
 /// `on_sigalrm` `_exit`s cleanly — never a "terminated by SIGALRM".
 const WATCHDOG_SECS: libc::c_uint = 12;
-/// Per-`mach_msg`-receive timeout while waiting on the helper (ms).
+/// Per-`mach_msg`-receive timeout while waiting on the relaunched instance (ms).
 const RECV_TIMEOUT_MS: libc::c_uint = 5000;
-
-static HELPER_BYTES: &[u8] = include_bytes!(env!("DTB_KE_CRASH_HELPER"));
 
 // ── module state, all set in install() ─────────────────────────────────
 
@@ -107,13 +112,14 @@ static mut RECV_PORT: mach_port_t = MACH_PORT_NULL; // S
 static mut EXC_PORT: mach_port_t = MACH_PORT_NULL; // E
 /// NUL-terminated, built once. `PATH_MAX`-bounded so the crash path never allocs.
 static mut BOOTSTRAP_NAME: [u8; 128] = [0; 128];
-static mut HELPER_PATH: [u8; 1024] = [0; 1024];
 static mut DUMP_DIR: [u8; 1024] = [0; 1024];
 static mut APP_SLUG: [u8; 64] = [0; 64];
-/// The main executable's path — `minidump-writer` doesn't record it for the
-/// executable module on macOS, so we resolve it at install and pipe it through
-/// for the reporter relaunch.
+/// This process's own executable path — the relaunch target (`execv`), resolved once at install
+/// rather than every crash.
 static mut MAIN_EXE: [u8; 1024] = [0; 1024];
+/// `crate::RELAUNCH_ARG`, NUL-terminated — the `argv[1]` that tells the relaunched instance it is
+/// the crash-time capture + report process, not a normal launch.
+static mut RELAUNCH_ARG: [u8; 64] = [0; 64];
 static HANDLED: AtomicBool = AtomicBool::new(false);
 
 // ── hand-declared FFI ──────────────────────────────────────────────────
@@ -136,13 +142,10 @@ unsafe extern "C" {
 // ── install ────────────────────────────────────────────────────────────
 
 pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::library::InstallError> {
-    if HELPER_BYTES.is_empty() {
-        return Err(crate::library::InstallError::NoHelper);
-    }
-
     unsafe {
         put_cstr(&mut DUMP_DIR, dump_dir.to_string_lossy().as_bytes());
         put_cstr(&mut APP_SLUG, app_slug.as_bytes());
+        put_cstr(&mut RELAUNCH_ARG, crate::RELAUNCH_ARG.as_bytes());
 
         // A per-process bootstrap name the child can look up.
         let name = format!(
@@ -150,12 +153,6 @@ pub(crate) fn install(dump_dir: &Path, app_slug: &str) -> Result<(), crate::libr
             std::process::id()
         );
         put_cstr(&mut BOOTSTRAP_NAME, name.as_bytes());
-
-        // The helper temp path — resolved now, written to at crash time. The
-        // basename is shared (`format::HELPER_FILE_NAME`) so the crash reporter
-        // can recognise the helper as its parent process.
-        let tmp = std::env::temp_dir().join(crate::HELPER_FILE_NAME);
-        put_cstr(&mut HELPER_PATH, tmp.to_string_lossy().as_bytes());
 
         if let Ok(exe) = std::env::current_exe() {
             put_cstr(&mut MAIN_EXE, exe.to_string_lossy().as_bytes());
@@ -425,7 +422,7 @@ fn capture_backtrace() -> Vec<String> {
     frames
 }
 
-/// Logs + stashes an `NSException` for the crash helper to embed as a minidump stream
+/// Logs + stashes an `NSException` for the relaunched instance to embed as a minidump stream
 /// (`crate::nsexception`).
 fn capture_nsexception(exception: &NSException) {
     let name = exception.name();
@@ -483,9 +480,7 @@ pub(crate) fn simulate_uncaught_nsexception() {
 // backstop for that one.
 
 struct CrashFns {
-    open: unsafe extern "C" fn(*const libc::c_char, libc::c_int, ...) -> libc::c_int,
     write: unsafe extern "C" fn(libc::c_int, *const libc::c_void, usize) -> isize,
-    fchmod: unsafe extern "C" fn(libc::c_int, libc::mode_t) -> libc::c_int,
     close: unsafe extern "C" fn(libc::c_int) -> libc::c_int,
     pipe: unsafe extern "C" fn(*mut libc::c_int) -> libc::c_int,
     fork: unsafe extern "C" fn() -> libc::pid_t,
@@ -514,20 +509,10 @@ unsafe fn resolve_crash_fns() -> CrashFns {
         }};
     }
     CrashFns {
-        open: sym!(
-            "open",
-            libc::open,
-            unsafe extern "C" fn(*const libc::c_char, libc::c_int, ...) -> libc::c_int
-        ),
         write: sym!(
             "write",
             libc::write,
             unsafe extern "C" fn(libc::c_int, *const libc::c_void, usize) -> isize
-        ),
-        fchmod: sym!(
-            "fchmod",
-            libc::fchmod,
-            unsafe extern "C" fn(libc::c_int, libc::mode_t) -> libc::c_int
         ),
         close: sym!(
             "close",
@@ -685,7 +670,7 @@ unsafe fn handle(msg: &[u8]) {
 /// The shared core: given an exception already reduced to its
 /// task/thread/handler-thread ports + kind/code/subcode — whether parsed from
 /// a real Mach exception message (`handle` above) or synthesized ourselves
-/// (`on_fatal_signal`) — fork the helper, hand it the ports, wait for it to
+/// (`on_fatal_signal`) — fork/relaunch, hand the ports to the relaunched instance, wait for it to
 /// finish. Never returns to a normal caller; both call sites `die()`
 /// immediately after.
 unsafe fn handle_exception(
@@ -719,15 +704,13 @@ unsafe fn handle_exception(
         );
     }
 
-    extract_helper();
-
-    // The helper is spawned with a bare argv (argv[0] only). Its parameters —
+    // The relaunched instance is spawned with `RELAUNCH_ARG` as argv[1] only. Its parameters —
     // dump dir, slug, bootstrap name, panic message (empty for a hardware fault)
     // — go down a pipe on stdin as NUL-separated fields. The Mach handoff carries
     // the port rights + the exception triple.
     let mut pfd = [0i32; 2];
     if (f.pipe)(pfd.as_mut_ptr()) != 0 {
-        dtb_ke_log::fault!("Could not open the helper pipe, no minidump");
+        dtb_ke_log::fault!("Could not open the capture pipe, no minidump");
         dtb_ke_log::fault!(" ---[ end trace {exception:#x} ]---");
         return;
     }
@@ -738,25 +721,28 @@ unsafe fn handle_exception(
         (f.dup2)(pfd[0], 0);
         (f.close)(pfd[0]);
         (f.close)(pfd[1]);
-        let argv: [*const libc::c_char; 2] = [HELPER_PATH.as_ptr() as *const _, std::ptr::null()];
-        (f.execv)(HELPER_PATH.as_ptr() as *const _, argv.as_ptr());
+        let argv: [*const libc::c_char; 3] = [
+            MAIN_EXE.as_ptr() as *const _,
+            RELAUNCH_ARG.as_ptr() as *const _,
+            std::ptr::null(),
+        ];
+        (f.execv)(MAIN_EXE.as_ptr() as *const _, argv.as_ptr());
         die(127);
     }
     if child < 0 {
-        dtb_ke_log::fault!("Could not fork the crash helper, no minidump");
+        dtb_ke_log::fault!("Could not fork/relaunch for capture, no minidump");
         (f.close)(pfd[0]);
         (f.close)(pfd[1]);
         dtb_ke_log::fault!(" ---[ end trace {exception:#x} ]---");
         return;
     }
 
-    // ── parent: feed the pipe, then close it so the helper sees EOF ──
-    // Fields: dump_dir \0 slug \0 bootstrap_name \0 main_exe \0 panic_msg \0 build_info \0 nsexception.
+    // ── parent: feed the pipe, then close it so the relaunched instance sees EOF ──
+    // Fields: dump_dir \0 slug \0 bootstrap_name \0 panic_msg \0 build_info \0 nsexception.
     (f.close)(pfd[0]);
     write_cstr(pfd[1], DUMP_DIR.as_ptr());
     write_cstr(pfd[1], APP_SLUG.as_ptr());
     write_cstr(pfd[1], BOOTSTRAP_NAME.as_ptr());
-    write_cstr(pfd[1], MAIN_EXE.as_ptr());
     // The panic message static is a NUL-filled buffer when not panicking, so this
     // is just an empty field for a hardware fault.
     write_cstr(pfd[1], crate::panic::message_ptr());
@@ -767,8 +753,8 @@ unsafe fn handle_exception(
     (f.close)(pfd[1]);
 
     // ── parent: the mach handoff ──
-    // 1. receive the helper's HELLO carrying its reply port R. Time-bounded: if
-    //    the helper failed to `execv` or never reached `bootstrap_look_up`, this
+    // 1. receive the relaunched instance's HELLO carrying its reply port R. Time-bounded: if
+    //    it failed to `execv` or never reached `bootstrap_look_up`, this
     //    must not wedge the handler thread until the `SIGALRM` watchdog.
     let mut rbuf = MsgBuf([0; 1024]);
     if mach_msg(
@@ -781,7 +767,7 @@ unsafe fn handle_exception(
         MACH_PORT_NULL,
     ) != MACH_MSG_SUCCESS
     {
-        dtb_ke_log::fault!("Crash helper did not connect within {RECV_TIMEOUT_MS}ms, no minidump");
+        dtb_ke_log::fault!("Relaunched instance did not connect within {RECV_TIMEOUT_MS}ms, no minidump");
         // reap the child so it can't linger as a zombie, then bail.
         let mut st = 0i32;
         (f.waitpid)(child, &mut st, 0);
@@ -795,7 +781,7 @@ unsafe fn handle_exception(
     let reply_port: mach_port_t = rd_u32(&rbuf.0, 28);
 
     // 2. forward the crashed task + faulting thread + this handler thread, plus
-    //    the exception triple, to R. The helper feeds these straight into a
+    //    the exception triple, to R. The relaunched instance feeds these straight into a
     //    `crash_context::CrashContext` for `minidump-writer`.
     #[repr(C)]
     struct Forward {
@@ -832,13 +818,13 @@ unsafe fn handle_exception(
         MACH_PORT_NULL,
     );
 
-    // 3. wait (bounded) for the helper's HELPER_DONE — it sends this the moment
+    // 3. wait (bounded) for the relaunched instance's HELPER_DONE — it sends this the moment
     //    it has finished `mach_vm_read`ing our memory. Then return so the caller
     //    `_exit(134)`s *at once*: we must not pin the crashed process (and its
     //    frozen windows) on screen for the whole lifetime of the crash dialog.
-    //    The helper is reparented to launchd and finishes on its own — write the
-    //    dump file, launch the reporter, act on its verdict.
-    //    `RECV_TIMEOUT_MS` + the `SIGALRM` watchdog bound this if the helper died.
+    //    The relaunched instance is reparented to launchd and finishes on its own — build the dump,
+    //    show the reporter dialog, act on the user's verdict.
+    //    `RECV_TIMEOUT_MS` + the `SIGALRM` watchdog bound this if it died.
     let mut dbuf = MsgBuf([0; 1024]);
     let _ = mach_msg(
         dbuf.0.as_mut_ptr() as *mut mach_msg_header_t,
@@ -851,34 +837,6 @@ unsafe fn handle_exception(
     );
     dtb_ke_log::fault!(" ---[ end trace {exception:#x} ]---");
     // then `_exit(134)` (caller does it).
-}
-
-/// Extract `HELPER_BYTES` to `HELPER_PATH` — `open`/`write`/`fchmod`/`close`, no
-/// allocation.
-unsafe fn extract_helper() {
-    let f = fns();
-    let fd = (f.open)(
-        HELPER_PATH.as_ptr() as *const _,
-        libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
-        0o700 as libc::c_int,
-    );
-    if fd < 0 {
-        return;
-    }
-    let mut off = 0usize;
-    while off < HELPER_BYTES.len() {
-        let n = (f.write)(
-            fd,
-            HELPER_BYTES.as_ptr().add(off) as *const _,
-            HELPER_BYTES.len() - off,
-        );
-        if n <= 0 {
-            break;
-        }
-        off += n as usize;
-    }
-    (f.fchmod)(fd, 0o700);
-    (f.close)(fd);
 }
 
 /// Write a NUL-terminated C string plus its terminating NUL (the field

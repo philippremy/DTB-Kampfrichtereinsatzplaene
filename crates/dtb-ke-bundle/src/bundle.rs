@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::util::{self, built_binary_path, bundle_dir, fresh_dir};
-use crate::{helper, icon, ios, linux, macos, meta, strip, windows};
+use crate::{icon, ios, linux, macos, meta, strip, windows};
 
 /// The two Mach-O slices a `--universal` build merges with `lipo`. `pub(crate)`
 /// — `debug_info::universal_dsym` merges the same two slices' `.dSYM`s the
@@ -60,7 +60,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         return Err("--universal and --target are mutually exclusive".into());
     }
 
-    // 1. Build the app (staging the crash helper first, like `build`).
+    // 1. Build the app.
     let binary = if opts.universal {
         build_universal(opts.release)?
     } else {
@@ -68,10 +68,6 @@ pub fn run(opts: Options) -> Result<(), String> {
         let ios = ios::is_ios_target(target);
         if ios && !meta::p().ios {
             return Err(format!("{} has no iPadOS bundle", meta::p().display_name));
-        }
-        // The out-of-process crash helper is macOS/Windows/Linux only, and only the app embeds it.
-        if !ios && meta::p().crash_helper {
-            helper::stage(opts.release, target);
         }
         let mut cargo = vec!["build".to_string(), "-p".into(), meta::p().package.into()];
         if opts.release {
@@ -148,18 +144,11 @@ pub fn run(opts: Options) -> Result<(), String> {
     }
 }
 
-/// Build both macOS slices and merge them with `lipo` into one universal
-/// binary. Each slice needs its *own* target-matched crash helper staged
-/// first (`helper::stage`'s embedded helper is whatever was last staged — a
-/// mismatched arch fails to `execve` at all), so the two builds run strictly
-/// sequentially, never in parallel.
+/// Build both macOS slices and merge them with `lipo` into one universal binary.
 fn build_universal(release: bool) -> Result<PathBuf, String> {
     let mut slices = Vec::with_capacity(UNIVERSAL_TARGETS.len());
     for triple in UNIVERSAL_TARGETS {
         eprintln!("dtb-ke-bundle: building the {triple} slice …");
-        if meta::p().crash_helper {
-            helper::stage(release, Some(triple));
-        }
 
         let mut cargo = vec![
             "build".to_string(),

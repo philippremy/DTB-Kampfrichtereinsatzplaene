@@ -1,7 +1,7 @@
 //! Snapshot → minidump. The stream set and record layouts follow what `minidump-writer` emits for a
 //! macOS process (arm64: `CONTEXT_ARM64_OLD`, the Breakpad Mach exception encoding, PDB70 module
 //! records keyed by the Mach-O UUID), with `PlatformId::Ios`, so `minidump`, `minidump-unwind`,
-//! `dtb-ke-symbolize`, `lldb` and `minidump-stackwalk` treat it like any other Apple dump.
+//! `dtb-ke-debugger`, `lldb` and `minidump-stackwalk` treat it like any other Apple dump.
 
 use minidump_common::format::{self as f, *};
 use scroll::{Endian, Pwrite, ctx::SizeWith};

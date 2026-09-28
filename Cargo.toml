@@ -26,7 +26,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 # Project crates
-dtb-ke-crash = { path = "crates/dtb-ke-crash", default-features = false }
+dtb-ke-crash = { path = "crates/dtb-ke-crash" }
 dtb-ke-export = { path = "crates/dtb-ke-export" }
 dtb-ke-log = { path = "crates/dtb-ke-log" }
 dtb-ke-persist = { path = "crates/dtb-ke-persist" }
