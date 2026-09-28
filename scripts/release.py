@@ -30,6 +30,12 @@ from pathlib import Path
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 CARGO_TOML = WORKSPACE_ROOT / "Cargo.toml"
+# AppStream metainfo, read by appimagetool/appstreamcli at bundle time -- Cargo.toml isn't shipped
+# in the AppImage, so its own <release version="…" date="…"/> needs updating separately.
+METAINFO_FILES = [
+    WORKSPACE_ROOT / "crates/dtb-ke-ui/appimage-metainfo.xml",
+    WORKSPACE_ROOT / "crates/dtb-ke-debugger/appimage-metainfo.xml",
+]
 
 
 class Die(Exception):
@@ -81,6 +87,21 @@ def current_version() -> str | None:
     return None
 
 
+def set_metainfo_release(version: str) -> None:
+    """Rewrite each AppStream metainfo's `<release version="…" date="…"/>` to the release being
+    cut. Only called for the real `X.Y.Z` bump -- a "-dev.0" version has no place in AppStream's
+    release history, so the post-release dev bump leaves these files alone."""
+    today = time.strftime("%Y-%m-%d")
+    pattern = re.compile(r'<release version="[^"]*" date="[^"]*"\s*/>')
+    replacement = f'<release version="{version}" date="{today}"/>'
+    for path in METAINFO_FILES:
+        text = path.read_text()
+        new_text, count = pattern.subn(replacement, text, count=1)
+        if count != 1:
+            die(f"could not find a <release …/> line to update in {path}")
+        path.write_text(new_text)
+
+
 def git_add_best_effort(*paths: str) -> None:
     """`git add <paths…> 2>/dev/null || git add <first path>` -- Cargo.lock may not exist / may
     not have changed; fall back to just the Cargo.toml add if the combined one fails."""
@@ -93,13 +114,17 @@ def cargo_update_best_effort() -> None:
         run(["cargo", "update", "--workspace", "--offline"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def bump_and_commit(new_version: str, commit_message: str) -> None:
+def bump_and_commit(new_version: str, commit_message: str, *, update_metainfo: bool = False) -> None:
     set_workspace_version(new_version)
     if f'version = "{new_version}"' not in CARGO_TOML.read_text():
         die(f"version bump failed — check {CARGO_TOML} manually")
+    if update_metainfo:
+        set_metainfo_release(new_version)
     # The bump touches Cargo.lock too (workspace members inherit the version).
     cargo_update_best_effort()
     git_add_best_effort(str(CARGO_TOML), "Cargo.lock")
+    if update_metainfo:
+        run(["git", "add", *(str(p) for p in METAINFO_FILES)], check=True)
     run(["git", "commit", "-m", commit_message], check=True)
 
 
@@ -237,7 +262,7 @@ def main(argv: list[str]) -> int:
             die("aborted by user")
 
         # ── 4. release commit + tag ────────────────────────────────────────
-        bump_and_commit(new_version, f"chore: release {tag}")
+        bump_and_commit(new_version, f"chore: release {tag}", update_metainfo=True)
         # --cleanup=whitespace, NOT the `git tag` default of `strip` -- `strip` removes every line
         # starting with git's comment char ("#"), which would silently eat all the Markdown
         # "#"/"##" headings in the notes. (We already stripped our own "//" instruction lines above.)
