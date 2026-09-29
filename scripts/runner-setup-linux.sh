@@ -276,8 +276,8 @@ ALPINE_PACKAGES=(
   mesa mesa-dev mesa-egl mesa-gbm mesa-gl
   libglvnd libglvnd-dev
   libxcb libxcb-dev libxcb-static
-  libxkbcommon libxkbcommon-dev
-  libxkbcommon-x11
+  libxkbcommon libxkbcommon-dev libxkbcommon-static
+  libxkbcommon-x11 libxkbcommon-x11-dev libxkbcommon-x11-static
   expat expat-dev expat-static
   libpng libpng-dev libpng-static
   zlib zlib-dev zlib-static
