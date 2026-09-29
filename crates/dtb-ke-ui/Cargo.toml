@@ -99,6 +99,25 @@ gegliedert und als PDF oder Word-Dokument exportiert.
 # AppStream metainfo for the AppImage — cargo-bundle warns without it ("recommended for
 # discoverability in software centers"); the field already existed upstream, just unset.
 appimage_metainfo_path = "crates/dtb-ke-ui/appimage-metainfo.xml"
+# cargo-bundle's .deb backend (deb_bundle.rs) has no ldd-style auto-detection, so this is a real
+# `ldd` run against the x86_64-unknown-linux-gnu Tip build (2026-09), mapped to the Debian/Ubuntu
+# package that ships each soname. libc/libm/the dynamic linker -> libc6; libgcc_s -> libgcc-s1 on
+# Debian 12+/Ubuntu 22.04+ (libgcc1 on older -- listed as an alternative). The rest is gpui's Linux
+# windowing backend (libxcb/libxkbcommon/libXau/libXdmcp), not guaranteed present on a minimal
+# install the way glibc is. Package names are architecture-invariant (only the .deb's own
+# Architecture: field and the packages' internal ld.so differ per arch), so this applies to the
+# aarch64 build too without a separate ldd run -- linux-vdso.so.1 is kernel-provided, not a real
+# dependency, and is excluded.
+deb_depends = [
+    "libc6",
+    "libgcc-s1 | libgcc1",
+    "libxcb1",
+    "libxcb-xkb1",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "libxau6",
+    "libxdmcp6",
+]
 
 [package.metadata.bundle.osx]
 minimum_system_version = "11.0"
@@ -151,9 +170,6 @@ appstream_id = "de.philippremy.DTB-Kampfrichtereinsatzplaene"
 # halves; only the latter is consumed here) from assets/icons/FileIcon.png, the same master the
 # macOS/Windows DocumentIcon.icns/.ico come from (dtb-ke-patches: LinuxSettings::mime_icon_dir).
 mime_icon_dir = "assets/icons/generated/hicolor"
-# deb_depends deliberately left unset for now: cargo-bundle's .deb backend (deb_bundle.rs) has no
-# ldd-style auto-detection, so a real list needs verifying against an actual Linux build's linked
-# libraries first, not guessed here.
 
 # dtb-ke-patches: the installed .exe's file name (no extension — always appended). Otherwise the
 # raw Cargo `[[bin]] name`, "dtb-ke-ui.exe" — this is the branded name the in-app updater's

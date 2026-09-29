@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Sets up the Linux Forgejo Actions runner (the CachyOS / Arch-based box).
 # Handles: x86_64 (native) + aarch64 (cross, via an extracted Debian sysroot —
-# no QEMU) Rust builds, the aarch64 cross toolchain, Linux packaging tools
-# (.deb/.rpm/.AppImage), zipsign, and the forgejo-runner binary + service.
+# no QEMU) Rust builds for -gnu targets, x86_64 + aarch64 musl cross
+# toolchains + Alpine-sourced static sysroots for -musl targets, Linux
+# packaging tools (.deb/.rpm/.AppImage), zipsign, and the forgejo-runner
+# binary + service.
 #
 # The Windows VM this box hosts is a SEPARATE concern — see
 # scripts/provision-windows-vm.sh.
@@ -74,6 +76,7 @@ elif confirm "rustup not found for 'runner' — install it now (via the official
 fi
 sudo -u runner -H "$CARGO_BIN/rustup" toolchain install nightly >/dev/null
 sudo -u runner -H "$CARGO_BIN/rustup" target add aarch64-unknown-linux-gnu --toolchain nightly
+sudo -u runner -H "$CARGO_BIN/rustup" target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl --toolchain nightly
 
 # ── 3. aarch64 cross toolchain ───────────────────────────────────────────
 # A system package (pacman → /usr/bin) — every user, including 'runner',
@@ -194,7 +197,162 @@ elif confirm "Assemble the aarch64 sysroot from Debian's package pool (no execut
   echo "sysroot assembled at $SYSROOT"
 fi
 
-# ── 5. Linux packaging tools ─────────────────────────────────────────────
+# ── 5. musl cross toolchains (x86_64 + aarch64) ──────────────────────────
+# Arch's own `musl` package only ships a C compiler (musl-gcc) for the native
+# arch, no C++ (`x86_64-linux-musl-g++` doesn't exist anywhere on a stock Arch
+# system) and nothing at all for aarch64 — confirmed the hard way against a
+# real build (cc-rs: "failed to find tool 'x86_64-linux-musl-g++'"). If you
+# `pacman -S musl`'d your way past that earlier, remove it now
+# (`sudo pacman -R musl`) — it's redundant with (and can shadow/conflict
+# with) the toolchain this step installs.
+#
+# musl.cc's prebuilt cross toolchains provide a complete gcc+g+++musl-libc+
+# libstdc++ set for both architectures, under exactly the <arch>-linux-musl-*
+# naming rustc's own *-unknown-linux-musl target specs already look for
+# (confirmed against that same real error) — just putting bin/ on PATH is
+# enough, no CC_<target>/CXX_<target> env vars needed. They also default to
+# a generic, non-tuned baseline for their arch (no CachyOS-style x86-64-v3/v4
+# codegen) — see the note in this turn's reply for why that matters for
+# anything a -sys crate's build.rs compiles from source (ring, aws-lc-sys,
+# turso_core, sysinfo, …), not just the libraries step 6 below vendors.
+step "musl cross toolchains (x86_64 + aarch64)"
+for arch in x86_64 aarch64; do
+  cross_dir="/opt/${arch}-linux-musl-cross"
+  if [[ -x "$cross_dir/bin/${arch}-linux-musl-gcc" ]]; then
+    echo "$arch-linux-musl-cross already installed at $cross_dir"
+  elif confirm "Download + extract musl.cc's ${arch}-linux-musl-cross toolchain to $cross_dir?"; then
+    tarball="$STAGE_DIR/${arch}-linux-musl-cross.tgz"
+    echo "  fetching ${arch}-linux-musl-cross.tgz …"
+    curl -fsSL "https://musl.cc/${arch}-linux-musl-cross.tgz" -o "$tarball"
+    sudo mkdir -p /opt
+    sudo tar -xzf "$tarball" -C /opt
+    echo "  installed at $cross_dir"
+  fi
+  # Interactive login shells (manual test builds) get it via profile.d; the
+  # 'runner' systemd service gets it via the unit's own explicit PATH= in
+  # step 12 below — same two-audiences split as the PATH note at the top of
+  # this file.
+  profile="/etc/profile.d/${arch}-linux-musl-cross.sh"
+  if [[ ! -f "$profile" ]]; then
+    echo "export PATH=\"$cross_dir/bin:\$PATH\"" | sudo tee "$profile" >/dev/null
+  fi
+done
+
+# ── 6. musl sysroots (Alpine, x86_64 + aarch64) ──────────────────────────
+# Same underlying problem as the aarch64-gnu sysroot above (fontconfig/
+# freetype/wayland/EGL/xcb/xkbcommon aren't part of any base musl toolchain),
+# same fix (unpack real prebuilt packages, never execute foreign-arch code)
+# — Alpine's package pool instead of Debian's, because the musl target links
+# these STATICALLY by default (`crt-static` is on for every
+# *-unknown-linux-musl target — confirmed the hard way: `/usr/bin/ld: cannot
+# find -lxcb ... have you installed the static version?`), and Arch ships
+# none of these as .a anywhere. Alpine's own -dev packages are built against
+# musl natively and routinely carry the .a alongside the .so — and, same as
+# the toolchain above, Alpine targets a generic/portable baseline rather
+# than anything CachyOS-style microarchitecture-tuned.
+#
+# Alpine .apk files are themselves just (concatenated) gzip'd tars — `tar
+# -xzf` extracts them directly, same "no execution of foreign-arch code"
+# guarantee as `dpkg-deb -x` above; no apk/abuild tooling needed.
+#
+# UNVERIFIED against a real Alpine mirror / a real musl link from this box
+# yet — this package list is a first pass at the same functional set the
+# aarch64-gnu sysroot above needed (fontconfig, freetype, wayland, EGL/mesa,
+# xcb, xkbcommon(+x11), expat, png, zlib, ffi, brotli, bsd, drm, X11/Xau/
+# Xdmcp/Xshmfence), translated to Alpine's package names — several listed
+# with a speculative *-static candidate alongside *-dev, since Alpine splits
+# the static archive into its own package for some libraries and bundles it
+# into *-dev for others. Same resolve-by-name/skip-if-missing tolerance as
+# the Debian loop above, so a wrong guess here is skipped, not fatal. Expect
+# to extend this list exactly the way the aarch64-gnu one was built up: run
+# a real `cargo build --target <arch>-unknown-linux-musl`, feed whatever
+# `cannot find -lXXX` names back into ALPINE_PACKAGES below.
+step "musl sysroots (Alpine)"
+ALPINE_BASE="https://dl-cdn.alpinelinux.org/alpine/latest-stable"
+ALPINE_PACKAGES=(
+  fontconfig fontconfig-dev fontconfig-static
+  freetype freetype-dev freetype-static
+  wayland wayland-dev wayland-libs-client wayland-libs-server
+  mesa mesa-dev mesa-egl mesa-gbm mesa-gl
+  libglvnd libglvnd-dev
+  libxcb libxcb-dev libxcb-static
+  libxkbcommon libxkbcommon-dev
+  libxkbcommon-x11
+  expat expat-dev expat-static
+  libpng libpng-dev libpng-static
+  zlib zlib-dev zlib-static
+  libffi libffi-dev
+  brotli-libs brotli-dev brotli-static
+  libbsd libbsd-dev
+  libdrm libdrm-dev
+  libx11 libx11-dev libx11-static
+  libxau libxau-dev
+  libxdmcp libxdmcp-dev
+  libxshmfence libxshmfence-dev
+)
+for arch in x86_64 aarch64; do
+  musl_sysroot="/opt/sysroots/${arch}-linux-musl"
+  if [[ -d "$musl_sysroot/usr/lib" ]]; then
+    echo "$arch musl sysroot already assembled — delete $musl_sysroot to force a rebuild"
+    continue
+  fi
+  confirm "Assemble the $arch musl sysroot from Alpine's package pool (no execution, just unpacked .apks)?" || continue
+
+  sudo mkdir -p "$musl_sysroot"
+  sudo chown "$(id -u):$(id -g)" "$musl_sysroot"
+
+  apk_index="$STAGE_DIR/APKINDEX-$arch"
+  : > "$apk_index"
+  for repo in main community; do
+    echo "  fetching Alpine $repo/$arch package index …"
+    idx_tar="$STAGE_DIR/APKINDEX-$repo-$arch.tar.gz"
+    if curl -fsSL "$ALPINE_BASE/$repo/$arch/APKINDEX.tar.gz" -o "$idx_tar"; then
+      tar -xzf "$idx_tar" -O APKINDEX >> "$apk_index" 2>/dev/null || true
+      echo >> "$apk_index"  # blank-line separator between repos for the awk paragraph parser below
+    fi
+  done
+
+  resolve_apk() {
+    # Alpine apk filenames are deterministic (<name>-<version>.apk, no
+    # separate "Filename:" field like Debian's index) — P:/V: are enough.
+    awk -v pkg="$1" '
+      BEGIN { RS=""; FS="\n" }
+      {
+        name=""; ver="";
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^P:/) { name = substr($i, 3) }
+          if ($i ~ /^V:/) { ver = substr($i, 3) }
+        }
+        if (name == pkg && ver != "") { print ver; exit }
+      }' "$apk_index"
+  }
+  for pkg in "${ALPINE_PACKAGES[@]}"; do
+    ver="$(resolve_apk "$pkg")"
+    if [[ -z "$ver" ]]; then
+      echo "  ! could not find '$pkg' in the Alpine $arch index — skipping" >&2
+      continue
+    fi
+    fname="${pkg}-${ver}.apk"
+    apk_file="$STAGE_DIR/$fname"
+    downloaded=0
+    for repo in main community; do
+      if curl -fsSL "$ALPINE_BASE/$repo/$arch/$fname" -o "$apk_file" 2>/dev/null; then
+        downloaded=1
+        break
+      fi
+    done
+    if [[ "$downloaded" != "1" ]]; then
+      echo "  ! could not download $fname from main or community — skipping" >&2
+      continue
+    fi
+    echo "  fetching $fname"
+    tar -xzf "$apk_file" -C "$musl_sysroot" 2>/dev/null || \
+      echo "  ! $fname didn't extract cleanly (unexpected apk format?) — skipping" >&2
+  done
+  echo "$arch musl sysroot assembled at $musl_sysroot"
+done
+
+# ── 7. Linux packaging tools ─────────────────────────────────────────────
 # Also all system packages — no per-user PATH concern.
 step "Linux packaging tools (.deb / .rpm / .AppImage)"
 NEEDED_PKGS=()
@@ -214,7 +372,7 @@ else
   echo "all present"
 fi
 
-# ── 6. zipsign ────────────────────────────────────────────────────────────
+# ── 8. zipsign ────────────────────────────────────────────────────────────
 # Also for 'runner' — `cargo install` puts it in $CARGO_BIN, same reasoning
 # as step 2.
 step "zipsign (release-archive signing, for the 'runner' user)"
@@ -224,7 +382,7 @@ elif confirm "cargo install zipsign (as 'runner')?"; then
   sudo -u runner -H "$CARGO_BIN/cargo" install zipsign
 fi
 
-# ── 7. libvirt/QEMU (hosts the Windows VM — see provision-windows-vm.sh) ──
+# ── 9. libvirt/QEMU (hosts the Windows VM — see provision-windows-vm.sh) ──
 # This one deliberately targets the INVOKING user, not 'runner' — you manage
 # the Windows VM interactively (virsh, provision-windows-vm.sh), the daemon
 # never touches libvirt itself.
@@ -238,7 +396,7 @@ elif confirm "Install qemu-full, libvirt, virt-install, edk2-ovmf (UEFI firmware
   echo "Added $USER to the libvirt group — log out/in (or 'newgrp libvirt') before running provision-windows-vm.sh."
 fi
 
-# ── 8. forgejo-runner binary ──────────────────────────────────────────────
+# ── 10. forgejo-runner binary ─────────────────────────────────────────────
 # System-wide (/usr/local/bin) — no per-user PATH concern.
 step "forgejo-runner binary"
 if have forgejo-runner; then
@@ -252,7 +410,7 @@ elif confirm "Download the prebuilt forgejo-runner linux/amd64 binary?"; then
   echo "installed forgejo-runner v$VER"
 fi
 
-# ── 9. CI cache directory (fixed target-dir for Tip's incremental builds) ─
+# ── 11. CI cache directory (fixed target-dir for Tip's incremental builds) ─
 # Forgejo checks each job out into a fresh, random per-job directory (see
 # RUNNERS.md § target-dir caching) — without a pre-existing, fixed absolute
 # CARGO_TARGET_DIR outside that ephemeral checkout, tip.yml's incremental
@@ -268,7 +426,7 @@ elif confirm "Create $CI_CACHE_ROOT (owned by 'runner') for tip.yml's persistent
   sudo chown -R runner:runner "$CI_CACHE_ROOT"
 fi
 
-# ── 10. registration + systemd service ────────────────────────────────────
+# ── 12. registration + systemd service ────────────────────────────────────
 # Codeberg's "Create new Runner" page (repo → Settings → Actions → Runners)
 # generates a UUID + token pair and shows the exact command to run — there is
 # no separate `register` step any more: `forgejo-runner daemon` takes
@@ -310,7 +468,7 @@ After=network.target
 [Service]
 User=runner
 WorkingDirectory=$RUNNER_HOME
-Environment="PATH=$CARGO_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PATH=$CARGO_BIN:/opt/x86_64-linux-musl-cross/bin:/opt/aarch64-linux-musl-cross/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=$RUNNER_BIN daemon --url $instance --uuid $uuid --token-url file://$TOKEN_FILE --label $LABEL
 Restart=always
 RestartSec=5
